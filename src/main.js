@@ -23,6 +23,9 @@ const config = {
     width: ARENA_WIDTH,
     height: ARENA_HEIGHT,
   },
+  // Enable the gamepad input plugin so the left stick is readable by the
+  // player input sampler. Keyboard is on by default; this opts in the pad.
+  input: { gamepad: true },
   scene: [BootScene, PreloadScene, ArenaScene],
 };
 

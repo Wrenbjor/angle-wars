@@ -7,12 +7,18 @@ import {
   FIXED_STEP_MS,
   MAX_SUB_STEPS,
   COLOR_ARENA_BORDER,
+  COLOR_SHIP,
+  SHIP_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
 import { SimClockSystem } from '../systems/SimClockSystem.js';
+import { createPlayerShip } from '../entities/PlayerShip.js';
+import { InputState } from '../input/InputState.js';
+import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
+import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -47,6 +53,30 @@ export class ArenaScene extends Phaser.Scene {
     this.simClock = new SimClockSystem();
     this.world.addSystem(this.simClock);
 
+    // --- Player -------------------------------------------------------------
+    // The ship is a plain entity moved by the (Phaser-free) movement system
+    // inside the fixed-timestep loop. Input is sampled at render rate into a
+    // shared InputState the movement system reads at sim rate.
+    this.ship = createPlayerShip();
+    this.world.addEntity(this.ship);
+    this.inputState = new InputState();
+    this.inputSampler = new PlayerInputSampler(this, this.inputState);
+    this.world.addSystem(new PlayerMovementSystem(this.ship, this.inputState));
+
+    // Placeholder vector shape: a triangle with its nose along +x, drawn once
+    // in local space (centered on 0,0) and transformed per frame from the ship
+    // entity. Epic 4 replaces this with the signature aesthetic.
+    this.shipSprite = this.add.graphics();
+    this.shipSprite.fillStyle(COLOR_SHIP, 1);
+    this.shipSprite.beginPath();
+    this.shipSprite.moveTo(SHIP_RADIUS, 0);
+    this.shipSprite.lineTo(-SHIP_RADIUS * 0.7, SHIP_RADIUS * 0.7);
+    this.shipSprite.lineTo(-SHIP_RADIUS * 0.7, -SHIP_RADIUS * 0.7);
+    this.shipSprite.closePath();
+    this.shipSprite.fillPath();
+    this.shipSprite.setPosition(this.ship.x, this.ship.y);
+    this.shipSprite.rotation = this.ship.angle;
+
     // --- Debug readout ------------------------------------------------------
     this.debugText = this.add.text(
       ARENA_BORDER_INSET + 8,
@@ -69,7 +99,15 @@ export class ArenaScene extends Phaser.Scene {
    * @param {number} delta Elapsed render time since last frame (ms).
    */
   update(time, delta) {
+    // Sample input (render rate) before advancing the sim so this frame's
+    // fixed steps consume the latest move intent.
+    this.inputSampler.sample();
+
     this.fixedTimestep.advance(delta, (dt) => this.world.fixedUpdate(dt));
+
+    // Sync the placeholder sprite from the ship entity each render frame.
+    this.shipSprite.setPosition(this.ship.x, this.ship.y);
+    this.shipSprite.rotation = this.ship.angle;
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.
     this._sampleAccumMs += delta;
