@@ -2,9 +2,10 @@ import { System } from '../core/System.js';
 import { Pool } from '../core/Pool.js';
 import { createBlackHole } from '../entities/BlackHole.js';
 import {
-  ARENA_WIDTH,
-  ARENA_HEIGHT,
-  ARENA_BORDER_INSET,
+  pickSafeEdgePlacement,
+  pickSafeInteriorPlacement,
+} from './spawnPlacement.js';
+import {
   SEEKER_RADIUS,
   BLACKHOLE_RADIUS,
   BLACKHOLE_MAX_RADIUS,
@@ -18,6 +19,9 @@ import {
   BLACKHOLE_MAX_ACTIVE,
   BLACKHOLE_POOL_PREWARM,
   BLACKHOLE_SCORE,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
+  SPAWN_PLACEMENT_MAX_ATTEMPTS,
 } from '../config/constants.js';
 
 // BlackHoleSystem — the Black Hole hazard: gravity + feed/grow/spawn + destruction
@@ -167,13 +171,32 @@ export class BlackHoleSystem extends System {
       for (let hi = 0; hi < holes.length; hi++) {
         const hole = holes[hi];
 
+        // Story 2.6 telegraph gate: a spawning-in hole is frozen (no gravity,
+        // absorb, feed, grow, or detonation) and non-lethal until its countdown
+        // reaches 0 — a spawning hole is briefly invulnerable (its own bullet
+        // damage is part of this frozen tick). Decrement by the fixed-step dt
+        // (frame-rate-independent), clamp at 0, and skip the whole behavior while
+        // still telegraphing. On the tick it reaches 0 it falls through and its
+        // gravity/feed resume + it becomes lethal this same tick.
+        if (hole.telegraphMs > 0) {
+          hole.telegraphMs -= dt;
+          if (hole.telegraphMs > 0) continue; // still telegraphing → frozen
+          hole.telegraphMs = 0; // just activated → fall through to normal behavior
+        }
+
         // (1) Gravity: position nudge toward the hole for ship + bullets + enemies.
+        //     Story 2.6: a telegraphing (frozen) ENEMY is inert to the hole — it
+        //     is neither pulled nor absorbed until it activates, so gravity cannot
+        //     drag a "frozen" enemy (or slide it onto the ship mid-telegraph). The
+        //     ship and bullets are always pulled/absorbed normally.
         this._pull(hole, this.ship, dtSec);
         for (let i = 0; i < bullets.length; i++) {
           this._pull(hole, bullets[i], dtSec);
         }
         for (let i = 0; i < enemies.length; i++) {
-          this._pull(hole, enemies[i], dtSec);
+          const e = enemies[i];
+          if (e.telegraphMs > 0) continue; // frozen enemy: inert to gravity
+          this._pull(hole, e, dtSec);
         }
 
         // (2a) Absorb overlapping bullets: consume + damage + feed. Deferred
@@ -206,7 +229,9 @@ export class BlackHoleSystem extends System {
         if (cs && hole.hp > 0) {
           for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
-            if (consumedEnemies.has(e)) continue; // already eaten by an earlier hole
+            // Skip already-eaten enemies AND telegraphing (frozen) ones — a
+            // spawning-in enemy is inert to the hole until it activates.
+            if (consumedEnemies.has(e) || e.telegraphMs > 0) continue;
             const dx = hole.x - e.x;
             const dy = hole.y - e.y;
             const r = hole.radius + e.radius;
@@ -294,55 +319,57 @@ export class BlackHoleSystem extends System {
   /**
    * Emit one seeker at a random arena edge into the shared spawn pool (NOT next to
    * the hole — otherwise this hole's own gravity would pull it straight back in).
-   * Placement mirrors the established edge-spawn: fixed axis pinned just inside the
-   * inset by the radius, free axis uniform along the edge. Two rng draws.
+   * Placement is the established edge-spawn, re-rolled (bounded) to keep the seeker
+   * ≥ SPAWN_SAFE_RADIUS from the ship (`this.ship`, Story 2.6). The fresh seeker
+   * starts frozen + non-lethal for ENEMY_SPAWN_TELEGRAPH_MS.
    * @private
    */
   _spawnSeekerAtEdge() {
     const s = this.spawnPool.acquire();
-    const minX = ARENA_BORDER_INSET + SEEKER_RADIUS;
-    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - SEEKER_RADIUS;
-    const minY = ARENA_BORDER_INSET + SEEKER_RADIUS;
-    const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - SEEKER_RADIUS;
-
-    const edge = Math.floor(this._rng() * 4); // 0=top,1=bottom,2=left,3=right
-    const t = this._rng();
-    if (edge === 0) {
-      s.x = minX + t * (maxX - minX);
-      s.y = minY;
-    } else if (edge === 1) {
-      s.x = minX + t * (maxX - minX);
-      s.y = maxY;
-    } else if (edge === 2) {
-      s.x = minX;
-      s.y = minY + t * (maxY - minY);
-    } else {
-      s.x = maxX;
-      s.y = minY + t * (maxY - minY);
-    }
+    const ship = this.ship;
+    const p = pickSafeEdgePlacement(
+      this._rng,
+      SEEKER_RADIUS,
+      ship ? ship.x : undefined,
+      ship ? ship.y : undefined,
+      SPAWN_SAFE_RADIUS,
+      SPAWN_PLACEMENT_MAX_ATTEMPTS,
+    );
+    s.x = p.x;
+    s.y = p.y;
     // Start at rest; the owning enemy system sets velocity on its next tick.
     s.vx = 0;
     s.vy = 0;
+    // Telegraph: frozen + non-lethal until the countdown reaches 0.
+    s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
   }
 
   /**
    * Spawn one hole at a random INTERIOR point (inset by its radius so the body sits
-   * fully inside the drawn border), re-initialized to its starting shape. Two rng
-   * draws (x, then y). No ship-proximity check — spawn-safety is Story 2.6's.
+   * fully inside the drawn border), re-initialized to its starting shape. Story
+   * 2.6: the placement re-rolls (bounded) to keep the hole ≥ SPAWN_SAFE_RADIUS from
+   * the ship (`this.ship`), and the fresh hole starts frozen + non-lethal for
+   * ENEMY_SPAWN_TELEGRAPH_MS.
    * @private
    */
   _spawnOne() {
     const h = this.holePool.acquire();
-    const minX = ARENA_BORDER_INSET + BLACKHOLE_RADIUS;
-    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - BLACKHOLE_RADIUS;
-    const minY = ARENA_BORDER_INSET + BLACKHOLE_RADIUS;
-    const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - BLACKHOLE_RADIUS;
-
-    h.x = minX + this._rng() * (maxX - minX);
-    h.y = minY + this._rng() * (maxY - minY);
+    const ship = this.ship;
+    const p = pickSafeInteriorPlacement(
+      this._rng,
+      BLACKHOLE_RADIUS,
+      ship ? ship.x : undefined,
+      ship ? ship.y : undefined,
+      SPAWN_SAFE_RADIUS,
+      SPAWN_PLACEMENT_MAX_ATTEMPTS,
+    );
+    h.x = p.x;
+    h.y = p.y;
     // Re-initialize the pooled instance to a fresh hole.
     h.radius = BLACKHOLE_RADIUS;
     h.hp = BLACKHOLE_HP;
     h.feed = 0;
+    // Telegraph: frozen + non-lethal until the countdown reaches 0.
+    h.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
   }
 }

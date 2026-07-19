@@ -14,6 +14,8 @@ import {
   GREEN_SQUARE_THREAT_RADIUS,
   GREEN_SQUARE_POOL_PREWARM,
   GREEN_SQUARE_SCORE,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -275,6 +277,68 @@ describe('GreenSquareSystem — frame-rate independence', () => {
   });
 });
 
+describe('GreenSquareSystem — spawn telegraph (Story 2.6)', () => {
+  it('spawn() sets telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS and starts fleeing/at rest', () => {
+    const { system } = makeSystem(makeShip(640, 360));
+    system.spawn();
+    const [s] = activeSquares(system);
+    expect(s.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+    expect(s.aggro).toBe(false);
+    expect(s.vx).toBe(0);
+    expect(s.vy).toBe(0);
+  });
+
+  it('freezes a telegraphing square: no aggro latch, no move, counts down by dt', () => {
+    const ship = makeShip(400, 100);
+    const bulletPool = new Pool(createBullet);
+    const { system } = makeSystem(ship, bulletPool);
+    const s = placeSquare(system, 100, 100);
+    s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    // A bullet inside the threat radius that WOULD provoke an active square.
+    addBullet(bulletPool, 100 + GREEN_SQUARE_THREAT_RADIUS - 1, 100);
+
+    system.fixedUpdate(DT);
+
+    // No latch, no movement — frozen while telegraphing; only the countdown moved.
+    expect(s.aggro).toBe(false);
+    expect(s.x).toBe(100);
+    expect(s.y).toBe(100);
+    expect(s.vx).toBe(0);
+    expect(s.vy).toBe(0);
+    expect(s.telegraphMs).toBeCloseTo(ENEMY_SPAWN_TELEGRAPH_MS - DT, 9);
+  });
+
+  it('behaves normally on the tick the telegraph reaches 0 (AC2)', () => {
+    const { system } = makeSystem(makeShip(300, 100));
+    const s = placeSquare(system, 100, 100); // ship +x → flees −x once active
+    s.telegraphMs = DT;
+
+    system.fixedUpdate(DT);
+
+    expect(s.telegraphMs).toBe(0);
+    expect(s.vx).toBeCloseTo(-GREEN_SQUARE_FLEE_SPEED, 6); // fleeing this same tick
+    expect(s.x).toBeLessThan(100);
+  });
+
+  it('spawn-point avoidance: re-rolls the placement away from a ship on the default candidate (AC3)', () => {
+    const minX = ARENA_BORDER_INSET + GREEN_SQUARE_RADIUS;
+    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - GREEN_SQUARE_RADIUS;
+    const minY = ARENA_BORDER_INSET + GREEN_SQUARE_RADIUS;
+    const shipX = minX + 0.5 * (maxX - minX);
+    const shipY = minY;
+    const { system } = makeSystem(
+      makeShip(shipX, shipY),
+      new Pool(createBullet),
+      seqRng([0.0, 0.5, 0.25, 0.5]), // top-center (on ship) → re-roll → bottom-center
+    );
+    system.spawn(shipX, shipY);
+    const [s] = activeSquares(system);
+    const dx = s.x - shipX;
+    const dy = s.y - shipY;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+  });
+});
+
 describe('GreenSquareSystem — no self-spawn + public spawn', () => {
   it('fixedUpdate never spawns on its own, over many intervals with no director', () => {
     const { system } = makeSystem(makeShip(640, 360));
@@ -392,5 +456,6 @@ describe('createGreenSquare factory', () => {
     expect(s.radius).toBe(GREEN_SQUARE_RADIUS);
     expect(s.score).toBe(GREEN_SQUARE_SCORE);
     expect(s.aggro).toBe(false);
+    expect(s.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
   });
 });

@@ -296,6 +296,52 @@ describe('SpawnDirector — escalation drives real cadence through fixedUpdate (
   });
 });
 
+// A fake spawnable that records the arguments its spawn() was last called with,
+// so tests can assert the director forwards the ship's (x,y) as the avoid point.
+function recordingSpawnable(baseWeight, peakWeight, activeCount = 0) {
+  const system = {
+    spawnCalls: 0,
+    lastArgs: null,
+    spawn(...args) {
+      this.spawnCalls++;
+      this.lastArgs = args;
+    },
+    enemyPool: { activeCount },
+  };
+  return { system, baseWeight, peakWeight };
+}
+
+describe('SpawnDirector — spawn-point ship-avoidance forwarding (Story 2.6, AC3)', () => {
+  it('forwards ship.x, ship.y to the picked archetype spawn() when built with a ship', () => {
+    const a = recordingSpawnable(1, 1); // the only positive-weight archetype
+    const ship = { x: 321, y: 654 };
+    const dir = new SpawnDirector([a], seqRng([0.0]), ship);
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS); // one interval → one spawn
+
+    expect(a.system.spawnCalls).toBe(1);
+    expect(a.system.lastArgs).toEqual([321, 654]);
+  });
+
+  it('reads the ship position LIVE at spawn time (a moving player)', () => {
+    const a = recordingSpawnable(1, 1);
+    const ship = { x: 10, y: 20 };
+    const dir = new SpawnDirector([a], seqRng([0.0]), ship);
+    // Move the ship before the interval elapses.
+    ship.x = 999;
+    ship.y = 888;
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS);
+    expect(a.system.lastArgs).toEqual([999, 888]);
+  });
+
+  it('back-compat: with no ship the picked spawn() is called with NO avoid args', () => {
+    const a = recordingSpawnable(1, 1);
+    const dir = new SpawnDirector([a], seqRng([0.0])); // no ship
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS);
+    expect(a.system.spawnCalls).toBe(1);
+    expect(a.system.lastArgs).toEqual([]); // spawn() — undefined avoid args
+  });
+});
+
 describe('SpawnDirector — reset by reconstruction (AC3)', () => {
   it('a freshly constructed director is at the base ramp regardless of a prior run', () => {
     const mixA = fourMix();

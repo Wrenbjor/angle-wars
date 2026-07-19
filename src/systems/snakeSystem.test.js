@@ -24,6 +24,8 @@ import {
   SNAKE_SEGMENT_SCORE,
   PLAYER_INVULN_MS,
   PLAYER_START_LIVES,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -421,6 +423,80 @@ describe('SnakeSystem — split on kill (fragmentation)', () => {
   });
 });
 
+describe('SnakeSystem — spawn telegraph (whole-chain, Story 2.6)', () => {
+  it('spawn() sets telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS on EVERY segment', () => {
+    const system = makeSystem(seqRng([0.0, 0.5]));
+    system.spawn();
+    const snake = system.snakes[0];
+    expect(snake.segments.length).toBe(SNAKE_SEGMENT_COUNT);
+    for (const seg of snake.segments) {
+      expect(seg.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+    }
+  });
+
+  it('freezes the WHOLE chain while the head telegraphs and counts every segment down by dt (AC1)', () => {
+    const system = makeSystem();
+    const snake = placeSnake(system, 640, 360, 0, 3, 0); // heading +x
+    // A follower placed far behind so an ACTIVE move would pull it in — proving
+    // the follow-the-leader constraint is also skipped while frozen.
+    const far = snake.segments[2];
+    far.x = 200;
+    far.y = 360;
+    for (const seg of snake.segments) seg.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    const head = snake.segments[0];
+
+    system.fixedUpdate(DT);
+
+    // Head did not slither, the far follower was not pulled — the chain is frozen.
+    expect(head.x).toBe(640);
+    expect(head.y).toBe(360);
+    expect(far.x).toBe(200);
+    expect(far.y).toBe(360);
+    // Slither phase did not advance (the move step never ran).
+    expect(snake.slitherPhaseRad).toBe(0);
+    // EVERY segment's countdown advanced in lockstep.
+    for (const seg of snake.segments) {
+      expect(seg.telegraphMs).toBeCloseTo(ENEMY_SPAWN_TELEGRAPH_MS - DT, 9);
+    }
+  });
+
+  it('activates as one body on the tick the head telegraph reaches 0 (AC2)', () => {
+    const system = makeSystem();
+    const snake = placeSnake(system, 640, 360, 0, 3, 0); // heading +x, phase 0
+    for (const seg of snake.segments) seg.telegraphMs = DT; // one step from activation
+
+    system.fixedUpdate(DT);
+
+    const head = snake.segments[0];
+    // The head slithered this same tick (eff = base +x at phase 0 → moves +x).
+    expect(head.x).toBeCloseTo(640 + SNAKE_HEAD_SPEED * DT_SEC, 9);
+    // The slither phase advanced (move step ran) and all segments are now active.
+    expect(snake.slitherPhaseRad).toBeCloseTo(
+      SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC * DT_SEC,
+      9,
+    );
+    for (const seg of snake.segments) expect(seg.telegraphMs).toBe(0);
+  });
+
+  it('spawn-point avoidance: re-rolls the head placement away from a ship on the default candidate (AC3)', () => {
+    const shipX = MIN_X + 0.5 * (MAX_X - MIN_X);
+    const shipY = MIN_Y;
+    // top-center head (on ship) → re-roll → bottom-center head (far).
+    const system = makeSystem(seqRng([0.0, 0.5, 0.25, 0.5]));
+    system.spawn(shipX, shipY);
+    const head = system.snakes[0].segments[0];
+    const dx = head.x - shipX;
+    const dy = head.y - shipY;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+  });
+
+  it('the system never stores a ship — the avoid point is a spawn() argument only', () => {
+    const system = makeSystem();
+    system.spawn(100, 100);
+    expect(system.ship).toBeUndefined();
+  });
+});
+
 describe('SnakeSystem — no self-spawn / public spawn / placement', () => {
   it('fixedUpdate never spawns on its own, over many intervals with no director', () => {
     const system = makeSystem();
@@ -510,6 +586,7 @@ describe('createSnakeSegment factory', () => {
     expect(seg.vy).toBe(0);
     expect(seg.radius).toBe(SNAKE_SEGMENT_RADIUS);
     expect(seg.score).toBe(SNAKE_SEGMENT_SCORE);
+    expect(seg.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
   });
 });
 

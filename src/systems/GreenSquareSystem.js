@@ -1,6 +1,7 @@
 import { System } from '../core/System.js';
 import { Pool } from '../core/Pool.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
+import { pickSafeEdgePlacement } from './spawnPlacement.js';
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
@@ -10,6 +11,9 @@ import {
   GREEN_SQUARE_CHASE_SPEED,
   GREEN_SQUARE_THREAT_RADIUS,
   GREEN_SQUARE_POOL_PREWARM,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
+  SPAWN_PLACEMENT_MAX_ATTEMPTS,
 } from '../config/constants.js';
 
 // GreenSquareSystem — Green Square flee/aggro behavior (Phaser-free).
@@ -94,6 +98,16 @@ export class GreenSquareSystem extends System {
     const threatSq = GREEN_SQUARE_THREAT_RADIUS * GREEN_SQUARE_THREAT_RADIUS;
 
     this.enemyPool.forEachActive((s) => {
+      // Story 2.6 telegraph gate: a spawning-in square is frozen (no threat/aggro
+      // latch, no move) and non-lethal until its countdown reaches 0. Decrement
+      // by the fixed-step dt (frame-rate-independent), clamp at 0, and skip the
+      // behavior while still telegraphing. On the tick it reaches 0 it falls
+      // through and behaves + becomes lethal this same tick.
+      if (s.telegraphMs > 0) {
+        s.telegraphMs -= dt;
+        if (s.telegraphMs > 0) return; // still telegraphing → frozen
+        s.telegraphMs = 0; // just activated → fall through to normal behavior
+      }
       // 1. Threat detection (only while still fleeing — the latch is one-way).
       if (!s.aggro) {
         for (let i = 0; i < bullets.length; i++) {
@@ -135,41 +149,35 @@ export class GreenSquareSystem extends System {
   }
 
   /**
-   * Spawn one green square on a random arena edge, fully inside the drawn border:
-   * the fixed axis is pinned just inside the inset (by the radius), the free axis
-   * is uniformly random within [inset+radius, dim−inset−radius]. Spawns fleeing
-   * (aggro=false); the next behavior pass sets its velocity. Public: the
-   * SpawnDirector is the sole caller during a run.
+   * Spawn one green square on a random arena edge, fully inside the drawn border
+   * (the fixed axis pinned just inside the inset by the radius, the free axis
+   * uniform along the edge). Story 2.6: the placement re-rolls (bounded) to keep
+   * the point ≥ SPAWN_SAFE_RADIUS from the ship, and the fresh square starts
+   * frozen + non-lethal for ENEMY_SPAWN_TELEGRAPH_MS. Spawns fleeing (aggro=false);
+   * the next behavior pass sets its velocity. Public: the SpawnDirector is the
+   * sole caller during a run, supplying the ship position as (avoidX, avoidY);
+   * called with no avoid args the first roll is accepted (back-compat).
+   * @param {number} [avoidX] Ship x to keep the spawn away from.
+   * @param {number} [avoidY] Ship y to keep the spawn away from.
    */
-  spawn() {
+  spawn(avoidX, avoidY) {
     const s = this.enemyPool.acquire();
-
-    const minX = ARENA_BORDER_INSET + GREEN_SQUARE_RADIUS;
-    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - GREEN_SQUARE_RADIUS;
-    const minY = ARENA_BORDER_INSET + GREEN_SQUARE_RADIUS;
-    const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - GREEN_SQUARE_RADIUS;
-
-    // Choose one of four edges. First rng draw picks the edge, second the
-    // position along it.
-    const edge = Math.floor(this._rng() * 4); // 0=top,1=bottom,2=left,3=right
-    const t = this._rng();
-    if (edge === 0) {
-      s.x = minX + t * (maxX - minX);
-      s.y = minY;
-    } else if (edge === 1) {
-      s.x = minX + t * (maxX - minX);
-      s.y = maxY;
-    } else if (edge === 2) {
-      s.x = minX;
-      s.y = minY + t * (maxY - minY);
-    } else {
-      s.x = maxX;
-      s.y = minY + t * (maxY - minY);
-    }
+    const p = pickSafeEdgePlacement(
+      this._rng,
+      GREEN_SQUARE_RADIUS,
+      avoidX,
+      avoidY,
+      SPAWN_SAFE_RADIUS,
+      SPAWN_PLACEMENT_MAX_ATTEMPTS,
+    );
+    s.x = p.x;
+    s.y = p.y;
 
     // Start at rest and unprovoked; the next behavior pass sets velocity.
     s.vx = 0;
     s.vy = 0;
     s.aggro = false;
+    // Telegraph: frozen + non-lethal until the countdown reaches 0.
+    s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
   }
 }

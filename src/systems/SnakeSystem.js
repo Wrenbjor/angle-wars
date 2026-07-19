@@ -1,10 +1,8 @@
 import { System } from '../core/System.js';
 import { Pool } from '../core/Pool.js';
 import { createSnakeSegment } from '../entities/SnakeSegment.js';
+import { pickSafeEdgePlacement } from './spawnPlacement.js';
 import {
-  ARENA_WIDTH,
-  ARENA_HEIGHT,
-  ARENA_BORDER_INSET,
   SNAKE_SEGMENT_RADIUS,
   SNAKE_HEAD_SPEED,
   SNAKE_SEGMENT_SPACING,
@@ -12,6 +10,12 @@ import {
   SNAKE_SLITHER_AMPLITUDE_RAD,
   SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC,
   SNAKE_SEGMENT_POOL_PREWARM,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
+  SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  ARENA_WIDTH,
+  ARENA_HEIGHT,
+  ARENA_BORDER_INSET,
 } from '../config/constants.js';
 
 // SnakeSystem — the Snake archetype: split-on-kill + slither/follow (Phaser-free).
@@ -229,6 +233,21 @@ export class SnakeSystem extends System {
       if (segs.length === 0) continue; // defensive — reaped snakes never appear here
       const head = segs[0];
 
+      // Story 2.6 telegraph gate — the Snake is ONE body: gate the whole chain on
+      // the HEAD's telegraph, but decrement EVERY segment's countdown in lockstep
+      // (by the fixed-step dt, clamped at 0) so the per-segment field the death
+      // seam reads stays consistent (and fragments from a mid-telegraph split
+      // inherit identical values). While the head is still telegraphing the whole
+      // chain is frozen (no slither/integrate/follow) and non-lethal. On the tick
+      // the head reaches 0 the chain falls through and moves + becomes lethal.
+      if (head.telegraphMs > 0) {
+        for (let i = 0; i < segs.length; i++) {
+          segs[i].telegraphMs -= dt;
+          if (segs[i].telegraphMs < 0) segs[i].telegraphMs = 0;
+        }
+        if (head.telegraphMs > 0) continue; // still telegraphing → frozen chain
+      }
+
       // Slither: use the CURRENT phase for the effective heading (so a phase of 0
       // means pure base-heading motion), THEN advance the phase by dt. The phase
       // accumulates ANG_VEL·dtSec/step, so its value over elapsed sim time is
@@ -282,38 +301,40 @@ export class SnakeSystem extends System {
    * Spawn one snake on a random arena edge: the head is pinned just inside the
    * edge pointing INWARD (perpendicular to the edge), and its SEGMENT_COUNT
    * segments trail outward behind it at the fixed spacing (partly outside the
-   * border — the body is pulled in as the head slithers inward). Two rng draws:
-   * the edge, then the position along it. Public: the SpawnDirector is the sole
-   * caller during a run.
+   * border — the body is pulled in as the head slithers inward). Story 2.6: the
+   * head placement re-rolls (bounded) to keep the point ≥ SPAWN_SAFE_RADIUS from
+   * the ship, and EVERY spawned segment starts frozen + non-lethal for
+   * ENEMY_SPAWN_TELEGRAPH_MS (the whole chain telegraphs and activates as one
+   * body). Public: the SpawnDirector is the sole caller during a run, supplying
+   * the ship position as (avoidX, avoidY); the avoid point is a spawn() ARGUMENT
+   * only — the Snake stores no ship and stays player-indifferent in its motion.
+   * Called with no avoid args the first roll is accepted (back-compat).
+   * @param {number} [avoidX] Ship x to keep the spawn away from.
+   * @param {number} [avoidY] Ship y to keep the spawn away from.
    */
-  spawn() {
-    const minX = ARENA_BORDER_INSET + SNAKE_SEGMENT_RADIUS;
-    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - SNAKE_SEGMENT_RADIUS;
-    const minY = ARENA_BORDER_INSET + SNAKE_SEGMENT_RADIUS;
-    const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - SNAKE_SEGMENT_RADIUS;
+  spawn(avoidX, avoidY) {
+    // Edge placement (edge draw + position draw, re-rolled to avoid the ship);
+    // the returned `edge` derives the inward heading — same draw order as pre-2.6.
+    const p = pickSafeEdgePlacement(
+      this._rng,
+      SNAKE_SEGMENT_RADIUS,
+      avoidX,
+      avoidY,
+      SPAWN_SAFE_RADIUS,
+      SPAWN_PLACEMENT_MAX_ATTEMPTS,
+    );
+    const hx = p.x;
+    const hy = p.y;
 
-    const edge = Math.floor(this._rng() * 4); // 0=top,1=bottom,2=left,3=right
-    const t = this._rng();
-
-    let hx;
-    let hy;
     let headingRad;
-    if (edge === 0) {
-      hx = minX + t * (maxX - minX);
-      hy = minY;
-      headingRad = Math.PI / 2; // point down, into the arena
-    } else if (edge === 1) {
-      hx = minX + t * (maxX - minX);
-      hy = maxY;
-      headingRad = -Math.PI / 2; // point up, into the arena
-    } else if (edge === 2) {
-      hx = minX;
-      hy = minY + t * (maxY - minY);
-      headingRad = 0; // point right, into the arena
+    if (p.edge === 0) {
+      headingRad = Math.PI / 2; // top edge → point down, into the arena
+    } else if (p.edge === 1) {
+      headingRad = -Math.PI / 2; // bottom edge → point up, into the arena
+    } else if (p.edge === 2) {
+      headingRad = 0; // left edge → point right, into the arena
     } else {
-      hx = maxX;
-      hy = minY + t * (maxY - minY);
-      headingRad = Math.PI; // point left, into the arena
+      headingRad = Math.PI; // right edge → point left, into the arena
     }
 
     // Trailing direction: opposite the head's heading. Segment i sits i spacings
@@ -328,6 +349,8 @@ export class SnakeSystem extends System {
       seg.y = hy + tdy * SNAKE_SEGMENT_SPACING * i;
       seg.vx = 0;
       seg.vy = 0;
+      // Telegraph every segment identically: the chain freezes + activates as one.
+      seg.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
       segments.push(seg);
     }
 

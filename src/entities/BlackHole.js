@@ -23,11 +23,18 @@ import { BLACKHOLE_RADIUS, BLACKHOLE_HP } from '../config/constants.js';
 //             absorbed bullet. At ≤ 0 the hole detonates (payout + removal).
 //  - feed   : accumulated absorptions toward the next enemy spawn; every
 //             BLACKHOLE_FEED_PER_SPAWN feeds emits one seeker and decrements.
+//  - telegraphMs : spawn-telegraph countdown (ms, Story 2.6). While > 0 the hole
+//             is non-lethal to the player (PlayerDeathSystem skips it) and frozen
+//             (BlackHoleSystem skips its gravity/absorb/feed/grow/detonation tick
+//             — a spawning hole is briefly invulnerable); it renders a spawn-in
+//             cue. Defaults to 0 (spawned-and-active); BlackHoleSystem._spawnOne
+//             overwrites it.
 
 /**
- * Create a fresh Black Hole with its starting radius, full hp, and zero feed.
- * Used as the hole Pool factory; every field is overwritten on spawn.
- * @returns {{x:number, y:number, radius:number, hp:number, feed:number}}
+ * Create a fresh Black Hole with its starting radius, full hp, zero feed, and
+ * inactive telegraph. Used as the hole Pool factory; every field is overwritten
+ * on spawn.
+ * @returns {{x:number, y:number, radius:number, hp:number, feed:number, telegraphMs:number}}
  */
 export function createBlackHole() {
   return {
@@ -36,5 +43,6 @@ export function createBlackHole() {
     radius: BLACKHOLE_RADIUS,
     hp: BLACKHOLE_HP,
     feed: 0,
+    telegraphMs: 0,
   };
 }

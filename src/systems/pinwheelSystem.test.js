@@ -22,6 +22,8 @@ import {
   PINWHEEL_SCORE,
   PLAYER_INVULN_MS,
   PLAYER_START_LIVES,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -366,6 +368,73 @@ describe('PinwheelSystem — no self-spawn / public spawn / placement / heading'
   });
 });
 
+describe('PinwheelSystem — spawn telegraph (Story 2.6)', () => {
+  it('spawn() sets telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS (heading + drift still set)', () => {
+    const system = makeSystem(seqRng([0.0, 0.5, 0.37]));
+    system.spawn();
+    const [pw] = activePinwheels(system);
+    expect(pw.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+    // Heading/speed are set on spawn as before (the drift only starts on activation).
+    expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
+  });
+
+  it('freezes a telegraphing pinwheel: no wander re-roll, no drift, counts down by dt', () => {
+    // rng()=>1 would turn by +MAX_TURN if the wander ran; it must NOT while frozen.
+    const system = new PinwheelSystem(() => 1);
+    const pw = placePinwheel(
+      system,
+      640,
+      360,
+      PINWHEEL_DRIFT_SPEED,
+      0,
+      PINWHEEL_WANDER_INTERVAL_MS, // primed to cross the wander interval this tick
+    );
+    pw.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+
+    system.fixedUpdate(DT);
+
+    // Frozen: position, velocity, and the wander accumulator are all untouched.
+    expect(pw.x).toBe(640);
+    expect(pw.y).toBe(360);
+    expect(pw.vx).toBe(PINWHEEL_DRIFT_SPEED);
+    expect(pw.vy).toBe(0);
+    expect(pw.wanderMs).toBe(PINWHEEL_WANDER_INTERVAL_MS);
+    // Only the telegraph advanced.
+    expect(pw.telegraphMs).toBeCloseTo(ENEMY_SPAWN_TELEGRAPH_MS - DT, 9);
+  });
+
+  it('drifts normally on the tick the telegraph reaches 0 (AC2)', () => {
+    const system = makeSystem();
+    const pw = placePinwheel(system, 640, 360, PINWHEEL_DRIFT_SPEED, 0, 0);
+    pw.telegraphMs = DT;
+
+    system.fixedUpdate(DT);
+
+    expect(pw.telegraphMs).toBe(0);
+    // Integrated by v·dtSec this same tick.
+    expect(pw.x).toBeCloseTo(640 + PINWHEEL_DRIFT_SPEED * (DT / 1000), 9);
+  });
+
+  it('spawn-point avoidance: re-rolls the placement away from a ship on the default candidate (AC3)', () => {
+    const shipX = MIN_X + 0.5 * (MAX_X - MIN_X);
+    const shipY = MIN_Y;
+    // top-center (on ship) → re-roll → bottom-center (far); trailing heading draw.
+    const system = makeSystem(seqRng([0.0, 0.5, 0.25, 0.5, 0.37]));
+    system.spawn(shipX, shipY);
+    const [pw] = activePinwheels(system);
+    const dx = pw.x - shipX;
+    const dy = pw.y - shipY;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+  });
+
+  it('the system never stores a ship — the avoid point is a spawn() argument only', () => {
+    const system = makeSystem();
+    system.spawn(100, 100);
+    // Player-indifferent by construction: no ship reference materializes.
+    expect(system.ship).toBeUndefined();
+  });
+});
+
 describe('PinwheelSystem — pool prewarm (NFR2)', () => {
   it('prewarms the pool and recycles instances without growing (no allocation)', () => {
     const system = makeSystem();
@@ -402,6 +471,7 @@ describe('createPinwheel factory', () => {
     expect(pw.radius).toBe(PINWHEEL_RADIUS);
     expect(pw.score).toBe(PINWHEEL_SCORE);
     expect(pw.wanderMs).toBe(0);
+    expect(pw.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
   });
 });
 

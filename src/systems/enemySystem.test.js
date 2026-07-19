@@ -8,6 +8,8 @@ import {
   SEEKER_SPEED,
   SEEKER_RADIUS,
   SEEKER_POOL_PREWARM,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -107,6 +109,86 @@ describe('EnemySystem — spawn placement', () => {
     const [s] = activeSeekers(system);
     expect(s.y).toBe(minY);
     expect(s.x).toBeCloseTo(minX + 0.5 * (maxX - minX), 6);
+  });
+});
+
+describe('EnemySystem — spawn telegraph (Story 2.6)', () => {
+  it('spawn() sets telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS and starts at rest', () => {
+    const system = new EnemySystem(makeShip(640, 360), seqRng([0.1, 0.5]));
+    system.spawn();
+    const [s] = activeSeekers(system);
+    expect(s.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+    expect(s.vx).toBe(0);
+    expect(s.vy).toBe(0);
+  });
+
+  it('freezes a telegraphing seeker (no homing) and counts telegraphMs down by dt (AC1)', () => {
+    const system = new EnemySystem(makeShip(1000, 360), seqRng([0.1, 0.5]));
+    const s = placeSeeker(system, 100, 360); // ship far to the +x side
+    s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+
+    system.fixedUpdate(DT);
+
+    // Position + velocity unchanged (frozen); only the countdown advanced.
+    expect(s.x).toBe(100);
+    expect(s.y).toBe(360);
+    expect(s.vx).toBe(0);
+    expect(s.vy).toBe(0);
+    expect(s.telegraphMs).toBeCloseTo(ENEMY_SPAWN_TELEGRAPH_MS - DT, 9);
+  });
+
+  it('homes normally on the tick the telegraph reaches 0 (AC2)', () => {
+    const system = new EnemySystem(makeShip(1000, 360), seqRng([0.1, 0.5]));
+    const s = placeSeeker(system, 100, 360);
+    s.telegraphMs = DT; // exactly one step from activation
+
+    system.fixedUpdate(DT); // decrements to 0 AND homes this same tick
+
+    expect(s.telegraphMs).toBe(0);
+    expect(s.vx).toBeCloseTo(SEEKER_SPEED, 6); // homing toward +x
+    expect(s.x).toBeGreaterThan(100); // moved toward the ship
+  });
+
+  it('countdown clamps at 0 and is frame-rate independent (fine vs coarse reach 0 together)', () => {
+    function elapsedToZero(tickMs) {
+      const system = new EnemySystem(makeShip(1000, 360), seqRng([0.1, 0.5]));
+      const s = placeSeeker(system, 100, 360);
+      s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+      let elapsed = 0;
+      let guard = 0;
+      while (s.telegraphMs > 0 && guard < 100000) {
+        system.fixedUpdate(tickMs);
+        elapsed += tickMs;
+        guard++;
+        expect(s.telegraphMs).toBeGreaterThanOrEqual(0); // never negative (clamped)
+      }
+      return elapsed;
+    }
+    const fine = elapsedToZero(1);
+    const coarse = elapsedToZero(DT);
+    expect(fine).toBeGreaterThanOrEqual(ENEMY_SPAWN_TELEGRAPH_MS);
+    expect(fine).toBeLessThan(ENEMY_SPAWN_TELEGRAPH_MS + 1);
+    expect(coarse).toBeGreaterThanOrEqual(ENEMY_SPAWN_TELEGRAPH_MS);
+    expect(coarse).toBeLessThan(ENEMY_SPAWN_TELEGRAPH_MS + DT);
+  });
+});
+
+describe('EnemySystem — spawn-point ship avoidance (Story 2.6, AC3)', () => {
+  it('re-rolls the placement away from a ship on the default edge candidate', () => {
+    // Ship pinned on the top-center edge point (the first rng candidate). The
+    // placement must re-roll to a point ≥ SPAWN_SAFE_RADIUS away.
+    const minX = ARENA_BORDER_INSET + SEEKER_RADIUS;
+    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - SEEKER_RADIUS;
+    const minY = ARENA_BORDER_INSET + SEEKER_RADIUS;
+    const shipX = minX + 0.5 * (maxX - minX);
+    const shipY = minY;
+    // First roll: top-center (on the ship). Re-roll: bottom-center (far).
+    const system = new EnemySystem(makeShip(shipX, shipY), seqRng([0.0, 0.5, 0.25, 0.5]));
+    system.spawn(shipX, shipY);
+    const [s] = activeSeekers(system);
+    const dx = s.x - shipX;
+    const dy = s.y - shipY;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
   });
 });
 

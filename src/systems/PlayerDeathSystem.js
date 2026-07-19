@@ -13,9 +13,11 @@ import { PLAYER_INVULN_MS } from '../config/constants.js';
 //
 // The enemy pools are a LIST so every archetype (Blue Seeker, Green Square, and
 // future Epic-2 enemies) is lethal on contact through this one seam (FR6) — no
-// per-type duplicate. Every enemy shares the uniform {x,y,radius} shape, so this
-// seam reads only x,y,radius and stays type-agnostic (a Green Square kills on
-// contact regardless of its aggro state).
+// per-type duplicate. Every enemy shares the uniform {x,y,radius,telegraphMs}
+// shape, so this seam reads only those fields and stays type-agnostic (a Green
+// Square kills on contact regardless of its aggro state). Story 2.6: an instance
+// still telegraphing its spawn (telegraphMs > 0) is skipped — the single
+// non-lethality seam that makes every archetype safe while spawning in.
 //
 // Each fixed step:
 //   1. If the run is over (gameOver), do nothing.
@@ -92,6 +94,11 @@ export class PlayerDeathSystem extends System {
     // per tick — break so overlapping enemies cost exactly one life.
     for (let i = 0; i < enemies.length; i++) {
       const s = enemies[i];
+      // Story 2.6: a telegraphing (spawning-in) enemy of ANY archetype is
+      // non-lethal — skip it. The uniform telegraphMs field defaults to 0
+      // (active/lethal) in every factory, so this one line makes every archetype
+      // safe while telegraphing through this single shared seam.
+      if (s.telegraphMs > 0) continue;
       const dx = ship.x - s.x;
       const dy = ship.y - s.y;
       const r = ship.radius + s.radius;

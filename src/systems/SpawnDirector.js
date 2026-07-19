@@ -35,11 +35,18 @@ export class SpawnDirector extends System {
    *   whose `activeCount` feeds the global cap.
    * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the
    *   weighted archetype pick; injectable so selection is unit-testable.
+   * @param {{x:number,y:number}|null} [ship=null] The player ship (Story 2.6). When
+   *   set, the director is the sole spawn-point ship-avoidance coordinate source
+   *   for its four archetypes: it passes `ship.x, ship.y` to each `spawn()` so the
+   *   placement re-rolls away from the ship. When null, `spawn()` is called with no
+   *   avoid args (back-compat). The archetypes never store the ship — it flows only
+   *   as a `spawn()` argument, so Pinwheel/Snake stay player-indifferent.
    */
-  constructor(spawnables, rng = Math.random) {
+  constructor(spawnables, rng = Math.random, ship = null) {
     super();
     this._spawnables = spawnables;
     this._rng = rng;
+    this._ship = ship;
 
     // Elapsed sim time (Σ dt) — the sole input to the ramp. Advances only by dt.
     this._elapsedMs = 0;
@@ -174,11 +181,17 @@ export class SpawnDirector extends System {
     }
     if (total <= 0) return; // no positive-weight archetype — nothing to spawn
 
+    // Story 2.6: forward the ship position as the avoid point when the director
+    // holds a ship, else call spawn() with no avoid args (back-compat). The ship
+    // is passed only as an argument — the archetypes never store it.
+    const ship = this._ship;
+
     let r = this._rng() * total;
     for (let i = 0; i < spawnables.length; i++) {
       r -= weights[i];
       if (r < 0) {
-        spawnables[i].system.spawn();
+        if (ship) spawnables[i].system.spawn(ship.x, ship.y);
+        else spawnables[i].system.spawn();
         return;
       }
     }
@@ -186,7 +199,8 @@ export class SpawnDirector extends System {
     // negative), award the spawn to the last positive-weight archetype.
     for (let i = spawnables.length - 1; i >= 0; i--) {
       if (weights[i] > 0) {
-        spawnables[i].system.spawn();
+        if (ship) spawnables[i].system.spawn(ship.x, ship.y);
+        else spawnables[i].system.spawn();
         return;
       }
     }

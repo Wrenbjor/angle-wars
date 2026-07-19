@@ -34,6 +34,8 @@ import {
   BLACKHOLE_SCORE,
   PLAYER_INVULN_MS,
   PLAYER_START_LIVES,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -97,6 +99,7 @@ describe('createBlackHole factory', () => {
     expect(h.radius).toBe(BLACKHOLE_RADIUS);
     expect(h.hp).toBe(BLACKHOLE_HP);
     expect(h.feed).toBe(0);
+    expect(h.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
     expect('vx' in h).toBe(false);
     expect('vy' in h).toBe(false);
   });
@@ -183,6 +186,64 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
     const small = stepOnce(DT);
     const big = stepOnce(2 * DT);
     expect(big).toBeCloseTo(2 * small, 9);
+  });
+});
+
+describe('BlackHoleSystem — telegraphing enemies are inert to the hole (Story 2.6)', () => {
+  it('an ACTIVE hole does not pull a telegraphing enemy in its gravity radius, but pulls an active one', () => {
+    const bulletPool = new Pool(createBullet);
+    const enemyPool = new Pool(createSeeker);
+    const { system } = makeSystem({ bulletPool, enemyPools: [enemyPool] });
+    placeHole(system, CENTER_X, CENTER_Y); // active hole (telegraphMs 0)
+
+    const telegraphing = enemyPool.acquire();
+    telegraphing.x = CENTER_X - 100; // inside gravity radius
+    telegraphing.y = CENTER_Y;
+    telegraphing.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    const active = enemyPool.acquire();
+    active.x = CENTER_X + 120; // inside gravity radius
+    active.y = CENTER_Y;
+    active.telegraphMs = 0;
+
+    system.fixedUpdate(DT);
+
+    // Frozen enemy is not dragged (position unchanged); active enemy is pulled in.
+    expect(telegraphing.x).toBe(CENTER_X - 100);
+    expect(telegraphing.y).toBe(CENTER_Y);
+    expect(active.x).toBeLessThan(CENTER_X + 120);
+  });
+
+  it('an ACTIVE hole does not absorb a telegraphing enemy overlapping its body — until it activates', () => {
+    const bulletPool = new Pool(createBullet);
+    const enemyPool = new Pool(createSeeker);
+    const { system } = makeSystem({ bulletPool, enemyPools: [enemyPool] });
+    const collision = new CollisionSystem(bulletPool, [enemyPool]);
+    system.collisionSystem = collision;
+
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const e = enemyPool.acquire();
+    e.x = CENTER_X + 5; // overlapping the body but not coincident (so a pull would move it)
+    e.y = CENTER_Y;
+    e.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS; // telegraphing
+
+    collision.fixedUpdate(DT); // resets killedEnemies to []
+    system.fixedUpdate(DT);
+
+    // Not absorbed and not pulled while telegraphing — inert.
+    expect(enemyPool.activeCount).toBe(1);
+    expect(hole.feed).toBe(0);
+    expect(hole.radius).toBe(BLACKHOLE_RADIUS);
+    expect(collision.killedEnemies).not.toContain(e);
+    expect(e.x).toBe(CENTER_X + 5); // gravity skipped it too
+
+    // Activate it: now the same overlapping enemy is absorbed + fed.
+    e.telegraphMs = 0;
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+
+    expect(enemyPool.activeCount).toBe(0); // absorbed
+    expect(hole.feed).toBe(1);
+    expect(collision.killedEnemies).toContain(e);
   });
 });
 
@@ -564,6 +625,141 @@ describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (A
   });
 });
 
+describe('BlackHoleSystem — spawn telegraph (Story 2.6)', () => {
+  it('freezes a telegraphing hole: no gravity, no absorb/feed/grow/detonation; counts down by dt (AC1)', () => {
+    const bulletPool = new Pool(createBullet);
+    const ship = createPlayerShip();
+    const { system } = makeSystem({ bulletPool, ship });
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    hole.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    // Ship within the gravity radius, a bullet dead-center (would be absorbed).
+    ship.x = CENTER_X - 100;
+    ship.y = CENTER_Y;
+    const b = bulletPool.acquire();
+    b.x = CENTER_X;
+    b.y = CENTER_Y;
+    const startHp = hole.hp;
+
+    system.fixedUpdate(DT);
+
+    // No gravity (ship unmoved), no absorb/feed (bullet alive, hp/radius/feed unchanged).
+    expect(ship.x).toBe(CENTER_X - 100);
+    expect(bulletPool.activeCount).toBe(1);
+    expect(hole.hp).toBe(startHp);
+    expect(hole.radius).toBe(BLACKHOLE_RADIUS);
+    expect(hole.feed).toBe(0);
+    // Only the telegraph advanced.
+    expect(hole.telegraphMs).toBeCloseTo(ENEMY_SPAWN_TELEGRAPH_MS - DT, 9);
+  });
+
+  it('a telegraphing hole overlapping the ship is non-lethal via the death seam (AC1)', () => {
+    const ship = createPlayerShip();
+    const { system } = makeSystem({ ship });
+    const hole = placeHole(system, 300, 300);
+    hole.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    ship.x = 300;
+    ship.y = 300; // overlapping
+
+    const playerState = createPlayerState();
+    const death = new PlayerDeathSystem(ship, [system.holePool], playerState);
+    death.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES); // no death while telegraphing
+    expect(playerState.gameOver).toBe(false);
+  });
+
+  it('resumes gravity + becomes active on the tick the telegraph reaches 0 (AC2)', () => {
+    const ship = createPlayerShip();
+    const { system } = makeSystem({ ship });
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    hole.telegraphMs = DT; // one step from activation
+    ship.x = CENTER_X - 100;
+    ship.y = CENTER_Y;
+
+    system.fixedUpdate(DT);
+
+    expect(hole.telegraphMs).toBe(0);
+    // Gravity resumed this same tick — the ship was pulled toward the hole (+x).
+    expect(ship.x).toBeGreaterThan(CENTER_X - 100);
+  });
+
+  it('a fed seeker is emitted telegraphing AND placed ≥ SPAWN_SAFE_RADIUS from the ship (AC3)', () => {
+    const bulletPool = new Pool(createBullet);
+    const spawnPool = new Pool(createSeeker);
+    const ship = createPlayerShip(); // center
+    const { system } = makeSystem({
+      bulletPool,
+      spawnPool,
+      ship,
+      rng: seqRng([0.0, 0.5]), // top edge, far from a centered ship → accepted
+    });
+    const hole = placeHole(system, CENTER_X, CENTER_Y, {
+      feed: BLACKHOLE_FEED_PER_SPAWN - 1,
+    });
+    const b = bulletPool.acquire();
+    b.x = CENTER_X;
+    b.y = CENTER_Y;
+
+    system.fixedUpdate(DT);
+
+    expect(spawnPool.activeCount).toBe(1);
+    expect(hole.feed).toBe(0);
+    const spawned = activeOf(spawnPool)[0];
+    // Fed seeker telegraphs (frozen + non-lethal until it activates).
+    expect(spawned.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+    // And it is kept away from the ship.
+    const dx = spawned.x - ship.x;
+    const dy = spawned.y - ship.y;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+  });
+
+  it('a fed seeker RE-ROLLS away from a ship sitting on the first edge candidate (AC3)', () => {
+    // Pin the ship ON the first edge candidate (top-center, edge 0 / t=0.5) so the
+    // avoidance MUST re-roll — this fails if `_spawnSeekerAtEdge` drops `this.ship`.
+    const bulletPool = new Pool(createBullet);
+    const spawnPool = new Pool(createSeeker);
+    const ship = createPlayerShip();
+    ship.x = ARENA_WIDTH / 2; // == first edge candidate x
+    ship.y = ARENA_BORDER_INSET + SEEKER_RADIUS; // == first edge candidate y (top)
+    const { system } = makeSystem({
+      bulletPool,
+      spawnPool,
+      ship,
+      // edge 0 / t=0.5 (on the ship → too close) → re-roll → edge 1 / t=0.5 (far).
+      rng: seqRng([0.0, 0.5, 0.25, 0.5]),
+    });
+    const hole = placeHole(system, CENTER_X, CENTER_Y, {
+      feed: BLACKHOLE_FEED_PER_SPAWN - 1,
+    });
+    const b = bulletPool.acquire();
+    b.x = CENTER_X;
+    b.y = CENTER_Y;
+
+    system.fixedUpdate(DT);
+
+    expect(spawnPool.activeCount).toBe(1);
+    expect(hole.feed).toBe(0);
+    const spawned = activeOf(spawnPool)[0];
+    // Re-rolled clear of the ship (would be ~0 away if avoidance were disabled).
+    const dx = spawned.x - ship.x;
+    const dy = spawned.y - ship.y;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+    expect(spawned.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+  });
+
+  it('_spawnOne places the hole ≥ SPAWN_SAFE_RADIUS from the ship and telegraphing (AC3)', () => {
+    const ship = createPlayerShip(); // center — the first interior roll lands on it
+    // First interior roll (0.5,0.5) == center (on ship) → re-roll to a corner.
+    const { system } = makeSystem({ ship, rng: seqRng([0.5, 0.5, 0.0, 0.0]) });
+    system._spawnOne();
+    const hole = activeOf(system.holePool)[0];
+    const dx = hole.x - ship.x;
+    const dy = hole.y - ship.y;
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+    expect(hole.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+  });
+});
+
 describe('BlackHoleSystem — self-spawn cadence + cap', () => {
   it('spawns one hole after a full interval and never exceeds BLACKHOLE_MAX_ACTIVE', () => {
     const { system } = makeSystem();
@@ -592,8 +788,10 @@ describe('BlackHoleSystem — self-spawn cadence + cap', () => {
     for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
     expect(system.holePool.activeCount).toBe(BLACKHOLE_MAX_ACTIVE);
 
-    // Destroy the one hole: drop its hp and put a bullet on it.
+    // Destroy the one hole: activate it past its spawn telegraph (Story 2.6 —
+    // a self-spawned hole starts frozen + invulnerable), drop its hp, bullet on it.
     const hole = activeOf(system.holePool)[0];
+    hole.telegraphMs = 0;
     hole.hp = BLACKHOLE_BULLET_DAMAGE;
     const b = bulletPool.acquire();
     b.x = hole.x;

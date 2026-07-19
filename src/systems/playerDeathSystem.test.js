@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PlayerDeathSystem } from './PlayerDeathSystem.js';
+import { EnemySystem } from './EnemySystem.js';
 import { Pool } from '../core/Pool.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
@@ -214,6 +215,142 @@ describe('PlayerDeathSystem', () => {
     addSeeker(enemyPool, 500, 500); // far, no contact
     for (let i = 0; i < 50; i++) system.fixedUpdate(DT);
     expect(enemyPool.activeCount + enemyPool.freeCount).toBe(1);
+  });
+});
+
+describe('PlayerDeathSystem — spawn telegraph non-lethality (Story 2.6)', () => {
+  it('a telegraphing enemy (telegraphMs > 0) overlapping the ship is NON-lethal (AC1)', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 100;
+    ship.y = 100;
+    const s = addSeeker(enemyPool, 100, 100); // fully overlapping
+    s.telegraphMs = 500; // still spawning in → skipped by the death seam
+
+    system.fixedUpdate(DT);
+
+    // No life lost, no respawn, no game-over — the telegraphing enemy is skipped.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.gameOver).toBe(false);
+    expect(playerState.invulnMs).toBe(0);
+    expect(ship.x).toBe(100); // not respawned to center
+    expect(ship.y).toBe(100);
+    // PlayerDeathSystem never mutates telegraphMs (the owning mover counts it down).
+    expect(s.telegraphMs).toBe(500);
+  });
+
+  it('an active enemy (telegraphMs == 0) overlapping the ship is still lethal (AC2)', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 100;
+    ship.y = 100;
+    const s = addSeeker(enemyPool, 100, 100);
+    s.telegraphMs = 0; // activated
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+  });
+
+  it('the same enemy becomes lethal the step AFTER its telegraph is spent (AC2)', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 100;
+    ship.y = 100;
+    const s = addSeeker(enemyPool, 100, 100);
+    // Telegraphing → non-lethal.
+    s.telegraphMs = DT;
+    system.fixedUpdate(DT);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+
+    // The mover decremented it to 0 (simulated here); now it is lethal.
+    s.telegraphMs = 0;
+    system.fixedUpdate(DT);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+  });
+
+  it('mixed overlap: exactly one death, caused by the ACTIVE enemy; the telegraphing one is skipped', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 200;
+    ship.y = 200;
+    const telegraphing = addSeeker(enemyPool, 200, 200);
+    telegraphing.telegraphMs = 400; // skipped
+    const active = addSeeker(enemyPool, 200, 200);
+    active.telegraphMs = 0; // lethal
+
+    system.fixedUpdate(DT);
+
+    // Exactly one death — from the active enemy; the telegraphing one never counts.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(playerState.gameOver).toBe(false);
+    // Neither enemy is destroyed by contact, and the telegraph is untouched.
+    expect(enemyPool.activeCount).toBe(2);
+    expect(telegraphing.telegraphMs).toBe(400);
+  });
+});
+
+describe('PlayerDeathSystem — composed with the real EnemySystem mover (Story 2.6 AC2)', () => {
+  // AC2's "same tick begins normal behavior AND becomes lethal" is a cross-system
+  // ordering property: the owning mover decrements telegraphMs to 0, then
+  // PlayerDeathSystem — running LATER in the same fixed step — reads that now-zero
+  // value as lethal. The other telegraph tests hand-set telegraphMs = 0 to stand in
+  // for the mover; these run the actual EnemySystem mover and the death seam over a
+  // SHARED pool, so the coupling (and the no-early / no-late-lethality boundary) is
+  // asserted through the real decrement, not a simulated one.
+  function makeComposed() {
+    const ship = createPlayerShip();
+    // The seeker never fires random spawns here (we place it directly), but a
+    // deterministic rng keeps construction free of Math.random.
+    const enemy = new EnemySystem(ship, () => 0.5);
+    const playerState = createPlayerState();
+    // The death seam reads the SAME pool the mover owns and counts down.
+    const death = new PlayerDeathSystem(ship, [enemy.enemyPool], playerState);
+    return { ship, enemy, playerState, death };
+  }
+
+  it('the tick the mover zeroes telegraphMs is the tick the death seam turns lethal', () => {
+    const { ship, enemy, playerState, death } = makeComposed();
+    ship.x = 100;
+    ship.y = 100;
+    const s = enemy.enemyPool.acquire();
+    s.x = 100; // coincident with the ship → homing keeps it in contact
+    s.y = 100;
+    s.vx = 0;
+    s.vy = 0;
+    s.telegraphMs = DT; // one step from activation
+
+    // Real mover step: decrements DT → 0 and (now active) homes. Coincident with
+    // the ship, so it stays overlapping.
+    enemy.fixedUpdate(DT);
+    expect(s.telegraphMs).toBe(0); // the mover — not the test — cleared it
+
+    // Death seam runs later in the same fixed step: lethal that same step.
+    death.fixedUpdate(DT);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+  });
+
+  it('while still telegraphing after a mover step, the enemy is frozen in place AND non-lethal', () => {
+    const { ship, enemy, playerState, death } = makeComposed();
+    ship.x = 100;
+    ship.y = 100;
+    const s = enemy.enemyPool.acquire();
+    s.x = 100;
+    s.y = 100;
+    s.vx = 0;
+    s.vy = 0;
+    s.telegraphMs = DT * 2; // two steps from activation
+
+    // Real mover step: decrements to DT (still > 0) and must NOT move it.
+    enemy.fixedUpdate(DT);
+    expect(s.telegraphMs).toBeCloseTo(DT, 9);
+    expect(s.x).toBe(100); // frozen — no homing while telegraphing
+    expect(s.y).toBe(100);
+
+    // Death seam: no life lost while it is still telegraphing.
+    death.fixedUpdate(DT);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.gameOver).toBe(false);
   });
 });
 

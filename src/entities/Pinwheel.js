@@ -25,12 +25,17 @@ import { PINWHEEL_RADIUS, PINWHEEL_SCORE } from '../config/constants.js';
 //               type-agnostic across archetypes.
 //  - wanderMs : per-instance accumulator (ms) for the heading re-roll cadence.
 //               Ignored by the shared collision/death/scoring seams.
+//  - telegraphMs : spawn-telegraph countdown (ms, Story 2.6). While > 0 the
+//               pinwheel is non-lethal to the player (PlayerDeathSystem skips it)
+//               and frozen (PinwheelSystem skips its wander/drift/bounce tick);
+//               it renders a spawn-in cue. Defaults to 0 (spawned-and-active);
+//               PinwheelSystem.spawn overwrites it.
 
 /**
- * Create a zeroed pinwheel with its collision radius, base score, and a zeroed
- * wander accumulator. Used as the Pool factory; positional/velocity/wander fields
- * are overwritten on spawn.
- * @returns {{x:number, y:number, vx:number, vy:number, radius:number, score:number, wanderMs:number}}
+ * Create a zeroed pinwheel with its collision radius, base score, a zeroed
+ * wander accumulator, and inactive telegraph. Used as the Pool factory;
+ * positional/velocity/wander/telegraph fields are overwritten on spawn.
+ * @returns {{x:number, y:number, vx:number, vy:number, radius:number, score:number, wanderMs:number, telegraphMs:number}}
  */
 export function createPinwheel() {
   return {
@@ -41,5 +46,6 @@ export function createPinwheel() {
     radius: PINWHEEL_RADIUS,
     score: PINWHEEL_SCORE,
     wanderMs: 0,
+    telegraphMs: 0,
   };
 }

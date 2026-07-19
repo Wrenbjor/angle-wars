@@ -33,6 +33,9 @@ import {
   SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
   SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
   SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_TELEGRAPH_MIN_ALPHA,
+  SPAWN_TELEGRAPH_MIN_SCALE,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
@@ -54,6 +57,11 @@ import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
 import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
+import {
+  spawnTelegraphProgress,
+  telegraphAlpha,
+  telegraphScale,
+} from './telegraphCue.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -148,28 +156,36 @@ export class ArenaScene extends Phaser.Scene {
     // tick). It owns the escalating ramp (interval floor + mix interpolation) and
     // the global active cap; a fresh instance each run (scene.restart) resets it
     // to the base ramp. Default rng (run-scoped randomness).
-    this.spawnDirector = new SpawnDirector([
-      {
-        system: this.enemySystem,
-        baseWeight: SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
-        peakWeight: SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
-      },
-      {
-        system: this.greenSquareSystem,
-        baseWeight: SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
-        peakWeight: SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT,
-      },
-      {
-        system: this.pinwheelSystem,
-        baseWeight: SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT,
-        peakWeight: SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
-      },
-      {
-        system: this.snakeSystem,
-        baseWeight: SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
-        peakWeight: SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
-      },
-    ]);
+    this.spawnDirector = new SpawnDirector(
+      [
+        {
+          system: this.enemySystem,
+          baseWeight: SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
+          peakWeight: SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
+        },
+        {
+          system: this.greenSquareSystem,
+          baseWeight: SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
+          peakWeight: SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT,
+        },
+        {
+          system: this.pinwheelSystem,
+          baseWeight: SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT,
+          peakWeight: SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
+        },
+        {
+          system: this.snakeSystem,
+          baseWeight: SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
+          peakWeight: SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
+        },
+      ],
+      // Default rng (run-scoped randomness); pass the ship so the director keeps
+      // every spawn point ≥ SPAWN_SAFE_RADIUS from the player (Story 2.6). The
+      // avoid point flows only as a spawn() argument — Pinwheel/Snake never store
+      // the ship and stay player-indifferent in their motion.
+      undefined,
+      this.ship,
+    );
     this.world.addSystem(this.spawnDirector);
     // The shared collision seam sees ALL archetype pools as an array, so a bullet
     // can destroy any enemy through one path (no per-type duplicate).
@@ -403,11 +419,14 @@ export class ArenaScene extends Phaser.Scene {
 
     // Redraw active seekers from the enemy pool: clear once, then a filled blue
     // circle per live seeker. Placeholder shape only (Epic 4 adds the aesthetic).
+    // Story 2.6: a spawning-in seeker fades + scales in (per-instance alpha/radius
+    // from its telegraphMs); an active seeker draws exactly as before (p==1).
     const sg = this.seekerGraphics;
     sg.clear();
-    sg.fillStyle(COLOR_SEEKER, 1);
     this.enemySystem.enemyPool.forEachActive((s) => {
-      sg.fillCircle(s.x, s.y, s.radius);
+      const p = spawnTelegraphProgress(s.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      sg.fillStyle(COLOR_SEEKER, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      sg.fillCircle(s.x, s.y, s.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
     });
 
     // Redraw active green squares from their pool: clear once, then a filled
@@ -415,11 +434,14 @@ export class ArenaScene extends Phaser.Scene {
     // adds the aesthetic; aggro state is not visually distinguished yet).
     const gsg = this.greenSquareGraphics;
     gsg.clear();
-    gsg.fillStyle(COLOR_GREEN_SQUARE, 1);
     // Draw from each instance's own radius (matching the seeker render) so the
     // drawn square always tracks the value the collision seams actually use.
+    // Story 2.6: a spawning-in square fades + scales in from its telegraphMs.
     this.greenSquareSystem.enemyPool.forEachActive((s) => {
-      gsg.fillRect(s.x - s.radius, s.y - s.radius, s.radius * 2, s.radius * 2);
+      const p = spawnTelegraphProgress(s.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      gsg.fillStyle(COLOR_GREEN_SQUARE, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      const r = s.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE);
+      gsg.fillRect(s.x - r, s.y - r, r * 2, r * 2);
     });
 
     // Redraw active pinwheels from their pool: clear once, then a filled diamond
@@ -428,10 +450,12 @@ export class ArenaScene extends Phaser.Scene {
     // instance's own radius so the shape tracks the collision value.
     const pwg = this.pinwheelGraphics;
     pwg.clear();
-    pwg.fillStyle(COLOR_PINWHEEL, 1);
     const pwPts = this._pinwheelPoints;
+    // Story 2.6: a spawning-in pinwheel fades + scales in from its telegraphMs.
     this.pinwheelSystem.enemyPool.forEachActive((pw) => {
-      const r = pw.radius;
+      const p = spawnTelegraphProgress(pw.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      pwg.fillStyle(COLOR_PINWHEEL, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      const r = pw.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE);
       // Mutate the reusable 4-point buffer in place (top/right/bottom/left) — no
       // per-frame allocation.
       pwPts[0].x = pw.x;
@@ -451,9 +475,12 @@ export class ArenaScene extends Phaser.Scene {
     // own radius so the shape tracks the collision value.
     const skg = this.snakeGraphics;
     skg.clear();
-    skg.fillStyle(COLOR_SNAKE, 1);
+    // Story 2.6: a spawning-in snake segment fades + scales in from its telegraphMs
+    // (every segment shares the head's value, so the whole chain telegraphs as one).
     this.snakeSystem.enemyPool.forEachActive((seg) => {
-      skg.fillCircle(seg.x, seg.y, seg.radius);
+      const p = spawnTelegraphProgress(seg.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      skg.fillStyle(COLOR_SNAKE, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      skg.fillCircle(seg.x, seg.y, seg.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
     });
 
     // Redraw active black holes from the hole pool: clear once, then a filled
@@ -461,9 +488,11 @@ export class ArenaScene extends Phaser.Scene {
     // (Epic 4 / Story 4.2 adds the grid-warp aesthetic). Zero per-frame allocation.
     const bhg = this.blackHoleGraphics;
     bhg.clear();
-    bhg.fillStyle(COLOR_BLACK_HOLE, 1);
+    // Story 2.6: a spawning-in hole fades + scales in from its telegraphMs.
     this.blackHoleSystem.holePool.forEachActive((h) => {
-      bhg.fillCircle(h.x, h.y, h.radius);
+      const p = spawnTelegraphProgress(h.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      bhg.fillStyle(COLOR_BLACK_HOLE, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      bhg.fillCircle(h.x, h.y, h.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.

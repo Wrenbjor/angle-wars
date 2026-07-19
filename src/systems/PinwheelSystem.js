@@ -1,6 +1,7 @@
 import { System } from '../core/System.js';
 import { Pool } from '../core/Pool.js';
 import { createPinwheel } from '../entities/Pinwheel.js';
+import { pickSafeEdgePlacement } from './spawnPlacement.js';
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
@@ -10,6 +11,9 @@ import {
   PINWHEEL_WANDER_INTERVAL_MS,
   PINWHEEL_WANDER_MAX_TURN_RAD,
   PINWHEEL_POOL_PREWARM,
+  ENEMY_SPAWN_TELEGRAPH_MS,
+  SPAWN_SAFE_RADIUS,
+  SPAWN_PLACEMENT_MAX_ATTEMPTS,
 } from '../config/constants.js';
 
 // PinwheelSystem — Pinwheel/Wanderer wander + drift + wall-bounce (Phaser-free).
@@ -80,6 +84,16 @@ export class PinwheelSystem extends System {
     const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - PINWHEEL_RADIUS;
 
     this.enemyPool.forEachActive((pw) => {
+      // Story 2.6 telegraph gate: a spawning-in pinwheel is frozen (no wander
+      // re-roll, no drift, no bounce) and non-lethal until its countdown reaches
+      // 0. Decrement by the fixed-step dt (frame-rate-independent), clamp at 0,
+      // and skip the behavior while still telegraphing. On the tick it reaches 0
+      // it falls through and drifts + becomes lethal this same tick.
+      if (pw.telegraphMs > 0) {
+        pw.telegraphMs -= dt;
+        if (pw.telegraphMs > 0) return; // still telegraphing → frozen
+        pw.telegraphMs = 0; // just activated → fall through to normal behavior
+      }
       // 1. Wander: re-roll the heading each time the per-instance accumulator
       //    crosses the interval. Rotating the velocity vector preserves |v|, so
       //    the drift speed stays constant (never recomputed from an angle).
@@ -119,40 +133,35 @@ export class PinwheelSystem extends System {
   }
 
   /**
-   * Spawn one pinwheel on a random arena edge, fully inside the drawn border:
-   * the fixed axis is pinned just inside the inset (by the radius), the free axis
-   * is uniformly random within [inset+radius, dim−inset−radius]. Its heading is a
-   * uniform random angle at the drift speed (so |v| == PINWHEEL_DRIFT_SPEED), and
-   * its wander accumulator is reset to 0. Public: the SpawnDirector is the sole
-   * caller during a run.
+   * Spawn one pinwheel on a random arena edge, fully inside the drawn border (the
+   * fixed axis pinned just inside the inset by the radius, the free axis uniform
+   * along the edge). Story 2.6: the placement re-rolls (bounded) to keep the point
+   * ≥ SPAWN_SAFE_RADIUS from the ship, and the fresh pinwheel starts frozen +
+   * non-lethal for ENEMY_SPAWN_TELEGRAPH_MS. Its heading is a uniform random angle
+   * at the drift speed (so |v| == PINWHEEL_DRIFT_SPEED), and its wander accumulator
+   * is reset to 0. Public: the SpawnDirector is the sole caller during a run,
+   * supplying the ship position as (avoidX, avoidY); the avoid point is a spawn()
+   * ARGUMENT only — the Pinwheel stores no ship and stays player-indifferent in its
+   * motion. Called with no avoid args the first roll is accepted (back-compat).
+   * @param {number} [avoidX] Ship x to keep the spawn away from.
+   * @param {number} [avoidY] Ship y to keep the spawn away from.
    */
-  spawn() {
+  spawn(avoidX, avoidY) {
     const pw = this.enemyPool.acquire();
+    // Edge placement (edge draw + position draw, re-rolled to avoid the ship),
+    // then a third rng draw for the heading — same draw order as pre-2.6.
+    const p = pickSafeEdgePlacement(
+      this._rng,
+      PINWHEEL_RADIUS,
+      avoidX,
+      avoidY,
+      SPAWN_SAFE_RADIUS,
+      SPAWN_PLACEMENT_MAX_ATTEMPTS,
+    );
+    pw.x = p.x;
+    pw.y = p.y;
 
-    const minX = ARENA_BORDER_INSET + PINWHEEL_RADIUS;
-    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - PINWHEEL_RADIUS;
-    const minY = ARENA_BORDER_INSET + PINWHEEL_RADIUS;
-    const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - PINWHEEL_RADIUS;
-
-    // Choose one of four edges. First rng draw picks the edge, second the
-    // position along it.
-    const edge = Math.floor(this._rng() * 4); // 0=top,1=bottom,2=left,3=right
-    const t = this._rng();
-    if (edge === 0) {
-      pw.x = minX + t * (maxX - minX);
-      pw.y = minY;
-    } else if (edge === 1) {
-      pw.x = minX + t * (maxX - minX);
-      pw.y = maxY;
-    } else if (edge === 2) {
-      pw.x = minX;
-      pw.y = minY + t * (maxY - minY);
-    } else {
-      pw.x = maxX;
-      pw.y = minY + t * (maxY - minY);
-    }
-
-    // Random heading at the constant drift speed (third rng draw). |v| is exactly
+    // Random heading at the constant drift speed. |v| is exactly
     // PINWHEEL_DRIFT_SPEED; the wander/bounce only rotate/reflect it thereafter.
     const angle = this._rng() * Math.PI * 2;
     pw.vx = Math.cos(angle) * PINWHEEL_DRIFT_SPEED;
@@ -160,5 +169,7 @@ export class PinwheelSystem extends System {
 
     // Fresh wander cadence for a (possibly recycled) instance.
     pw.wanderMs = 0;
+    // Telegraph: frozen + non-lethal until the countdown reaches 0.
+    pw.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
   }
 }

@@ -232,6 +232,38 @@ export const SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT = 3;
 export const SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT = 0;
 export const SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT = 2;
 
+// --- Enemy spawn telegraph / spawn-point safety (Story 2.6) ------------------
+// Every freshly spawned enemy of every archetype (Seeker, Green Square,
+// Pinwheel, Snake segments, Black Hole, and Black-Hole-fed seekers) carries a
+// brief per-instance telegraph countdown. While it runs the instance is
+// NON-LETHAL to the player (PlayerDeathSystem skips it) and FROZEN (its owning
+// system skips its behavior tick) — it only renders a spawn-in cue. When the
+// countdown reaches 0 the instance activates: normal behavior and lethal contact
+// begin together. All values are tunable placeholders (tuned post-launch); the
+// countdown advances ONLY by fixed-step dt, so the window is frame-rate-independent.
+
+// Telegraph duration (ms): how long a fresh enemy stays frozen + non-lethal
+// before activating. A brief safe window — the primary "no enemy on top of me"
+// guarantee (FR5). Counted down by the owning system's fixed-step dt.
+export const ENEMY_SPAWN_TELEGRAPH_MS = 600;
+// Spawn-point ship-avoidance radius (px): the second safety layer. Each spawn
+// placement re-rolls to keep the chosen point at least this far from the ship's
+// current position, so a fresh enemy does not materialize on/next to the player.
+export const SPAWN_SAFE_RADIUS = 200;
+// Bounded re-roll cap: the most placement attempts a single spawn makes to land
+// outside SPAWN_SAFE_RADIUS. If every attempt is too close (player boxed into a
+// corner) the last candidate is accepted — the loop is NEVER unbounded (the
+// telegraph is the primary guarantee; avoidance is best-effort within this cap).
+export const SPAWN_PLACEMENT_MAX_ATTEMPTS = 8;
+// Telegraph render cue (view-only): a spawning instance fades in (alpha) and
+// scales up (radius) from these floors to full over the telegraph window. Per
+// instance p = 1 − clamp(telegraphMs/ENEMY_SPAWN_TELEGRAPH_MS, 0, 1); alpha =
+// MIN_ALPHA + (1−MIN_ALPHA)·p, radius × (MIN_SCALE + (1−MIN_SCALE)·p). At p==1
+// (active) alpha 1 / scale 1 — today's rendering. Placeholders (Epic 4 owns the
+// real aesthetic).
+export const SPAWN_TELEGRAPH_MIN_ALPHA = 0.15;
+export const SPAWN_TELEGRAPH_MIN_SCALE = 0.4;
+
 // --- Black Hole hazard (feel / economy) -------------------------------------
 // The Black Hole (Epic 2's signature high-risk object) is a stationary, HP-based
 // destructible hazard — NOT a one-hit enemy. Each fixed step it applies an

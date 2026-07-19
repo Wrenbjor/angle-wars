@@ -21,12 +21,17 @@ import { GREEN_SQUARE_RADIUS, GREEN_SQUARE_SCORE } from '../config/constants.js'
 //             type-agnostic across archetypes.
 //  - aggro  : one-way latch — false while fleeing, set true forever once a
 //             nearby bullet provokes it (then it homes toward the ship).
+//  - telegraphMs : spawn-telegraph countdown (ms, Story 2.6). While > 0 the
+//             square is non-lethal to the player (PlayerDeathSystem skips it) and
+//             frozen (GreenSquareSystem skips its threat/flee/aggro tick); it
+//             renders a spawn-in cue. Defaults to 0 (spawned-and-active);
+//             GreenSquareSystem.spawn overwrites it.
 
 /**
- * Create a zeroed green square with its collision radius, base score, and a
- * false aggro latch. Used as the Pool factory; positional/velocity/aggro fields
- * are overwritten on spawn.
- * @returns {{x:number, y:number, vx:number, vy:number, radius:number, score:number, aggro:boolean}}
+ * Create a zeroed green square with its collision radius, base score, a false
+ * aggro latch, and inactive telegraph. Used as the Pool factory;
+ * positional/velocity/aggro/telegraph fields are overwritten on spawn.
+ * @returns {{x:number, y:number, vx:number, vy:number, radius:number, score:number, aggro:boolean, telegraphMs:number}}
  */
 export function createGreenSquare() {
   return {
@@ -37,5 +42,6 @@ export function createGreenSquare() {
     radius: GREEN_SQUARE_RADIUS,
     score: GREEN_SQUARE_SCORE,
     aggro: false,
+    telegraphMs: 0,
   };
 }
