@@ -90,6 +90,39 @@ export const SEEKER_SPAWN_INTERVAL_MS = 1200;
 // — still no per-frame allocation once warm, just a one-time factory call.
 export const SEEKER_POOL_PREWARM = 32;
 
+// --- Green Square enemy (feel) ----------------------------------------------
+// The Green Square (Epic 2's first archetype) spawns at a random arena edge and
+// FLEES directly away from the ship until provoked. When an active player bullet
+// passes within GREEN_SQUARE_THREAT_RADIUS of it, it LATCHES to aggressive for
+// the rest of its life and homes directly toward the ship (mirroring the
+// Seeker's homing math). All values are tunable; motion/threat/spawn all derive
+// from the fixed-step dt, so they are frame-rate-independent.
+
+// Collision/half-extent radius (px), also the placeholder square half-size and
+// the spawn inset margin so a fresh square sits fully inside the drawn border.
+export const GREEN_SQUARE_RADIUS = 15;
+// Flee speed (px/s) while unprovoked. Velocity each tick = unit(square − ship) ×
+// this (directly away from the player).
+export const GREEN_SQUARE_FLEE_SPEED = 120;
+// Chase speed (px/s) once aggressive. Velocity each tick = unit(ship − square) ×
+// this (directly toward the player). Faster than the flee so a provoked square
+// actually closes distance.
+export const GREEN_SQUARE_CHASE_SPEED = 200;
+// Threat radius (px): an active bullet whose center lies within this distance of
+// a fleeing square provokes it (a deterministic proxy for "fired toward it").
+// Deliberately larger than BULLET_RADIUS + GREEN_SQUARE_RADIUS so a NEAR MISS
+// provokes while a direct hit destroys (the latch is recorded before collision).
+export const GREEN_SQUARE_THREAT_RADIUS = 90;
+// Spawn cadence (ms): one square spawns per this much accumulated fixed-step
+// time, so spawns-per-second are frame-rate-independent. Lower = more.
+export const GREEN_SQUARE_SPAWN_INTERVAL_MS = 1600;
+// Idle instances prewarmed into the pool at construction so the steady state
+// never allocates (mirrors the Seeker pool prewarm; grows lazily beyond it).
+export const GREEN_SQUARE_POOL_PREWARM = 32;
+// Base score awarded per Green Square kill, carried on each instance and summed
+// unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never fold it in).
+export const GREEN_SQUARE_SCORE = 150;
+
 // --- Player death / lives (feel) --------------------------------------------
 // Player lifecycle: lives, respawn invulnerability, and the invuln blink. All
 // tunable; the invulnerability window and its blink are tracked in milliseconds
@@ -118,6 +151,7 @@ export const COLOR_ARENA_BORDER = 0x33ff99;
 export const COLOR_SHIP = 0x66ccff;
 export const COLOR_BULLET = 0xffee66;
 export const COLOR_SEEKER = 0x3366ff;
+export const COLOR_GREEN_SQUARE = 0x66ff33;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';

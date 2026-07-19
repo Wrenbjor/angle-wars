@@ -3,15 +3,24 @@ import { CollisionSystem } from './CollisionSystem.js';
 import { Pool } from '../core/Pool.js';
 import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
-import { FIXED_STEP_MS, BULLET_RADIUS, SEEKER_RADIUS, SEEKER_SCORE } from '../config/constants.js';
+import { createGreenSquare } from '../entities/GreenSquare.js';
+import {
+  FIXED_STEP_MS,
+  BULLET_RADIUS,
+  SEEKER_RADIUS,
+  SEEKER_SCORE,
+  GREEN_SQUARE_SCORE,
+} from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
 
-// Build a bullet pool, an enemy pool, and a collision system over them.
+// Build a bullet pool, an enemy pool, and a collision system over them. The
+// collision seam takes an ARRAY of enemy pools (one per archetype); the single
+// seeker pool is the common case, wrapped in a one-element list.
 function makeSystem() {
   const bulletPool = new Pool(createBullet);
   const enemyPool = new Pool(createSeeker);
-  const system = new CollisionSystem(bulletPool, enemyPool);
+  const system = new CollisionSystem(bulletPool, [enemyPool]);
   return { bulletPool, enemyPool, system };
 }
 
@@ -131,7 +140,7 @@ describe('CollisionSystem', () => {
   });
 });
 
-describe('CollisionSystem.killedSeekers reporting', () => {
+describe('CollisionSystem.killedEnemies reporting', () => {
   it('reports the destroyed seeker when a bullet overlaps one', () => {
     const { bulletPool, enemyPool, system } = makeSystem();
     addBullet(bulletPool, 100, 100);
@@ -139,8 +148,8 @@ describe('CollisionSystem.killedSeekers reporting', () => {
 
     system.fixedUpdate(DT);
 
-    expect(system.killedSeekers.length).toBe(1);
-    expect(system.killedSeekers[0]).toBe(s);
+    expect(system.killedEnemies.length).toBe(1);
+    expect(system.killedEnemies[0]).toBe(s);
     // Pools still released as before.
     expect(enemyPool.activeCount).toBe(0);
     expect(bulletPool.activeCount).toBe(0);
@@ -153,7 +162,7 @@ describe('CollisionSystem.killedSeekers reporting', () => {
 
     system.fixedUpdate(DT);
 
-    expect(system.killedSeekers.length).toBe(0);
+    expect(system.killedEnemies.length).toBe(0);
   });
 
   it('resets the report between ticks (a prior kill is cleared)', () => {
@@ -162,11 +171,11 @@ describe('CollisionSystem.killedSeekers reporting', () => {
     addBullet(bulletPool, 100, 100);
     addSeeker(enemyPool, 100, 100);
     system.fixedUpdate(DT);
-    expect(system.killedSeekers.length).toBe(1);
+    expect(system.killedEnemies.length).toBe(1);
 
     // Tick B: no overlap remains (both released in A) — report clears to empty.
     system.fixedUpdate(DT);
-    expect(system.killedSeekers.length).toBe(0);
+    expect(system.killedEnemies.length).toBe(0);
   });
 
   it('reports two kills when two bullets each destroy a distinct seeker', () => {
@@ -178,13 +187,86 @@ describe('CollisionSystem.killedSeekers reporting', () => {
 
     system.fixedUpdate(DT);
 
-    expect(system.killedSeekers.length).toBe(2);
+    expect(system.killedEnemies.length).toBe(2);
     expect(enemyPool.activeCount).toBe(0);
+  });
+});
+
+describe('CollisionSystem — multiple archetype pools', () => {
+  // Build a bullet pool plus TWO enemy pools (a seeker pool and a green-square
+  // pool) and a collision system spanning both.
+  function makeMultiSystem() {
+    const bulletPool = new Pool(createBullet);
+    const seekerPool = new Pool(createSeeker);
+    const greenPool = new Pool(createGreenSquare);
+    const system = new CollisionSystem(bulletPool, [seekerPool, greenPool]);
+    return { bulletPool, seekerPool, greenPool, system };
+  }
+
+  it('destroys a green square in the second pool and releases it to that pool', () => {
+    const { bulletPool, seekerPool, greenPool, system } = makeMultiSystem();
+    addBullet(bulletPool, 250, 250);
+    const g = greenPool.acquire();
+    g.x = 250;
+    g.y = 250; // overlapping the bullet
+
+    system.fixedUpdate(DT);
+
+    // The green square is released to ITS pool (not the seeker pool), the bullet
+    // is consumed, and the square is reported in the shared kill report.
+    expect(greenPool.activeCount).toBe(0);
+    expect(greenPool.freeCount).toBe(1);
+    expect(seekerPool.activeCount).toBe(0);
+    expect(bulletPool.activeCount).toBe(0);
+    expect(system.killedEnemies.length).toBe(1);
+    expect(system.killedEnemies[0]).toBe(g);
+  });
+
+  it('one bullet destroys at most one enemy across BOTH pools', () => {
+    const { bulletPool, seekerPool, greenPool, system } = makeMultiSystem();
+    addBullet(bulletPool, 300, 300);
+    const s = addSeeker(seekerPool, 300, 300); // overlapping
+    const g = greenPool.acquire();
+    g.x = 300;
+    g.y = 300; // also overlapping
+
+    system.fixedUpdate(DT);
+
+    // Exactly one enemy destroyed across the two pools; the other survives.
+    const seekerAlive = seekerPool.activeCount;
+    const greenAlive = greenPool.activeCount;
+    expect(seekerAlive + greenAlive).toBe(1);
+    expect(system.killedEnemies.length).toBe(1);
+    expect(bulletPool.activeCount).toBe(0);
+    // The survivor is whichever the bullet did not consume.
+    void s;
+    void g;
+  });
+
+  it('two bullets each destroy a distinct enemy, one per pool', () => {
+    const { bulletPool, seekerPool, greenPool, system } = makeMultiSystem();
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 500, 500);
+    addSeeker(seekerPool, 100, 100);
+    const g = greenPool.acquire();
+    g.x = 500;
+    g.y = 500;
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0);
+    expect(greenPool.activeCount).toBe(0);
+    expect(bulletPool.activeCount).toBe(0);
+    expect(system.killedEnemies.length).toBe(2);
   });
 });
 
 describe('createSeeker base value', () => {
   it('gives a fresh seeker the base SEEKER_SCORE value', () => {
     expect(createSeeker().score).toBe(SEEKER_SCORE);
+  });
+
+  it('gives a fresh green square the base GREEN_SQUARE_SCORE value', () => {
+    expect(createGreenSquare().score).toBe(GREEN_SQUARE_SCORE);
   });
 });

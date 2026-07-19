@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PlayerDeathSystem } from './PlayerDeathSystem.js';
 import { Pool } from '../core/Pool.js';
 import { createSeeker } from '../entities/Seeker.js';
+import { createGreenSquare } from '../entities/GreenSquare.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import {
@@ -10,6 +11,7 @@ import {
   PLAYER_START_LIVES,
   SHIP_RADIUS,
   SEEKER_RADIUS,
+  GREEN_SQUARE_RADIUS,
   ARENA_WIDTH,
   ARENA_HEIGHT,
 } from '../config/constants.js';
@@ -18,12 +20,14 @@ const DT = FIXED_STEP_MS;
 const CENTER_X = ARENA_WIDTH / 2;
 const CENTER_Y = ARENA_HEIGHT / 2;
 
-// Build a ship, enemy pool, player state, and death system over them.
+// Build a ship, enemy pool, player state, and death system over them. The
+// death seam takes an ARRAY of enemy pools (one per archetype); the single
+// seeker pool is the common case, wrapped in a one-element list.
 function makeSystem() {
   const ship = createPlayerShip();
   const enemyPool = new Pool(createSeeker);
   const playerState = createPlayerState();
-  const system = new PlayerDeathSystem(ship, enemyPool, playerState);
+  const system = new PlayerDeathSystem(ship, [enemyPool], playerState);
   return { ship, enemyPool, playerState, system };
 }
 
@@ -210,5 +214,79 @@ describe('PlayerDeathSystem', () => {
     addSeeker(enemyPool, 500, 500); // far, no contact
     for (let i = 0; i < 50; i++) system.fixedUpdate(DT);
     expect(enemyPool.activeCount + enemyPool.freeCount).toBe(1);
+  });
+});
+
+describe('PlayerDeathSystem — multiple archetype pools', () => {
+  // Build a ship, a seeker pool AND a green-square pool, and a death system
+  // spanning both.
+  function makeMultiSystem() {
+    const ship = createPlayerShip();
+    const seekerPool = new Pool(createSeeker);
+    const greenPool = new Pool(createGreenSquare);
+    const playerState = createPlayerState();
+    const system = new PlayerDeathSystem(
+      ship,
+      [seekerPool, greenPool],
+      playerState,
+    );
+    return { ship, seekerPool, greenPool, playerState, system };
+  }
+
+  it('a green square in the second pool is lethal on contact (fleeing state)', () => {
+    const { ship, greenPool, playerState, system } = makeMultiSystem();
+    ship.x = 100;
+    ship.y = 100;
+    const g = greenPool.acquire();
+    g.x = 100;
+    g.y = 100; // overlapping
+    g.aggro = false; // fleeing — still lethal on contact (FR6)
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(ship.x).toBe(CENTER_X); // respawned to center
+    expect(ship.y).toBe(CENTER_Y);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    // The green square is never destroyed by ship contact — it stays active.
+    expect(greenPool.activeCount).toBe(1);
+  });
+
+  it('an aggressive green square is lethal too, and a boundary touch counts', () => {
+    const { ship, greenPool, playerState, system } = makeMultiSystem();
+    const r = SHIP_RADIUS + GREEN_SQUARE_RADIUS;
+    ship.x = 200;
+    ship.y = 200;
+    const g = greenPool.acquire();
+    g.x = 200 + r; // exactly r apart along +x (boundary)
+    g.y = 200;
+    g.aggro = true;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+  });
+
+  it('one death per tick even with enemies overlapping in BOTH pools', () => {
+    const { ship, seekerPool, greenPool, playerState, system } = makeMultiSystem();
+    ship.x = 300;
+    ship.y = 300;
+    const s = seekerPool.acquire();
+    s.x = 300;
+    s.y = 300;
+    const g = greenPool.acquire();
+    g.x = 300;
+    g.y = 300;
+
+    system.fixedUpdate(DT);
+
+    // Exactly one life lost, one invuln grant — never one per pool.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    // Neither enemy released by contact.
+    expect(seekerPool.activeCount).toBe(1);
+    expect(greenPool.activeCount).toBe(1);
   });
 });

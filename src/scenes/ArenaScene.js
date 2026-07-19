@@ -11,6 +11,7 @@ import {
   SHIP_RADIUS,
   COLOR_BULLET,
   COLOR_SEEKER,
+  COLOR_GREEN_SQUARE,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -31,6 +32,7 @@ import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
 import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
 import { FiringSystem } from '../systems/FiringSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
+import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
@@ -100,18 +102,34 @@ export class ArenaScene extends Phaser.Scene {
     // render (never sim in render).
     this.enemySystem = new EnemySystem(this.ship);
     this.world.addSystem(this.enemySystem);
+    // GreenSquareSystem owns its own pool-per-archetype (never merged into the
+    // Seeker pool). It runs after EnemySystem and BEFORE CollisionSystem so a
+    // provoking latch (bullet within the threat radius) is recorded before a hit
+    // can release the square; it reads the bullet pool for that threat detection.
+    this.greenSquareSystem = new GreenSquareSystem(
+      this.ship,
+      this.firingSystem.bulletPool,
+    );
+    this.world.addSystem(this.greenSquareSystem);
+    // The shared collision seam sees ALL archetype pools as an array, so a bullet
+    // can destroy any enemy through one path (no per-type duplicate).
+    this.enemyPools = [
+      this.enemySystem.enemyPool,
+      this.greenSquareSystem.enemyPool,
+    ];
     this.collisionSystem = new CollisionSystem(
       this.firingSystem.bulletPool,
-      this.enemySystem.enemyPool,
+      this.enemyPools,
     );
     this.world.addSystem(this.collisionSystem);
 
     // --- Scoring ------------------------------------------------------------
     // ScoringSystem runs immediately after CollisionSystem so this tick's kills
-    // (collisionSystem.killedSeekers) are already recorded, and before
+    // (collisionSystem.killedEnemies) are already recorded, and before
     // PlayerDeathSystem — order: …→ Collision → Scoring → PlayerDeath. It owns
-    // no pool; it credits each killed seeker's base value into the shared
-    // ScoreState the HUD/game-over screen read. Rebuilt from zero on restart.
+    // no pool; it credits each killed enemy's own base value (any archetype)
+    // into the shared ScoreState the HUD/game-over screen read. Rebuilt from
+    // zero on restart.
     this.scoreState = createScoreState();
     this.scoringSystem = new ScoringSystem(this.collisionSystem, this.scoreState);
     this.world.addSystem(this.scoringSystem);
@@ -124,13 +142,16 @@ export class ArenaScene extends Phaser.Scene {
     this.playerState = createPlayerState();
     this.playerDeathSystem = new PlayerDeathSystem(
       this.ship,
-      this.enemySystem.enemyPool,
+      this.enemyPools,
       this.playerState,
     );
     this.world.addSystem(this.playerDeathSystem);
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
+    // Green squares are placeholder green filled squares, cleared and redrawn
+    // each render frame from their pool. Epic 4 replaces this with the aesthetic.
+    this.greenSquareGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -271,6 +292,18 @@ export class ArenaScene extends Phaser.Scene {
     sg.fillStyle(COLOR_SEEKER, 1);
     this.enemySystem.enemyPool.forEachActive((s) => {
       sg.fillCircle(s.x, s.y, s.radius);
+    });
+
+    // Redraw active green squares from their pool: clear once, then a filled
+    // green square centered on each live entity. Placeholder shape only (Epic 4
+    // adds the aesthetic; aggro state is not visually distinguished yet).
+    const gsg = this.greenSquareGraphics;
+    gsg.clear();
+    gsg.fillStyle(COLOR_GREEN_SQUARE, 1);
+    // Draw from each instance's own radius (matching the seeker render) so the
+    // drawn square always tracks the value the collision seams actually use.
+    this.greenSquareSystem.enemyPool.forEachActive((s) => {
+      gsg.fillRect(s.x - s.radius, s.y - s.radius, s.radius * 2, s.radius * 2);
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.

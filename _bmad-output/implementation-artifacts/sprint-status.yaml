@@ -43,7 +43,7 @@ development_status:
 
   # Epic 2 — Enemy Roster & Spawn Director
   epic-2: backlog
-  2-1-green-square-enemy: backlog
+  2-1-green-square-enemy: done
   2-2-pinwheel-wanderer-enemy: backlog
   2-3-snake-enemy: backlog
   2-4-black-hole-hazard: backlog

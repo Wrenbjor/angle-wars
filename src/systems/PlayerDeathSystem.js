@@ -5,43 +5,54 @@ import { PLAYER_INVULN_MS } from '../config/constants.js';
 // PlayerDeathSystem — ship↔enemy death, lives, respawn, invulnerability, and the
 // game-over flag (Phaser-free).
 //
-// Runs inside world.fixedUpdate(dt), AFTER CollisionSystem (so a seeker killed
+// Runs inside world.fixedUpdate(dt), AFTER CollisionSystem (so an enemy killed
 // by a bullet this tick is already released and cannot also kill the player) and
-// after PlayerMovementSystem/EnemySystem (so it sees post-move ship and seeker
-// positions). It owns no pool/state — it reads the ship entity, the enemy pool,
-// and the shared PlayerState it is given.
+// after PlayerMovementSystem/EnemySystem/GreenSquareSystem (so it sees post-move
+// ship and enemy positions). It owns no pool/state — it reads the ship entity,
+// the enemy pools, and the shared PlayerState it is given.
+//
+// The enemy pools are a LIST so every archetype (Blue Seeker, Green Square, and
+// future Epic-2 enemies) is lethal on contact through this one seam (FR6) — no
+// per-type duplicate. Every enemy shares the uniform {x,y,radius} shape, so this
+// seam reads only x,y,radius and stays type-agnostic (a Green Square kills on
+// contact regardless of its aggro state).
 //
 // Each fixed step:
 //   1. If the run is over (gameOver), do nothing.
 //   2. Count the invulnerability window down by dt (clamped at 0). While it is
 //      still > 0 the player is invulnerable — return without any contact test.
-//   3. Otherwise test the ship against active seekers (circle-circle) and, on the
-//      first overlap, apply the death flow: deduct a life and either respawn at
-//      arena center with a fresh invulnerability window (lives remain) or set
-//      game-over (last life). At most ONE death per fixed step (break on first).
+//   3. Otherwise test the ship against the active enemies of every pool
+//      (circle-circle) and, on the first overlap, apply the death flow: deduct a
+//      life and either respawn at arena center with a fresh invulnerability
+//      window (lives remain) or set game-over (last life). At most ONE death per
+//      fixed step (break on first).
 //
-// Circle-circle lethal when center distance ≤ ship.radius + seeker.radius
-// (boundary counts, mirroring CollisionSystem). Seekers are never destroyed here
+// Circle-circle lethal when center distance ≤ ship.radius + enemy.radius
+// (boundary counts, mirroring CollisionSystem). Enemies are never destroyed here
 // — ship contact only kills the player; bullets destroy enemies (Story 1.4).
 //
-// Zero steady-state allocation: a reusable scratch array materializes the pool's
-// active set each tick (iterating the pool's Set directly can't be indexed).
+// Zero steady-state allocation: a reusable scratch array materializes the union
+// of the pools' active sets each tick (iterating a Set directly can't be indexed).
 export class PlayerDeathSystem extends System {
   /**
    * @param {{x:number,y:number,vx:number,vy:number,angle:number,radius:number}} ship
    *   The player ship entity (mutated on respawn).
-   * @param {import('../core/Pool.js').Pool} enemyPool Active seekers to test against.
+   * @param {import('../core/Pool.js').Pool[]} enemyPools Array of enemy pools
+   *   (one per archetype) whose active instances are tested against the ship.
    * @param {{lives:number, invulnMs:number, gameOver:boolean}} playerState
    *   Shared player lifecycle state (mutated here).
    */
-  constructor(ship, enemyPool, playerState) {
+  constructor(ship, enemyPools, playerState) {
     super();
     this.ship = ship;
-    this.enemyPool = enemyPool;
+    this.enemyPools = enemyPools;
     this.playerState = playerState;
 
-    // Reusable scratch: materialized active seeker set, refilled each tick.
-    this._seekers = [];
+    // Reusable scratch: materialized union of active enemies, refilled each tick.
+    this._enemies = [];
+    // Hoisted collect callback so the per-pool `forEachActive` reuses one closure
+    // instead of allocating a fresh arrow per pool per tick.
+    this._collectEnemy = (s) => this._enemies.push(s);
   }
 
   /**
@@ -67,16 +78,20 @@ export class PlayerDeathSystem extends System {
       return;
     }
 
-    // Vulnerable: materialize active seekers into reusable scratch (no alloc).
+    // Vulnerable: materialize the union of active enemies into reusable scratch
+    // (no alloc) — every archetype pool contributes its live instances.
     const ship = this.ship;
-    const seekers = this._seekers;
-    seekers.length = 0;
-    this.enemyPool.forEachActive((s) => seekers.push(s));
+    const enemies = this._enemies;
+    enemies.length = 0;
+    const pools = this.enemyPools;
+    for (let p = 0; p < pools.length; p++) {
+      pools[p].forEachActive(this._collectEnemy);
+    }
 
     // Test circle-circle; the first overlap is a lethal hit. At most one death
-    // per tick — break so overlapping seekers cost exactly one life.
-    for (let i = 0; i < seekers.length; i++) {
-      const s = seekers[i];
+    // per tick — break so overlapping enemies cost exactly one life.
+    for (let i = 0; i < enemies.length; i++) {
+      const s = enemies[i];
       const dx = ship.x - s.x;
       const dy = ship.y - s.y;
       const r = ship.radius + s.radius;
