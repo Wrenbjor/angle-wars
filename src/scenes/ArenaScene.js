@@ -9,6 +9,7 @@ import {
   COLOR_ARENA_BORDER,
   COLOR_SHIP,
   SHIP_RADIUS,
+  COLOR_BULLET,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
 } from '../config/constants.js';
@@ -19,6 +20,7 @@ import { createPlayerShip } from '../entities/PlayerShip.js';
 import { InputState } from '../input/InputState.js';
 import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
 import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
+import { FiringSystem } from '../systems/FiringSystem.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -60,8 +62,18 @@ export class ArenaScene extends Phaser.Scene {
     this.ship = createPlayerShip();
     this.world.addEntity(this.ship);
     this.inputState = new InputState();
-    this.inputSampler = new PlayerInputSampler(this, this.inputState);
+    this.inputSampler = new PlayerInputSampler(this, this.inputState, this.ship);
     this.world.addSystem(new PlayerMovementSystem(this.ship, this.inputState));
+
+    // --- Firing -------------------------------------------------------------
+    // Added after movement so bullets spawn from the ship's post-move position
+    // this tick. Owns its own bullet pool (not world.entities); ArenaScene only
+    // reads that pool to render, never runs firing math in the render callback.
+    this.firingSystem = new FiringSystem(this.ship, this.inputState);
+    this.world.addSystem(this.firingSystem);
+    // Bullets are placeholder vector circles, cleared and redrawn each render
+    // frame from the active pool. Epic 4 replaces this with the aesthetic.
+    this.bulletGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -108,6 +120,15 @@ export class ArenaScene extends Phaser.Scene {
     // Sync the placeholder sprite from the ship entity each render frame.
     this.shipSprite.setPosition(this.ship.x, this.ship.y);
     this.shipSprite.rotation = this.ship.angle;
+
+    // Redraw active bullets from the pool: clear once, then a filled circle per
+    // live bullet. Rendering reads the sim state; it never advances it.
+    const bg = this.bulletGraphics;
+    bg.clear();
+    bg.fillStyle(COLOR_BULLET, 1);
+    this.firingSystem.bulletPool.forEachActive((b) => {
+      bg.fillCircle(b.x, b.y, b.radius);
+    });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.
     this._sampleAccumMs += delta;

@@ -6,17 +6,22 @@ import { INPUT_DEADZONE } from '../config/constants.js';
 //
 // The only Phaser-tied piece of the input path. Each render frame it reads the
 // gamepad left stick (with a radial deadzone) when a pad is connected and
-// engaged, otherwise falls back to WASD/arrow keys, and writes the resulting
-// normalized move intent into a Phaser-free InputState that the movement system
-// consumes at sim rate. No movement math lives here.
+// engaged, otherwise falls back to WASD/arrow keys, writing the resulting
+// normalized move intent into a Phaser-free InputState. In the same pass it
+// samples the aim channel — gamepad right stick (deadzoned) with priority, else
+// the mouse pointer's world position relative to the ship — into that same
+// InputState. Both the movement and firing systems consume it at sim rate. No
+// movement/firing math lives here.
 export class PlayerInputSampler {
   /**
    * @param {Phaser.Scene} scene
    * @param {import('./InputState.js').InputState} inputState
+   * @param {{x:number,y:number}} ship Ship entity (aim origin for mouse aim).
    */
-  constructor(scene, inputState) {
+  constructor(scene, inputState, ship) {
     this.scene = scene;
     this.input = inputState;
+    this.ship = ship;
 
     // WASD + arrow keys. addKeys returns Key objects with live `isDown`.
     const KC = Phaser.Input.Keyboard.KeyCodes;
@@ -44,14 +49,23 @@ export class PlayerInputSampler {
   }
 
   /**
-   * Sample current input and write the move intent into the InputState.
-   * Called once per render frame (a level, not an edge event).
+   * Sample current input and write the move intent + aim direction into the
+   * InputState. Called once per render frame (a level, not an edge event).
    */
   sample() {
+    const pad = this.getPad();
+    this.sampleMove(pad);
+    this.sampleAim(pad);
+  }
+
+  /**
+   * Write the move intent from the gamepad left stick (deadzoned) or keyboard.
+   * @param {Phaser.Input.Gamepad.Gamepad|null} pad
+   */
+  sampleMove(pad) {
     // Gamepad left stick takes priority when it reports intent past the
     // deadzone. Below the deadzone we fall through to the keyboard so a
     // connected-but-idle pad does not suppress WASD/arrows.
-    const pad = this.getPad();
     if (pad) {
       const ls = pad.leftStick;
       const { x, y } = applyRadialDeadzone(ls.x, ls.y, INPUT_DEADZONE);
@@ -72,5 +86,38 @@ export class PlayerInputSampler {
     const mx = (right ? 1 : 0) - (left ? 1 : 0);
     const my = (down ? 1 : 0) - (up ? 1 : 0);
     this.input.setMove(mx, my);
+  }
+
+  /**
+   * Write the aim direction. Gamepad right stick past the deadzone takes
+   * priority; otherwise the mouse pointer's world position relative to the ship
+   * is the complete fallback. setAim normalizes to a unit direction and treats
+   * a zero-length vector as no aim (firing stops).
+   * @param {Phaser.Input.Gamepad.Gamepad|null} pad
+   */
+  sampleAim(pad) {
+    // Gamepad right stick aims when pushed past the deadzone.
+    if (pad) {
+      const rs = pad.rightStick;
+      const { x, y } = applyRadialDeadzone(rs.x, rs.y, INPUT_DEADZONE);
+      if (x !== 0 || y !== 0) {
+        this.input.setAim(x, y);
+        return;
+      }
+    }
+
+    // Mouse fallback: aim from the ship toward the cursor. worldX/worldY are in
+    // arena/logical space (the FIT camera maps the pointer there), matching the
+    // ship's coordinate space. Only trust the pointer once it has actually been
+    // engaged — Phaser's activePointer defaults to (0,0) before any input, which
+    // would otherwise auto-fire toward the top-left corner on launch (and for a
+    // gamepad player who never touches the mouse). Keyboard is a move-only
+    // fallback, not an aim device, so no aim until the mouse moves is correct.
+    const p = this.scene.input.activePointer;
+    if (p.moveTime > 0 || p.downTime > 0) {
+      this.input.setAim(p.worldX - this.ship.x, p.worldY - this.ship.y);
+    } else {
+      this.input.clearAim();
+    }
   }
 }

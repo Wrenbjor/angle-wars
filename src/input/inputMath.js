@@ -48,3 +48,24 @@ export function clampToUnitCircle(x, y) {
   }
   return { x, y };
 }
+
+/**
+ * Normalize a 2D vector to unit length, also returning its original magnitude.
+ *
+ * Aim is a pure direction: only the angle matters, not how far the stick is
+ * pushed or how distant the cursor is. A zero-length input has no direction, so
+ * it returns the zero vector with `mag === 0` — the caller treats that as
+ * "no aim" (inactive).
+ *
+ * @param {number} x
+ * @param {number} y
+ * @returns {{x:number, y:number, mag:number}} Unit vector + original magnitude;
+ *   `{x:0, y:0, mag:0}` when the input has zero length.
+ */
+export function normalizeToUnit(x, y) {
+  const mag = Math.hypot(x, y);
+  if (mag === 0) {
+    return { x: 0, y: 0, mag: 0 };
+  }
+  return { x: x / mag, y: y / mag, mag };
+}

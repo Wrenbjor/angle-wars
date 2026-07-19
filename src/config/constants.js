@@ -49,13 +49,32 @@ export const SHIP_RADIUS = 16;
 // --- Input ------------------------------------------------------------------
 // Radial deadzone for the gamepad left stick: intent magnitudes at or below
 // this are dropped to zero (no drift), and response is rescaled to start at 0
-// at the deadzone edge so there is no jump.
+// at the deadzone edge so there is no jump. The right stick (aim) reuses it.
 export const INPUT_DEADZONE = 0.25;
+
+// --- Firing / bullets (feel) ------------------------------------------------
+// Continuous auto-fire: while the aim channel is active the FiringSystem spawns
+// one bullet every FIRE_INTERVAL_MS of accumulated fixed-step time, so the
+// shots-per-second are identical regardless of render frame rate. Lower =
+// faster stream. 1000/FIRE_INTERVAL_MS ≈ shots per second.
+export const FIRE_INTERVAL_MS = 90;
+// Bullet travel speed (px/s). Velocity derives ONLY from the aim direction ×
+// this speed — never from the ship's velocity (the FR1 independence guarantee).
+export const BULLET_SPEED = 900;
+// Bullet collision/half-extent radius (px), also the placeholder circle radius.
+// Reused by Story 1.4 collision. NOTE: this is NOT the spawn nose offset — the
+// FiringSystem emits bullets from the ship's radius (SHIP_RADIUS), not this.
+export const BULLET_RADIUS = 4;
+// Idle bullet instances prewarmed into the pool at construction, so the steady
+// state never has to allocate. Sized above the worst-case simultaneous in-flight
+// count (interval, speed, arena span).
+export const BULLET_POOL_PREWARM = 64;
 
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
 export const COLOR_SHIP = 0x66ccff;
+export const COLOR_BULLET = 0xffee66;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';

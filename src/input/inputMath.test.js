@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { applyRadialDeadzone, clampToUnitCircle } from './inputMath.js';
+import {
+  applyRadialDeadzone,
+  clampToUnitCircle,
+  normalizeToUnit,
+} from './inputMath.js';
 import { InputState } from './InputState.js';
 
 const DZ = 0.25;
@@ -57,6 +61,74 @@ describe('clampToUnitCircle', () => {
   it('leaves a vector at or within the unit circle untouched', () => {
     expect(clampToUnitCircle(0.5, 0.5)).toEqual({ x: 0.5, y: 0.5 });
     expect(clampToUnitCircle(0, 0)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('normalizeToUnit', () => {
+  it('returns the zero vector with mag 0 for a zero-length input', () => {
+    expect(normalizeToUnit(0, 0)).toEqual({ x: 0, y: 0, mag: 0 });
+  });
+
+  it('normalizes to unit length and reports the original magnitude', () => {
+    const r = normalizeToUnit(3, 4); // mag 5 → (0.6, 0.8)
+    expect(r.x).toBeCloseTo(0.6, 9);
+    expect(r.y).toBeCloseTo(0.8, 9);
+    expect(r.mag).toBeCloseTo(5, 9);
+  });
+
+  it('preserves direction while scaling to magnitude 1', () => {
+    const r = normalizeToUnit(-100, 0);
+    expect(r.x).toBeCloseTo(-1, 9);
+    expect(r.y).toBe(0);
+    expect(Math.hypot(r.x, r.y)).toBeCloseTo(1, 9);
+  });
+
+  it('leaves an already-unit vector at magnitude 1', () => {
+    const r = normalizeToUnit(0, 1);
+    expect(r.x).toBe(0);
+    expect(r.y).toBeCloseTo(1, 9);
+    expect(r.mag).toBeCloseTo(1, 9);
+  });
+});
+
+describe('InputState.setAim / clearAim', () => {
+  it('normalizes a non-zero aim to a unit direction and marks it active', () => {
+    const s = new InputState();
+    s.setAim(0, 10);
+    expect(s.aimActive).toBe(true);
+    expect(s.aimX).toBe(0);
+    expect(s.aimY).toBeCloseTo(1, 9);
+    expect(Math.hypot(s.aimX, s.aimY)).toBeCloseTo(1, 9);
+  });
+
+  it('treats a zero-magnitude aim as inactive (no stale direction)', () => {
+    const s = new InputState();
+    s.setAim(3, 4); // active first
+    s.setAim(0, 0);
+    expect(s.aimActive).toBe(false);
+    expect(s.aimX).toBe(0);
+    expect(s.aimY).toBe(0);
+  });
+
+  it('clearAim() resets the aim channel to inactive', () => {
+    const s = new InputState();
+    s.setAim(1, 0);
+    s.clearAim();
+    expect(s.aimActive).toBe(false);
+    expect(s.aimX).toBe(0);
+    expect(s.aimY).toBe(0);
+  });
+
+  it('clear() also clears the aim channel', () => {
+    const s = new InputState();
+    s.setMove(1, 0);
+    s.setAim(0, 1);
+    s.clear();
+    expect(s.moveX).toBe(0);
+    expect(s.moveY).toBe(0);
+    expect(s.aimActive).toBe(false);
+    expect(s.aimX).toBe(0);
+    expect(s.aimY).toBe(0);
   });
 });
 
