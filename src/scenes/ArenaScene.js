@@ -24,6 +24,9 @@ import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
 import { FiringSystem } from '../systems/FiringSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
+import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
+import { createPlayerState } from '../state/PlayerState.js';
+import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -92,6 +95,19 @@ export class ArenaScene extends Phaser.Scene {
       this.enemySystem.enemyPool,
     );
     this.world.addSystem(this.collisionSystem);
+
+    // --- Player death / lives -----------------------------------------------
+    // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
+    // bullet this tick is already released and cannot also kill the player. It
+    // reads the ship, the enemy pool, and the shared PlayerState (lives,
+    // invulnerability, game-over), which the render loop reads for the blink.
+    this.playerState = createPlayerState();
+    this.playerDeathSystem = new PlayerDeathSystem(
+      this.ship,
+      this.enemySystem.enemyPool,
+      this.playerState,
+    );
+    this.world.addSystem(this.playerDeathSystem);
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
@@ -141,6 +157,14 @@ export class ArenaScene extends Phaser.Scene {
     // Sync the placeholder sprite from the ship entity each render frame.
     this.shipSprite.setPosition(this.ship.x, this.ship.y);
     this.shipSprite.rotation = this.ship.angle;
+    // Blink the ship while invulnerable to signal the invulnerable state. The
+    // toggle derives purely from sim state (invulnMs), so it needs no separate
+    // render timer; alpha is solid (1) the instant the window reaches 0.
+    const invulnMs = this.playerState.invulnMs;
+    this.shipSprite.alpha =
+      invulnMs > 0 && Math.floor(invulnMs / PLAYER_INVULN_BLINK_MS) % 2 === 1
+        ? 0.25
+        : 1;
 
     // Redraw active bullets from the pool: clear once, then a filled circle per
     // live bullet. Rendering reads the sim state; it never advances it.

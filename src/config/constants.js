@@ -90,6 +90,21 @@ export const SEEKER_SPAWN_INTERVAL_MS = 1200;
 // — still no per-frame allocation once warm, just a one-time factory call.
 export const SEEKER_POOL_PREWARM = 32;
 
+// --- Player death / lives (feel) --------------------------------------------
+// Player lifecycle: lives, respawn invulnerability, and the invuln blink. All
+// tunable; the invulnerability window and its blink are tracked in milliseconds
+// against the fixed-step dt so they are frame-rate-independent.
+
+// Starting lives at the beginning of a run.
+export const PLAYER_START_LIVES = 3;
+// Respawn invulnerability window (ms): after a death that respawns the ship,
+// enemy contact does no harm for this long. Counted down by the fixed-step dt.
+export const PLAYER_INVULN_MS = 2000;
+// Blink cadence (ms) for the invulnerability indication: the ship sprite's alpha
+// toggles every this-many ms of remaining invulnerability. Purely a render cue
+// derived from sim state (invulnMs) — no separate render timer.
+export const PLAYER_INVULN_BLINK_MS = 120;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
