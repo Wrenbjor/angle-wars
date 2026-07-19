@@ -14,6 +14,7 @@ import {
   COLOR_GREEN_SQUARE,
   COLOR_PINWHEEL,
   COLOR_SNAKE,
+  COLOR_BLACK_HOLE,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -39,6 +40,7 @@ import { PinwheelSystem } from '../systems/PinwheelSystem.js';
 import { SnakeSystem } from '../systems/SnakeSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
+import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
@@ -159,15 +161,43 @@ export class ArenaScene extends Phaser.Scene {
     this.scoringSystem = new ScoringSystem(this.collisionSystem, this.scoreState);
     this.world.addSystem(this.scoringSystem);
 
+    // --- Black Hole hazard --------------------------------------------------
+    // The Black Hole is a stationary, HP-based destructible — not a one-hit
+    // enemy. It runs AFTER ScoringSystem (so absorbed enemies it appends to
+    // collisionSystem.killedEnemies are removed but NOT scored) and BEFORE
+    // PlayerDeathSystem (so its holePool joins the death list below). It owns its
+    // own prewarmed holePool; it pulls the ship + bullets + enemies, feeds on and
+    // is damaged by bullets, absorbs enemies (through the same killedEnemies seam
+    // a bullet kill uses), grows + emits seekers at the edge, and on death credits
+    // BLACKHOLE_SCORE directly to the shared ScoreState (created above). The
+    // spawn target for fed seekers is the shared Seeker pool.
+    this.blackHoleSystem = new BlackHoleSystem(
+      this.ship,
+      this.firingSystem.bulletPool,
+      this.enemyPools,
+      this.enemySystem.enemyPool,
+      this.scoreState,
+    );
+    this.world.addSystem(this.blackHoleSystem);
+    // Late-bind the collision system now that it exists (the hole pool had to be
+    // constructed first). Until this is set, enemy absorption is a guarded no-op;
+    // gravity and bullet feed still run.
+    this.blackHoleSystem.collisionSystem = this.collisionSystem;
+
     // --- Player death / lives -----------------------------------------------
     // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
     // bullet this tick is already released and cannot also kill the player. It
-    // reads the ship, the enemy pool, and the shared PlayerState (lives,
+    // reads the ship, the enemy pools, and the shared PlayerState (lives,
     // invulnerability, game-over), which the render loop reads for the blink.
+    // The Black Hole is lethal on contact too, so its holePool is appended to the
+    // death list here (that seam reads only {x,y,radius} and never destroys the
+    // collider) — but it is deliberately NOT in the CollisionSystem list above,
+    // since one bullet must not one-shot a multi-hit hole.
     this.playerState = createPlayerState();
+    this.deathPools = [...this.enemyPools, this.blackHoleSystem.holePool];
     this.playerDeathSystem = new PlayerDeathSystem(
       this.ship,
-      this.enemyPools,
+      this.deathPools,
       this.playerState,
     );
     this.world.addSystem(this.playerDeathSystem);
@@ -194,6 +224,11 @@ export class ArenaScene extends Phaser.Scene {
     // redrawn each render frame from the shared segment pool. Epic 4 replaces this
     // with the real slithering-body aesthetic. Zero per-frame allocation.
     this.snakeGraphics = this.add.graphics();
+    // Black holes are placeholder filled circles (the grid-warp visual is Epic 4 /
+    // Story 4.2), cleared and redrawn each render frame from the hole pool. Drawn
+    // from each instance's own (growing) radius so the shape tracks the gravity/
+    // collision value. Zero per-frame allocation.
+    this.blackHoleGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -380,6 +415,16 @@ export class ArenaScene extends Phaser.Scene {
     skg.fillStyle(COLOR_SNAKE, 1);
     this.snakeSystem.enemyPool.forEachActive((seg) => {
       skg.fillCircle(seg.x, seg.y, seg.radius);
+    });
+
+    // Redraw active black holes from the hole pool: clear once, then a filled
+    // circle per live hole at its current (growing) radius. Placeholder shape only
+    // (Epic 4 / Story 4.2 adds the grid-warp aesthetic). Zero per-frame allocation.
+    const bhg = this.blackHoleGraphics;
+    bhg.clear();
+    bhg.fillStyle(COLOR_BLACK_HOLE, 1);
+    this.blackHoleSystem.holePool.forEachActive((h) => {
+      bhg.fillCircle(h.x, h.y, h.radius);
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.

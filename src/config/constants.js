@@ -205,6 +205,63 @@ export const SNAKE_SEGMENT_POOL_PREWARM = 64;
 // fold it in). A whole snake is worth SEGMENT_COUNT × this.
 export const SNAKE_SEGMENT_SCORE = 75;
 
+// --- Black Hole hazard (feel / economy) -------------------------------------
+// The Black Hole (Epic 2's signature high-risk object) is a stationary, HP-based
+// destructible hazard — NOT a one-hit enemy. Each fixed step it applies an
+// attractive POSITION nudge to every nearby ship/bullet/enemy (linear
+// inverse-distance falloff, dt-scaled, so it survives the movers that integrate
+// x += v·dt and never assign absolute positions), FEEDS on bullets/enemies that
+// reach its body (growing its radius, clamped, and periodically emitting a fresh
+// seeker at the arena edge), takes bullet damage toward destruction, and on death
+// credits a big score payout and is removed. All values are tunable placeholders
+// (tuned post-launch); every cadence/motion value derives from the fixed-step dt
+// so it is frame-rate-independent.
+
+// Initial collision/gravity-source radius (px) of a freshly spawned hole, also
+// the placeholder circle radius and the interior-spawn inset margin.
+export const BLACKHOLE_RADIUS = 26;
+// Hard cap (px) on the radius as the hole feeds and grows — the body never
+// exceeds this no matter how much it devours (clamped each feed).
+export const BLACKHOLE_MAX_RADIUS = 70;
+// Gravity reach (px): entities strictly inside this distance from the hole center
+// are pulled; anything at or beyond it is unaffected.
+export const BLACKHOLE_GRAVITY_RADIUS = 340;
+// Gravity strength (px/s) at the core. The per-step pull magnitude is
+// STRENGTH·(1 − d/GRAVITY_RADIUS)·dtSec, so it is strongest near the core and
+// fades linearly to zero at the radius, and scales with dt (frame-rate-independent).
+export const BLACKHOLE_GRAVITY_STRENGTH = 300;
+// Hit points: total bullet damage required to destroy the hole (multi-hit, the
+// opposite of the one-shot enemies — this is why the hole is NOT in the
+// CollisionSystem pool list; BlackHoleSystem owns its own bullet test).
+export const BLACKHOLE_HP = 40;
+// Damage one absorbed bullet deals to the hole's hp. BLACKHOLE_HP / this ≈ the
+// bullet hits needed to detonate it.
+export const BLACKHOLE_BULLET_DAMAGE = 2;
+// Radius growth (px) per feed (each absorbed bullet or enemy), clamped at
+// BLACKHOLE_MAX_RADIUS.
+export const BLACKHOLE_GROWTH_PER_FEED = 1.5;
+// Feeds required to emit one new seeker: every this-many absorptions the hole
+// spawns a fresh seeker at a random arena EDGE (not the core — otherwise its own
+// gravity would suck the newborn straight back in and re-feed, a runaway loop).
+export const BLACKHOLE_FEED_PER_SPAWN = 4;
+// Self-spawn cadence (ms): one hole spawns per this much accumulated fixed-step
+// time (subject to the max-active cap), so spawns are frame-rate-independent.
+// Long — the hole is a rare, signature hazard.
+export const BLACKHOLE_SPAWN_INTERVAL_MS = 14000;
+// Per-archetype active cap: a sanity guard so the O(holes × entities) gravity
+// pass stays bounded (default 1 = one hole at a time, matching RE1's rare-hazard
+// feel). This is NOT the spawn director's global cap/mix/ramp (Story 2.5).
+export const BLACKHOLE_MAX_ACTIVE = 1;
+// Idle hole instances prewarmed into the pool at construction so the steady state
+// never allocates on the gravity/absorb path (grows lazily beyond it, only on
+// spawn events — mirrors the other archetype pools).
+export const BLACKHOLE_POOL_PREWARM = 2;
+// Detonation payout: score credited directly to ScoreState when a hole is
+// destroyed. An event payout (not a per-tick one-hit kill), so it is added to the
+// shared score surface directly, NEVER through the killedEnemies/ScoringSystem
+// seam and NEVER multiplied (the multiplier is Epic 3).
+export const BLACKHOLE_SCORE = 1000;
+
 // --- Player death / lives (feel) --------------------------------------------
 // Player lifecycle: lives, respawn invulnerability, and the invuln blink. All
 // tunable; the invulnerability window and its blink are tracked in milliseconds
@@ -236,6 +293,9 @@ export const COLOR_SEEKER = 0x3366ff;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
 export const COLOR_PINWHEEL = 0xff66cc;
 export const COLOR_SNAKE = 0xffaa33;
+// Placeholder fill for the Black Hole body (the grid-warp visual is Epic 4 /
+// Story 4.2 — this is a plain filled circle only).
+export const COLOR_BLACK_HOLE = 0x9933ff;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
