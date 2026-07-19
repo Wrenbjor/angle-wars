@@ -10,6 +10,7 @@ import {
   COLOR_SHIP,
   SHIP_RADIUS,
   COLOR_BULLET,
+  COLOR_SEEKER,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
 } from '../config/constants.js';
@@ -21,6 +22,8 @@ import { InputState } from '../input/InputState.js';
 import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
 import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
 import { FiringSystem } from '../systems/FiringSystem.js';
+import { EnemySystem } from '../systems/EnemySystem.js';
+import { CollisionSystem } from '../systems/CollisionSystem.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -75,6 +78,24 @@ export class ArenaScene extends Phaser.Scene {
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.bulletGraphics = this.add.graphics();
 
+    // --- Enemies ------------------------------------------------------------
+    // EnemySystem must run after PlayerMovementSystem so seekers home toward the
+    // ship's post-move position this tick (firing does not move the ship);
+    // CollisionSystem must run after both FiringSystem and EnemySystem so it sees
+    // post-move bullet and seeker positions. Both own no world entities — the
+    // enemy pool is the single source of active/free truth, read here only to
+    // render (never sim in render).
+    this.enemySystem = new EnemySystem(this.ship);
+    this.world.addSystem(this.enemySystem);
+    this.collisionSystem = new CollisionSystem(
+      this.firingSystem.bulletPool,
+      this.enemySystem.enemyPool,
+    );
+    this.world.addSystem(this.collisionSystem);
+    // Seekers are placeholder blue vector shapes, cleared and redrawn each render
+    // frame from the active pool. Epic 4 replaces this with the aesthetic.
+    this.seekerGraphics = this.add.graphics();
+
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
     // entity. Epic 4 replaces this with the signature aesthetic.
@@ -128,6 +149,15 @@ export class ArenaScene extends Phaser.Scene {
     bg.fillStyle(COLOR_BULLET, 1);
     this.firingSystem.bulletPool.forEachActive((b) => {
       bg.fillCircle(b.x, b.y, b.radius);
+    });
+
+    // Redraw active seekers from the enemy pool: clear once, then a filled blue
+    // circle per live seeker. Placeholder shape only (Epic 4 adds the aesthetic).
+    const sg = this.seekerGraphics;
+    sg.clear();
+    sg.fillStyle(COLOR_SEEKER, 1);
+    this.enemySystem.enemyPool.forEachActive((s) => {
+      sg.fillCircle(s.x, s.y, s.radius);
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.

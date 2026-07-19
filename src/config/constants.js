@@ -70,11 +70,32 @@ export const BULLET_RADIUS = 4;
 // count (interval, speed, arena span).
 export const BULLET_POOL_PREWARM = 64;
 
+// --- Blue Seeker enemy (feel) -----------------------------------------------
+// The Seeker spawns at a random arena edge and homes toward the ship's current
+// position every fixed step at a constant speed (no acceleration/turn cap), so
+// its path curves naturally as the player moves. All values are tunable.
+
+// Homing speed (px/s). Velocity each tick = unit(ship − seeker) × this.
+export const SEEKER_SPEED = 140;
+// Collision/half-extent radius (px), also the placeholder shape radius and the
+// spawn inset margin so a fresh seeker sits fully inside the drawn border.
+export const SEEKER_RADIUS = 14;
+// Spawn cadence (ms): the EnemySystem spawns one seeker per this much accumulated
+// fixed-step time, so spawns-per-second are frame-rate-independent. Lower = more.
+export const SEEKER_SPAWN_INTERVAL_MS = 1200;
+// Idle seeker instances prewarmed into the pool at construction so the expected
+// steady state never allocates. Sized for the expected steady-state peak alive
+// count under continuous auto-fire; there is no max-alive cap yet (a true cap
+// arrives with the Epic 2 spawn director), so beyond this the pool grows lazily
+// — still no per-frame allocation once warm, just a one-time factory call.
+export const SEEKER_POOL_PREWARM = 32;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
 export const COLOR_SHIP = 0x66ccff;
 export const COLOR_BULLET = 0xffee66;
+export const COLOR_SEEKER = 0x3366ff;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
