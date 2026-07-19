@@ -1,0 +1,78 @@
+# generated: 2026-07-19
+# last_updated: 2026-07-19
+# project: Angle Wars
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+generated: 2026-07-19
+last_updated: 2026-07-19
+project: Angle Wars
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # Epic 1 — Playable Core Loop
+  epic-1: backlog
+  1-1-project-bootstrap-and-game-shell: backlog
+  1-2-player-ship-and-twin-stick-movement: backlog
+  1-3-twin-stick-firing: backlog
+  1-4-blue-seeker-enemy: backlog
+  1-5-player-death-and-collision: backlog
+  1-6-score-and-hud: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2 — Enemy Roster & Spawn Director
+  epic-2: backlog
+  2-1-green-square-enemy: backlog
+  2-2-pinwheel-wanderer-enemy: backlog
+  2-3-snake-enemy: backlog
+  2-4-black-hole-hazard: backlog
+  2-5-escalating-spawn-director: backlog
+  2-6-enemy-spawn-telegraph: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3 — Score, Multiplier, Bombs & Lives
+  epic-3: backlog
+  3-1-score-multiplier-system: backlog
+  3-2-smart-bombs: backlog
+  3-3-extra-lives: backlog
+  3-4-persistent-high-score: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4 — Signature Aesthetic & Juice
+  epic-4: backlog
+  4-1-neon-vector-art-and-bloom: backlog
+  4-2-deforming-grid-field: backlog
+  4-3-pooled-particle-system: backlog
+  4-4-screen-juice-and-feedback: backlog
+  4-5-sound-and-adaptive-music: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5 — Game Shell, Flow & Release
+  epic-5: backlog
+  5-1-title-and-start-screen: backlog
+  5-2-pause-and-resume: backlog
+  5-3-game-flow-state-machine: backlog
+  5-4-input-config-and-gamepad-polish: backlog
+  5-5-performance-hardening-and-web-build: backlog
+  epic-5-retrospective: optional

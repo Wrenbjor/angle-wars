@@ -1,0 +1,11 @@
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
+_bmad/config.user.yaml
+
+node_modules/
+dist/
+dist-ssr/
+.DS_Store
+*.local
+npm-debug.log*
