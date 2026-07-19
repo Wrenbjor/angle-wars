@@ -38,7 +38,7 @@ development_status:
   1-3-twin-stick-firing: done
   1-4-blue-seeker-enemy: done
   1-5-player-death-and-collision: done
-  1-6-score-and-hud: backlog
+  1-6-score-and-hud: done
   epic-1-retrospective: optional
 
   # Epic 2 — Enemy Roster & Spawn Director

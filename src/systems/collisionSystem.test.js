@@ -3,7 +3,7 @@ import { CollisionSystem } from './CollisionSystem.js';
 import { Pool } from '../core/Pool.js';
 import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
-import { FIXED_STEP_MS, BULLET_RADIUS, SEEKER_RADIUS } from '../config/constants.js';
+import { FIXED_STEP_MS, BULLET_RADIUS, SEEKER_RADIUS, SEEKER_SCORE } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
 
@@ -128,5 +128,63 @@ describe('CollisionSystem', () => {
     for (let i = 0; i < 50; i++) system.fixedUpdate(DT);
     expect(bulletPool.activeCount + bulletPool.freeCount).toBe(1);
     expect(enemyPool.activeCount + enemyPool.freeCount).toBe(1);
+  });
+});
+
+describe('CollisionSystem.killedSeekers reporting', () => {
+  it('reports the destroyed seeker when a bullet overlaps one', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 100, 100);
+    const s = addSeeker(enemyPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(system.killedSeekers.length).toBe(1);
+    expect(system.killedSeekers[0]).toBe(s);
+    // Pools still released as before.
+    expect(enemyPool.activeCount).toBe(0);
+    expect(bulletPool.activeCount).toBe(0);
+  });
+
+  it('reports no kills when the bullet is far from the seeker', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 0, 0);
+    addSeeker(enemyPool, 500, 500);
+
+    system.fixedUpdate(DT);
+
+    expect(system.killedSeekers.length).toBe(0);
+  });
+
+  it('resets the report between ticks (a prior kill is cleared)', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    // Tick A: one kill.
+    addBullet(bulletPool, 100, 100);
+    addSeeker(enemyPool, 100, 100);
+    system.fixedUpdate(DT);
+    expect(system.killedSeekers.length).toBe(1);
+
+    // Tick B: no overlap remains (both released in A) — report clears to empty.
+    system.fixedUpdate(DT);
+    expect(system.killedSeekers.length).toBe(0);
+  });
+
+  it('reports two kills when two bullets each destroy a distinct seeker', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 400, 400);
+    addSeeker(enemyPool, 100, 100);
+    addSeeker(enemyPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(system.killedSeekers.length).toBe(2);
+    expect(enemyPool.activeCount).toBe(0);
+  });
+});
+
+describe('createSeeker base value', () => {
+  it('gives a fresh seeker the base SEEKER_SCORE value', () => {
+    expect(createSeeker().score).toBe(SEEKER_SCORE);
   });
 });

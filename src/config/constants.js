@@ -105,6 +105,13 @@ export const PLAYER_INVULN_MS = 2000;
 // derived from sim state (invulnMs) — no separate render timer.
 export const PLAYER_INVULN_BLINK_MS = 120;
 
+// --- Scoring / run economy --------------------------------------------------
+// Base score awarded per Blue Seeker kill. This is the enemy's own per-type
+// base value (carried on each Seeker instance) summed across kills each tick —
+// NEVER multiplied here. The score multiplier is deliberately deferred to
+// Epic 3 / Story 3.1; do not fold a multiplier into this value.
+export const SEEKER_SCORE = 100;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
@@ -115,3 +122,23 @@ export const COLOR_SEEKER = 0x3366ff;
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';
+
+// --- HUD (score + lives readout) --------------------------------------------
+// The live HUD text drawn each render frame in ArenaScene. Placeholder styling
+// only (Epic 4 owns the signature aesthetic); centralized so layout/feel is
+// tunable in one place.
+export const COLOR_HUD_TEXT = '#e6f2ff';
+export const HUD_FONT = '20px monospace';
+
+// --- Game-over overlay ------------------------------------------------------
+// Shown when PlayerState.gameOver is true: a dimming full-arena rectangle plus
+// final-score and restart-prompt text. Placeholder styling only (Epic 4).
+// Overlay fill color and its alpha (0..1) for the dimming rectangle.
+export const COLOR_GAMEOVER_OVERLAY = 0x000000;
+export const GAMEOVER_OVERLAY_ALPHA = 0.65;
+// Text color shared by the game-over title, final score, and restart prompt.
+export const COLOR_GAMEOVER_TEXT = '#ffffff';
+// Fonts for the three stacked lines of the game-over screen.
+export const GAMEOVER_TITLE_FONT = '48px monospace';
+export const GAMEOVER_SCORE_FONT = '28px monospace';
+export const GAMEOVER_PROMPT_FONT = '20px monospace';

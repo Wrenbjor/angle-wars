@@ -13,6 +13,14 @@ import {
   COLOR_SEEKER,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
+  COLOR_HUD_TEXT,
+  HUD_FONT,
+  COLOR_GAMEOVER_OVERLAY,
+  GAMEOVER_OVERLAY_ALPHA,
+  COLOR_GAMEOVER_TEXT,
+  GAMEOVER_TITLE_FONT,
+  GAMEOVER_SCORE_FONT,
+  GAMEOVER_PROMPT_FONT,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
@@ -24,8 +32,10 @@ import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
 import { FiringSystem } from '../systems/FiringSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
+import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
 import { createPlayerState } from '../state/PlayerState.js';
+import { createScoreState } from '../state/ScoreState.js';
 import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
 
 // ArenaScene — the playable stage (shell version).
@@ -96,6 +106,16 @@ export class ArenaScene extends Phaser.Scene {
     );
     this.world.addSystem(this.collisionSystem);
 
+    // --- Scoring ------------------------------------------------------------
+    // ScoringSystem runs immediately after CollisionSystem so this tick's kills
+    // (collisionSystem.killedSeekers) are already recorded, and before
+    // PlayerDeathSystem — order: …→ Collision → Scoring → PlayerDeath. It owns
+    // no pool; it credits each killed seeker's base value into the shared
+    // ScoreState the HUD/game-over screen read. Rebuilt from zero on restart.
+    this.scoreState = createScoreState();
+    this.scoringSystem = new ScoringSystem(this.collisionSystem, this.scoreState);
+    this.world.addSystem(this.scoringSystem);
+
     // --- Player death / lives -----------------------------------------------
     // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
     // bullet this tick is already released and cannot also kill the player. It
@@ -134,6 +154,70 @@ export class ArenaScene extends Phaser.Scene {
       { font: DEBUG_FONT, color: COLOR_DEBUG_TEXT },
     );
 
+    // --- HUD (score + lives) ------------------------------------------------
+    // Live readout of the run economy + remaining lives, top-right so it does
+    // not overlap the top-left debug readout. Refreshed each render frame from
+    // ScoreState/PlayerState so a kill or a death shows on the next frame.
+    // Placeholder styling only (Epic 4 owns the aesthetic).
+    this.hudText = this.add.text(
+      ARENA_WIDTH - ARENA_BORDER_INSET - 8,
+      ARENA_BORDER_INSET + 8,
+      '',
+      { font: HUD_FONT, color: COLOR_HUD_TEXT, align: 'right' },
+    );
+    this.hudText.setOrigin(1, 0);
+
+    // --- Game-over overlay --------------------------------------------------
+    // A dimming full-arena rectangle plus stacked title / final-score / restart
+    // lines, created hidden and toggled on while PlayerState.gameOver. Built
+    // once here; the render loop only sets visibility and the final-score text.
+    this.gameOverOverlay = this.add.graphics();
+    this.gameOverOverlay.fillStyle(COLOR_GAMEOVER_OVERLAY, GAMEOVER_OVERLAY_ALPHA);
+    this.gameOverOverlay.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+    this.gameOverOverlay.setVisible(false);
+
+    const cx = ARENA_WIDTH / 2;
+    const cy = ARENA_HEIGHT / 2;
+    this.gameOverTitle = this.add
+      .text(cx, cy - 60, 'GAME OVER', {
+        font: GAMEOVER_TITLE_FONT,
+        color: COLOR_GAMEOVER_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
+    this.gameOverScore = this.add
+      .text(cx, cy, '', {
+        font: GAMEOVER_SCORE_FONT,
+        color: COLOR_GAMEOVER_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
+    this.gameOverPrompt = this.add
+      .text(cx, cy + 60, 'Press Enter / Space or click to restart', {
+        font: GAMEOVER_PROMPT_FONT,
+        color: COLOR_GAMEOVER_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
+
+    // --- Restart input ------------------------------------------------------
+    // Enter / Space / pointer begin a fresh run via scene.restart(), which
+    // re-runs create() and rebuilds every run-scoped object (pools, ship,
+    // PlayerState, ScoreState) from zero. Guarded to only fire while gameOver
+    // so an in-run keypress/click never restarts the run. These listeners live
+    // on the scene's input plugin and are torn down/rebuilt across restart.
+    const restart = () => {
+      if (this.playerState.gameOver) {
+        this.scene.restart();
+      }
+    };
+    this.input.keyboard.on('keydown-ENTER', restart);
+    this.input.keyboard.on('keydown-SPACE', restart);
+    this.input.on('pointerdown', restart);
+
     // Sampling state for a once-per-second sim ticks/sec measurement.
     this._lastSampleTicks = 0;
     this._sampleAccumMs = 0;
@@ -152,7 +236,12 @@ export class ArenaScene extends Phaser.Scene {
     // fixed steps consume the latest move intent.
     this.inputSampler.sample();
 
-    this.fixedTimestep.advance(delta, (dt) => this.world.fixedUpdate(dt));
+    // Freeze the simulation on game over at sub-step granularity: each fixed
+    // sub-step re-checks gameOver, so no system runs once death latches — even
+    // mid-frame during multi-sub-step catch-up — keeping the final score stable.
+    this.fixedTimestep.advance(delta, (dt) => {
+      if (!this.playerState.gameOver) this.world.fixedUpdate(dt);
+    });
 
     // Sync the placeholder sprite from the ship entity each render frame.
     this.shipSprite.setPosition(this.ship.x, this.ship.y);
@@ -191,6 +280,23 @@ export class ArenaScene extends Phaser.Scene {
       this._ticksPerSec = (ticked * 1000) / this._sampleAccumMs;
       this._lastSampleTicks = this.simClock.ticks;
       this._sampleAccumMs = 0;
+    }
+
+    // --- HUD + game-over overlay (render only; never advances the sim) -------
+    // Read fresh each frame so a kill (score) or a death (lives) shows on the
+    // very next frame.
+    this.hudText.setText(
+      `SCORE ${this.scoreState.score}\nLIVES ${this.playerState.lives}`,
+    );
+
+    const over = this.playerState.gameOver;
+    this.gameOverOverlay.setVisible(over);
+    this.gameOverTitle.setVisible(over);
+    this.gameOverScore.setVisible(over);
+    this.gameOverPrompt.setVisible(over);
+    if (over) {
+      // The frozen (final) score — stable because the sim no longer advances.
+      this.gameOverScore.setText(`FINAL SCORE ${this.scoreState.score}`);
     }
 
     const renderFps = Math.round(this.game.loop.actualFps);

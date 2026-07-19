@@ -37,6 +37,13 @@ export class CollisionSystem extends System {
     // skipped and a seeker already destroyed is skipped.
     this._hitBullets = new Set();
     this._hitSeekers = new Set();
+
+    // Public per-tick kill report: the seekers this system destroyed this tick.
+    // Reset at the top of every fixedUpdate (so an empty tick reports [] and a
+    // kill is never counted twice), then filled in pass 2 alongside release.
+    // Read by the ScoringSystem, which runs immediately after this system.
+    // Reused array — no per-tick allocation.
+    this.killedSeekers = [];
   }
 
   /**
@@ -57,6 +64,11 @@ export class CollisionSystem extends System {
     const hitSeekers = this._hitSeekers;
     hitBullets.clear();
     hitSeekers.clear();
+
+    // Reset the per-tick kill report so a tick with no kills reports [] and a
+    // previous tick's kills are never re-counted (length reset, no alloc).
+    const killedSeekers = this.killedSeekers;
+    killedSeekers.length = 0;
 
     // Pass 1: mark hits. A bullet stops after its first hit (consumed); a seeker
     // already hit this tick is skipped (destroyed once).
@@ -79,8 +91,11 @@ export class CollisionSystem extends System {
       }
     }
 
-    // Pass 2: release marked instances (safe to mutate the pools now).
+    // Pass 2: release marked instances (safe to mutate the pools now) and
+    // record each released seeker in the public kill report for the
+    // ScoringSystem. Release rules are unchanged — this only observes them.
     for (const s of hitSeekers) {
+      killedSeekers.push(s);
       this.enemyPool.release(s);
     }
     for (const b of hitBullets) {
