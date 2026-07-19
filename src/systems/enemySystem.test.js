@@ -7,7 +7,6 @@ import {
   FIXED_STEP_MS,
   SEEKER_SPEED,
   SEEKER_RADIUS,
-  SEEKER_SPAWN_INTERVAL_MS,
   SEEKER_POOL_PREWARM,
 } from '../config/constants.js';
 
@@ -41,36 +40,30 @@ function placeSeeker(system, x, y) {
   return s;
 }
 
-describe('EnemySystem — spawn cadence', () => {
-  it('spawns ≈ floor(T / interval) seekers, independent of tick size', () => {
-    const T = SEEKER_SPAWN_INTERVAL_MS * 5; // exercise several spawns
-    const expected = Math.floor(T / SEEKER_SPAWN_INTERVAL_MS);
-
-    function runSpawns(tickMs) {
-      const system = new EnemySystem(makeShip(640, 360), seqRng([0.1, 0.5]));
-      const ticks = Math.round(T / tickMs);
-      for (let i = 0; i < ticks; i++) system.fixedUpdate(tickMs);
-      return system.enemyPool.activeCount;
-    }
-
-    const fine = runSpawns(DT);
-    const coarse = runSpawns(SEEKER_SPAWN_INTERVAL_MS);
-
-    // Tick-size independent within ± one interval (the matrix specifies "≈";
-    // float accumulation of the fixed step can land a boundary one tick early).
-    expect(Math.abs(fine - coarse)).toBeLessThanOrEqual(1);
-    expect(fine).toBeGreaterThanOrEqual(expected - 1);
-    expect(fine).toBeLessThanOrEqual(expected + 1);
-    expect(coarse).toBeGreaterThanOrEqual(expected - 1);
-    expect(coarse).toBeLessThanOrEqual(expected + 1);
+describe('EnemySystem — no self-spawn (director is the sole spawn authority)', () => {
+  it('fixedUpdate never spawns on its own, over many intervals with no director', () => {
+    const system = new EnemySystem(makeShip(640, 360), seqRng([0.1, 0.5]));
+    // Run far longer than any old cadence; the cadence no longer lives here.
+    for (let i = 0; i < 2000; i++) system.fixedUpdate(DT);
+    expect(system.enemyPool.activeCount).toBe(0);
   });
 
-  it('does not spawn before one full interval has accumulated', () => {
+  it('public spawn() places exactly one seeker per call', () => {
     const system = new EnemySystem(makeShip(640, 360), seqRng([0.1, 0.5]));
-    // Run just under one interval worth of fixed steps.
-    const ticks = Math.floor(SEEKER_SPAWN_INTERVAL_MS / DT) - 1;
-    for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
-    expect(system.enemyPool.activeCount).toBe(0);
+    system.spawn();
+    expect(system.enemyPool.activeCount).toBe(1);
+    system.spawn();
+    expect(system.enemyPool.activeCount).toBe(2);
+  });
+
+  it('does not grow the pool over steady-state homing steps after a few spawns (NFR2)', () => {
+    const system = new EnemySystem(makeShip(640, 360), seqRng([0.1, 0.5]));
+    for (let i = 0; i < 5; i++) system.spawn();
+    for (let i = 0; i < 500; i++) system.fixedUpdate(DT);
+    expect(system.enemyPool.activeCount + system.enemyPool.freeCount).toBe(
+      SEEKER_POOL_PREWARM,
+    );
+    expect(system.enemyPool.activeCount).toBe(5); // no self-spawn added any
   });
 });
 
@@ -95,10 +88,10 @@ describe('EnemySystem — spawn placement', () => {
       seqRng([0.0, 0.1, 0.3, 0.4, 0.6, 0.7, 0.9, 0.95]),
     );
     // Spawn one on each of the four edges deterministically.
-    system._spawnOne(); // edge 0 (top)
-    system._spawnOne(); // edge 1 (bottom)
-    system._spawnOne(); // edge 2 (left)
-    system._spawnOne(); // edge 3 (right)
+    system.spawn(); // edge 0 (top)
+    system.spawn(); // edge 1 (bottom)
+    system.spawn(); // edge 2 (left)
+    system.spawn(); // edge 3 (right)
 
     const seekers = activeSeekers(system);
     expect(seekers.length).toBe(4);
@@ -110,7 +103,7 @@ describe('EnemySystem — spawn placement', () => {
   it('places the top-edge seeker at y=minY with x in the free-axis range', () => {
     // edge=0 (top), t=0.5 → centered along x.
     const system = new EnemySystem(makeShip(640, 360), seqRng([0.0, 0.5]));
-    system._spawnOne();
+    system.spawn();
     const [s] = activeSeekers(system);
     expect(s.y).toBe(minY);
     expect(s.x).toBeCloseTo(minX + 0.5 * (maxX - minX), 6);
@@ -196,7 +189,7 @@ describe('EnemySystem — pool prewarm (NFR2)', () => {
 
     // Spawn exactly the prewarm count: every acquire recycles a prewarmed idle
     // instance, so the factory never runs and the pool never grows.
-    for (let i = 0; i < SEEKER_POOL_PREWARM; i++) system._spawnOne();
+    for (let i = 0; i < SEEKER_POOL_PREWARM; i++) system.spawn();
 
     expect(system.enemyPool.activeCount).toBe(SEEKER_POOL_PREWARM);
     expect(system.enemyPool.freeCount).toBe(0);

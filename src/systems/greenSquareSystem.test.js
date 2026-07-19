@@ -12,7 +12,6 @@ import {
   GREEN_SQUARE_FLEE_SPEED,
   GREEN_SQUARE_CHASE_SPEED,
   GREEN_SQUARE_THREAT_RADIUS,
-  GREEN_SQUARE_SPAWN_INTERVAL_MS,
   GREEN_SQUARE_POOL_PREWARM,
   GREEN_SQUARE_SCORE,
 } from '../config/constants.js';
@@ -276,38 +275,24 @@ describe('GreenSquareSystem — frame-rate independence', () => {
   });
 });
 
-describe('GreenSquareSystem — spawn cadence', () => {
-  it('spawns ≈ floor(T / interval) squares, independent of tick size', () => {
-    const T = GREEN_SQUARE_SPAWN_INTERVAL_MS * 5;
-    const expected = Math.floor(T / GREEN_SQUARE_SPAWN_INTERVAL_MS);
-
-    function runSpawns(tickMs) {
-      const { system } = makeSystem(makeShip(640, 360));
-      const ticks = Math.round(T / tickMs);
-      for (let i = 0; i < ticks; i++) system.fixedUpdate(tickMs);
-      return system.enemyPool.activeCount;
-    }
-
-    const fine = runSpawns(DT);
-    const coarse = runSpawns(GREEN_SQUARE_SPAWN_INTERVAL_MS);
-
-    expect(Math.abs(fine - coarse)).toBeLessThanOrEqual(1);
-    expect(fine).toBeGreaterThanOrEqual(expected - 1);
-    expect(fine).toBeLessThanOrEqual(expected + 1);
-    expect(coarse).toBeGreaterThanOrEqual(expected - 1);
-    expect(coarse).toBeLessThanOrEqual(expected + 1);
+describe('GreenSquareSystem — no self-spawn + public spawn', () => {
+  it('fixedUpdate never spawns on its own, over many intervals with no director', () => {
+    const { system } = makeSystem(makeShip(640, 360));
+    for (let i = 0; i < 2000; i++) system.fixedUpdate(DT);
+    expect(system.enemyPool.activeCount).toBe(0);
   });
 
-  it('does not spawn before one full interval has accumulated', () => {
+  it('public spawn() places exactly one square per call', () => {
     const { system } = makeSystem(makeShip(640, 360));
-    const ticks = Math.floor(GREEN_SQUARE_SPAWN_INTERVAL_MS / DT) - 1;
-    for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
-    expect(system.enemyPool.activeCount).toBe(0);
+    system.spawn();
+    expect(system.enemyPool.activeCount).toBe(1);
+    system.spawn();
+    expect(system.enemyPool.activeCount).toBe(2);
   });
 
   it('each spawned square starts non-aggressive (fleeing)', () => {
     const { system } = makeSystem(makeShip(640, 360));
-    system._spawnOne();
+    system.spawn();
     const [s] = activeSquares(system);
     expect(s.aggro).toBe(false);
   });
@@ -315,13 +300,13 @@ describe('GreenSquareSystem — spawn cadence', () => {
   it('a recycled instance that was aggressive respawns fleeing (aggro reset)', () => {
     // Provoke a square to aggro=true, release it back to the pool, then spawn —
     // the recycled instance must come back fleeing. Pins the `s.aggro = false`
-    // reset in _spawnOne (a fresh pool's instances are already false from the
+    // reset in spawn() (a fresh pool's instances are already false from the
     // factory, so the spawn-aggro test above cannot catch a dropped reset).
     const { system } = makeSystem(makeShip(640, 360));
     const s = placeSquare(system, 100, 100, /*aggro*/ true);
     expect(s.aggro).toBe(true);
     system.enemyPool.release(s);
-    system._spawnOne();
+    system.spawn();
     // The single free instance is the one just released — recycled, not new.
     const [recycled] = activeSquares(system);
     expect(recycled).toBe(s);
@@ -344,10 +329,10 @@ describe('GreenSquareSystem — spawn placement', () => {
       new Pool(createBullet),
       seqRng([0.0, 0.1, 0.3, 0.4, 0.6, 0.7, 0.9, 0.95]),
     );
-    system._spawnOne(); // top
-    system._spawnOne(); // bottom
-    system._spawnOne(); // left
-    system._spawnOne(); // right
+    system.spawn(); // top
+    system.spawn(); // bottom
+    system.spawn(); // left
+    system.spawn(); // right
 
     const squares = activeSquares(system);
     expect(squares.length).toBe(4);
@@ -362,7 +347,7 @@ describe('GreenSquareSystem — spawn placement', () => {
       new Pool(createBullet),
       seqRng([0.0, 0.5]),
     );
-    system._spawnOne();
+    system.spawn();
     const [s] = activeSquares(system);
     expect(s.y).toBe(MIN_Y);
     expect(s.x).toBeCloseTo(MIN_X + 0.5 * (MAX_X - MIN_X), 6);
@@ -375,7 +360,7 @@ describe('GreenSquareSystem — pool prewarm (NFR2)', () => {
     expect(system.enemyPool.freeCount).toBe(GREEN_SQUARE_POOL_PREWARM);
     expect(system.enemyPool.activeCount).toBe(0);
 
-    for (let i = 0; i < GREEN_SQUARE_POOL_PREWARM; i++) system._spawnOne();
+    for (let i = 0; i < GREEN_SQUARE_POOL_PREWARM; i++) system.spawn();
 
     expect(system.enemyPool.activeCount).toBe(GREEN_SQUARE_POOL_PREWARM);
     expect(system.enemyPool.freeCount).toBe(0);
@@ -384,15 +369,16 @@ describe('GreenSquareSystem — pool prewarm (NFR2)', () => {
     );
   });
 
-  it('does not grow the pool over many steady-state behavior/spawn steps', () => {
-    // Run long enough to spawn a handful of squares; capacity must never exceed
-    // the prewarm (no per-frame allocation once warm).
+  it('does not grow the pool over many steady-state behavior steps after a few spawns', () => {
+    // Spawn a handful (the director's job), then run behavior steps; capacity must
+    // never exceed the prewarm (no per-frame allocation once warm).
     const { system } = makeSystem(makeShip(640, 360));
+    for (let i = 0; i < 5; i++) system.spawn();
     for (let i = 0; i < 500; i++) system.fixedUpdate(DT);
     expect(system.enemyPool.activeCount + system.enemyPool.freeCount).toBe(
       GREEN_SQUARE_POOL_PREWARM,
     );
-    expect(system.enemyPool.activeCount).toBeGreaterThan(0); // did spawn
+    expect(system.enemyPool.activeCount).toBe(5); // no self-spawn added any
   });
 });
 

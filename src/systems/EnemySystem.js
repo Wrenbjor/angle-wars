@@ -7,21 +7,22 @@ import {
   ARENA_BORDER_INSET,
   SEEKER_SPEED,
   SEEKER_RADIUS,
-  SEEKER_SPAWN_INTERVAL_MS,
   SEEKER_POOL_PREWARM,
 } from '../config/constants.js';
 
-// EnemySystem — Blue Seeker homing + spawn cadence (Phaser-free).
+// EnemySystem — Blue Seeker homing (Phaser-free).
 //
 // Runs inside world.fixedUpdate(dt) at the constant fixed step, so homing speed
-// and spawn cadence are identical regardless of render frame rate. Owns the
-// enemy Pool (the single source of active/free truth — seekers are NOT in
-// world.entities, to avoid splice/indexOf churn; the pool is exposed for the
-// collision system and the renderer). Each fixed step it:
-//   1. homes + integrates every active seeker toward the ship's CURRENT position
-//      at a constant speed (recomputed each tick, so it tracks a moving player),
-//   2. accumulates dt and spawns one seeker per SEEKER_SPAWN_INTERVAL_MS on a
-//      random arena edge via an injectable rng.
+// is identical regardless of render frame rate. Owns the enemy Pool (the single
+// source of active/free truth — seekers are NOT in world.entities, to avoid
+// splice/indexOf churn; the pool is exposed for the collision system and the
+// renderer). Each fixed step it homes + integrates every active seeker toward the
+// ship's CURRENT position at a constant speed (recomputed each tick, so it tracks
+// a moving player).
+//
+// This system NO LONGER self-spawns: the SpawnDirector is the sole spawn
+// authority and drives the public `spawn()` (its old `_spawnOne`). The
+// director owns WHEN and WHICH; this system owns only movement + placement.
 //
 // The steady-state path allocates nothing: the pool recycles freed instances and
 // the prewarm builds the free list up front.
@@ -50,14 +51,10 @@ export class EnemySystem extends System {
     for (let i = 0; i < warm.length; i++) {
       this.enemyPool.release(warm[i]);
     }
-
-    // Spawn-cadence accumulator (ms). Starts at 0 so the first seeker spawns
-    // after one full interval (ungated — spawning does not depend on any input).
-    this._accumMs = 0;
   }
 
   /**
-   * Advance one fixed step: home + integrate seekers, then spawn at cadence.
+   * Advance one fixed step: home + integrate every active seeker toward the ship.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
@@ -83,23 +80,15 @@ export class EnemySystem extends System {
       s.x += s.vx * dtSec;
       s.y += s.vy * dtSec;
     });
-
-    // 2. Spawn at a constant cadence. Unlike firing this is ungated (no input
-    //    channel), so it always accumulates.
-    this._accumMs += dt;
-    while (this._accumMs >= SEEKER_SPAWN_INTERVAL_MS) {
-      this._spawnOne();
-      this._accumMs -= SEEKER_SPAWN_INTERVAL_MS;
-    }
   }
 
   /**
    * Spawn one seeker on a random arena edge, fully inside the drawn border: the
    * fixed axis is pinned just inside the inset (by the radius), the free axis is
-   * uniformly random within [inset+radius, dim−inset−radius].
-   * @private
+   * uniformly random within [inset+radius, dim−inset−radius]. Public: the
+   * SpawnDirector is the sole caller during a run.
    */
-  _spawnOne() {
+  spawn() {
     const s = this.enemyPool.acquire();
 
     // Free-axis bounds, shared by both orientations.

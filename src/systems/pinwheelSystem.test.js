@@ -18,7 +18,6 @@ import {
   PINWHEEL_DRIFT_SPEED,
   PINWHEEL_WANDER_INTERVAL_MS,
   PINWHEEL_WANDER_MAX_TURN_RAD,
-  PINWHEEL_SPAWN_INTERVAL_MS,
   PINWHEEL_POOL_PREWARM,
   PINWHEEL_SCORE,
   PLAYER_INVULN_MS,
@@ -267,33 +266,19 @@ describe('PinwheelSystem — frame-rate independence of straight-drift integrati
   });
 });
 
-describe('PinwheelSystem — spawn cadence / placement / heading', () => {
-  it('spawns ≈ floor(T / interval) pinwheels, independent of tick size', () => {
-    const T = PINWHEEL_SPAWN_INTERVAL_MS * 5;
-    const expected = Math.floor(T / PINWHEEL_SPAWN_INTERVAL_MS);
-
-    function runSpawns(tickMs) {
-      const system = makeSystem();
-      const ticks = Math.round(T / tickMs);
-      for (let i = 0; i < ticks; i++) system.fixedUpdate(tickMs);
-      return system.enemyPool.activeCount;
-    }
-
-    const fine = runSpawns(DT);
-    const coarse = runSpawns(PINWHEEL_SPAWN_INTERVAL_MS);
-
-    expect(Math.abs(fine - coarse)).toBeLessThanOrEqual(1);
-    expect(fine).toBeGreaterThanOrEqual(expected - 1);
-    expect(fine).toBeLessThanOrEqual(expected + 1);
-    expect(coarse).toBeGreaterThanOrEqual(expected - 1);
-    expect(coarse).toBeLessThanOrEqual(expected + 1);
+describe('PinwheelSystem — no self-spawn / public spawn / placement / heading', () => {
+  it('fixedUpdate never spawns on its own, over many intervals with no director', () => {
+    const system = makeSystem();
+    for (let i = 0; i < 2000; i++) system.fixedUpdate(DT);
+    expect(system.enemyPool.activeCount).toBe(0);
   });
 
-  it('does not spawn before one full interval has accumulated', () => {
+  it('public spawn() places exactly one pinwheel per call', () => {
     const system = makeSystem();
-    const ticks = Math.floor(PINWHEEL_SPAWN_INTERVAL_MS / DT) - 1;
-    for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
-    expect(system.enemyPool.activeCount).toBe(0);
+    system.spawn();
+    expect(system.enemyPool.activeCount).toBe(1);
+    system.spawn();
+    expect(system.enemyPool.activeCount).toBe(2);
   });
 
   it('spawns each pinwheel on an arena edge, inside the drawn border', () => {
@@ -306,10 +291,10 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
         0.9, 0.95, 0.2, // right
       ]),
     );
-    system._spawnOne();
-    system._spawnOne();
-    system._spawnOne();
-    system._spawnOne();
+    system.spawn();
+    system.spawn();
+    system.spawn();
+    system.spawn();
 
     const pws = activePinwheels(system);
     expect(pws.length).toBe(4);
@@ -325,7 +310,7 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
   it('places the top-edge pinwheel at y=MIN_Y with x in the free-axis range', () => {
     // edge index 0 (0.0*4=0), free-axis t=0.5.
     const system = makeSystem(seqRng([0.0, 0.5, 0.0]));
-    system._spawnOne();
+    system.spawn();
     const [pw] = activePinwheels(system);
     expect(pw.y).toBe(MIN_Y);
     expect(pw.x).toBeCloseTo(MIN_X + 0.5 * (MAX_X - MIN_X), 6);
@@ -334,7 +319,7 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
   it('places the bottom-edge pinwheel at y=MAX_Y with x in the free-axis range', () => {
     // edge index 1 (0.25*4=1.0), free-axis t=0.5.
     const system = makeSystem(seqRng([0.25, 0.5, 0.0]));
-    system._spawnOne();
+    system.spawn();
     const [pw] = activePinwheels(system);
     expect(pw.y).toBe(MAX_Y);
     expect(pw.x).toBeCloseTo(MIN_X + 0.5 * (MAX_X - MIN_X), 6);
@@ -343,7 +328,7 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
   it('places the left-edge pinwheel at x=MIN_X with y in the free-axis range', () => {
     // edge index 2 (0.5*4=2.0), free-axis t=0.3.
     const system = makeSystem(seqRng([0.5, 0.3, 0.0]));
-    system._spawnOne();
+    system.spawn();
     const [pw] = activePinwheels(system);
     expect(pw.x).toBe(MIN_X);
     expect(pw.y).toBeCloseTo(MIN_Y + 0.3 * (MAX_Y - MIN_Y), 6);
@@ -352,7 +337,7 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
   it('places the right-edge pinwheel at x=MAX_X with y in the free-axis range', () => {
     // edge index 3 (0.75*4=3.0), free-axis t=0.7.
     const system = makeSystem(seqRng([0.75, 0.7, 0.0]));
-    system._spawnOne();
+    system.spawn();
     const [pw] = activePinwheels(system);
     expect(pw.x).toBe(MAX_X);
     expect(pw.y).toBeCloseTo(MIN_Y + 0.7 * (MAX_Y - MIN_Y), 6);
@@ -360,7 +345,7 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
 
   it('spawns with a random heading at exactly the drift speed', () => {
     const system = makeSystem(seqRng([0.0, 0.5, 0.37]));
-    system._spawnOne();
+    system.spawn();
     const [pw] = activePinwheels(system);
     expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
     // Heading matches the third rng draw × 2π.
@@ -374,7 +359,7 @@ describe('PinwheelSystem — spawn cadence / placement / heading', () => {
     // Give a live instance a large wanderMs, release it, then respawn it.
     const pw = placePinwheel(system, 100, 100, PINWHEEL_DRIFT_SPEED, 0, 999);
     system.enemyPool.release(pw);
-    system._spawnOne();
+    system.spawn();
     const [recycled] = activePinwheels(system);
     expect(recycled).toBe(pw); // recycled, not freshly allocated
     expect(recycled.wanderMs).toBe(0);
@@ -387,7 +372,7 @@ describe('PinwheelSystem — pool prewarm (NFR2)', () => {
     expect(system.enemyPool.freeCount).toBe(PINWHEEL_POOL_PREWARM);
     expect(system.enemyPool.activeCount).toBe(0);
 
-    for (let i = 0; i < PINWHEEL_POOL_PREWARM; i++) system._spawnOne();
+    for (let i = 0; i < PINWHEEL_POOL_PREWARM; i++) system.spawn();
 
     expect(system.enemyPool.activeCount).toBe(PINWHEEL_POOL_PREWARM);
     expect(system.enemyPool.freeCount).toBe(0);
@@ -396,13 +381,14 @@ describe('PinwheelSystem — pool prewarm (NFR2)', () => {
     );
   });
 
-  it('does not grow the pool over many steady-state behavior/spawn steps', () => {
+  it('does not grow the pool over many steady-state behavior steps after a few spawns', () => {
     const system = makeSystem();
+    for (let i = 0; i < 5; i++) system.spawn();
     for (let i = 0; i < 500; i++) system.fixedUpdate(DT);
     expect(system.enemyPool.activeCount + system.enemyPool.freeCount).toBe(
       PINWHEEL_POOL_PREWARM,
     );
-    expect(system.enemyPool.activeCount).toBeGreaterThan(0); // did spawn
+    expect(system.enemyPool.activeCount).toBe(5); // no self-spawn added any
   });
 });
 

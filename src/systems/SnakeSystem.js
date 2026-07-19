@@ -11,16 +11,14 @@ import {
   SNAKE_SEGMENT_COUNT,
   SNAKE_SLITHER_AMPLITUDE_RAD,
   SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC,
-  SNAKE_SPAWN_INTERVAL_MS,
   SNAKE_SEGMENT_POOL_PREWARM,
 } from '../config/constants.js';
 
-// SnakeSystem — the Snake archetype: split-on-kill + slither/follow + spawn cadence
-// (Phaser-free).
+// SnakeSystem — the Snake archetype: split-on-kill + slither/follow (Phaser-free).
 //
 // Runs inside world.fixedUpdate(dt) at the constant fixed step (after the other
-// enemy systems, BEFORE the CollisionSystem), so slither cadence, motion, and
-// spawn are identical regardless of render frame rate. Owns ONE shared segment
+// enemy systems, BEFORE the CollisionSystem), so slither cadence and motion are
+// identical regardless of render frame rate. Owns ONE shared segment
 // Pool (the single source of active/free truth — segments are NOT in
 // world.entities; the pool is exposed as `enemyPool` for the collision/death
 // systems and the renderer). Also exposes `snakes`: the active snake structs
@@ -46,8 +44,11 @@ import {
 //      slither-modulated heading, reflect the BASE heading off the walls (clamp +
 //      reflect), then pull each body segment head→tail to exactly the fixed
 //      spacing behind its leader (a geometric, dt-free position constraint).
-//   3. Spawn: one snake per SNAKE_SPAWN_INTERVAL_MS on a random arena edge, its
-//      SEGMENT_COUNT segments trailing outward behind an inward-pointing head.
+//
+// This system NO LONGER self-spawns: the SpawnDirector is the sole spawn
+// authority and drives the public `spawn()` (its old `_spawnOne`), which still
+// pushes a full SEGMENT_COUNT chain on a random arena edge, its segments trailing
+// outward behind an inward-pointing head.
 //
 // The steady-state move path allocates nothing: the pool recycles freed instances
 // and the prewarm builds the free list up front. Snake-struct / segment-array
@@ -84,10 +85,6 @@ export class SnakeSystem extends System {
     // must exist first). Until set, the reap is a guarded no-op.
     this.collisionSystem = null;
 
-    // Spawn-cadence accumulator (ms). Starts at 0 so the first snake spawns after
-    // one full interval (ungated — spawning does not depend on any input).
-    this._accumMs = 0;
-
     // Reusable scratch for the reap so a kill-free tick allocates nothing: the
     // killed-set lookup and the rebuilt snake list. Split events allocate the run
     // arrays / new snake structs (not per frame).
@@ -96,21 +93,12 @@ export class SnakeSystem extends System {
   }
 
   /**
-   * Advance one fixed step: reap/split, then slither+integrate+follow each snake,
-   * then spawn at cadence.
+   * Advance one fixed step: reap/split, then slither+integrate+follow each snake.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
     this._reap();
     this._move(dt);
-
-    // Spawn at a constant cadence. Ungated (no input channel), so it always
-    // accumulates — mirrors the Seeker/Green Square/Pinwheel systems.
-    this._accumMs += dt;
-    while (this._accumMs >= SNAKE_SPAWN_INTERVAL_MS) {
-      this._spawnOne();
-      this._accumMs -= SNAKE_SPAWN_INTERVAL_MS;
-    }
   }
 
   /**
@@ -295,10 +283,10 @@ export class SnakeSystem extends System {
    * edge pointing INWARD (perpendicular to the edge), and its SEGMENT_COUNT
    * segments trail outward behind it at the fixed spacing (partly outside the
    * border — the body is pulled in as the head slithers inward). Two rng draws:
-   * the edge, then the position along it.
-   * @private
+   * the edge, then the position along it. Public: the SpawnDirector is the sole
+   * caller during a run.
    */
-  _spawnOne() {
+  spawn() {
     const minX = ARENA_BORDER_INSET + SNAKE_SEGMENT_RADIUS;
     const maxX = ARENA_WIDTH - ARENA_BORDER_INSET - SNAKE_SEGMENT_RADIUS;
     const minY = ARENA_BORDER_INSET + SNAKE_SEGMENT_RADIUS;

@@ -25,6 +25,14 @@ import {
   GAMEOVER_TITLE_FONT,
   GAMEOVER_SCORE_FONT,
   GAMEOVER_PROMPT_FONT,
+  SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
+  SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
+  SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
+  SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT,
+  SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT,
+  SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
+  SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
+  SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
@@ -38,6 +46,7 @@ import { EnemySystem } from '../systems/EnemySystem.js';
 import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
 import { PinwheelSystem } from '../systems/PinwheelSystem.js';
 import { SnakeSystem } from '../systems/SnakeSystem.js';
+import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
@@ -132,6 +141,36 @@ export class ArenaScene extends Phaser.Scene {
     // segment was destroyed the prior tick.
     this.snakeSystem = new SnakeSystem();
     this.world.addSystem(this.snakeSystem);
+    // SpawnDirector is the SOLE spawn authority for the four combat archetypes
+    // (each no longer self-spawns). It is added AFTER SnakeSystem and BEFORE
+    // CollisionSystem so a fresh enemy exists for this tick's collision/death
+    // exactly as the old end-of-update self-spawn did (spawned but un-moved this
+    // tick). It owns the escalating ramp (interval floor + mix interpolation) and
+    // the global active cap; a fresh instance each run (scene.restart) resets it
+    // to the base ramp. Default rng (run-scoped randomness).
+    this.spawnDirector = new SpawnDirector([
+      {
+        system: this.enemySystem,
+        baseWeight: SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
+        peakWeight: SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
+      },
+      {
+        system: this.greenSquareSystem,
+        baseWeight: SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
+        peakWeight: SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT,
+      },
+      {
+        system: this.pinwheelSystem,
+        baseWeight: SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT,
+        peakWeight: SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
+      },
+      {
+        system: this.snakeSystem,
+        baseWeight: SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
+        peakWeight: SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
+      },
+    ]);
+    this.world.addSystem(this.spawnDirector);
     // The shared collision seam sees ALL archetype pools as an array, so a bullet
     // can destroy any enemy through one path (no per-type duplicate).
     this.enemyPools = [

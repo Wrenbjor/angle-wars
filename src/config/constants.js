@@ -80,9 +80,6 @@ export const SEEKER_SPEED = 140;
 // Collision/half-extent radius (px), also the placeholder shape radius and the
 // spawn inset margin so a fresh seeker sits fully inside the drawn border.
 export const SEEKER_RADIUS = 14;
-// Spawn cadence (ms): the EnemySystem spawns one seeker per this much accumulated
-// fixed-step time, so spawns-per-second are frame-rate-independent. Lower = more.
-export const SEEKER_SPAWN_INTERVAL_MS = 1200;
 // Idle seeker instances prewarmed into the pool at construction so the expected
 // steady state never allocates. Sized for the expected steady-state peak alive
 // count under continuous auto-fire; there is no max-alive cap yet (a true cap
@@ -113,9 +110,6 @@ export const GREEN_SQUARE_CHASE_SPEED = 200;
 // Deliberately larger than BULLET_RADIUS + GREEN_SQUARE_RADIUS so a NEAR MISS
 // provokes while a direct hit destroys (the latch is recorded before collision).
 export const GREEN_SQUARE_THREAT_RADIUS = 90;
-// Spawn cadence (ms): one square spawns per this much accumulated fixed-step
-// time, so spawns-per-second are frame-rate-independent. Lower = more.
-export const GREEN_SQUARE_SPAWN_INTERVAL_MS = 1600;
 // Idle instances prewarmed into the pool at construction so the steady state
 // never allocates (mirrors the Seeker pool prewarm; grows lazily beyond it).
 export const GREEN_SQUARE_POOL_PREWARM = 32;
@@ -147,9 +141,6 @@ export const PINWHEEL_WANDER_INTERVAL_MS = 700;
 // Max heading turn per wander (radians). Each re-roll rotates the velocity by a
 // uniform random angle in [−this, +this]. Larger = more erratic meander.
 export const PINWHEEL_WANDER_MAX_TURN_RAD = Math.PI / 6; // 30°
-// Spawn cadence (ms): one pinwheel spawns per this much accumulated fixed-step
-// time, so spawns-per-second are frame-rate-independent. Lower = more.
-export const PINWHEEL_SPAWN_INTERVAL_MS = 2000;
 // Idle instances prewarmed into the pool at construction so the steady state
 // never allocates (mirrors the Seeker/Green Square pools; grows lazily beyond it).
 export const PINWHEEL_POOL_PREWARM = 32;
@@ -191,10 +182,6 @@ export const SNAKE_SLITHER_AMPLITUDE_RAD = Math.PI / 4; // 45°
 // advances. phase += this·dtSec, so the accumulated phase over elapsed sim time
 // is tick-size independent (a frame-rate-independent slither cadence).
 export const SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC = 3.0;
-// Spawn cadence (ms): one snake spawns per this much accumulated fixed-step time,
-// so spawns-per-second are frame-rate-independent. Snakes are large, so this is
-// longer than the single-body archetypes. Lower = more.
-export const SNAKE_SPAWN_INTERVAL_MS = 5000;
 // Idle SEGMENT instances prewarmed into the shared segment pool at construction
 // so the steady state never allocates on the move path (grows lazily beyond it,
 // only on spawn events — mirrors the other archetype pools). Sized for several
@@ -204,6 +191,46 @@ export const SNAKE_SEGMENT_POOL_PREWARM = 64;
 // and summed unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never
 // fold it in). A whole snake is worth SEGMENT_COUNT × this.
 export const SNAKE_SEGMENT_SCORE = 75;
+
+// --- Spawn Director (escalation / mix / cap) --------------------------------
+// The SpawnDirector is the SOLE spawn authority for the four one-hit combat
+// archetypes (Seeker, Green Square, Pinwheel, Snake). It owns a continuous
+// difficulty ramp driven purely by elapsed sim time (Σ fixed-step dt, so it is
+// frame-rate-independent): the spawn interval shrinks from BASE toward MIN and
+// each archetype's mix weight interpolates from its BASE toward its PEAK over the
+// ramp duration, then holds flat. A global active-instance cap bounds peak load.
+// All values are tunable placeholders (tuned post-launch). The Black Hole is a
+// separately-capped hazard and is NOT part of this swarm mix.
+
+// Spawn interval (ms) at run start (elapsed 0): the light opening trickle.
+export const SPAWN_DIRECTOR_BASE_INTERVAL_MS = 1500;
+// Spawn interval (ms) floor, reached at RAMP_DURATION and held flat thereafter —
+// the fastest the swarm ever spawns. The interval is monotonic non-increasing.
+export const SPAWN_DIRECTOR_MIN_INTERVAL_MS = 350;
+// Ramp duration (ms): the elapsed sim time over which the interval falls from
+// BASE to MIN and every mix weight interpolates from BASE to PEAK. Past this the
+// difficulty holds at its peak (an endless steady peak, never a reset).
+export const SPAWN_DIRECTOR_RAMP_DURATION_MS = 120000; // 2 minutes
+// Global active-instance cap summed across the four director pools (a snake
+// counts as its live segments — the honest per-frame cost). At or above this the
+// director skips the spawn and discards that interval's banked time (mirrors the
+// Black Hole's at-cap behavior). Bounds peak load so the ever-rising spawn rate
+// cannot break the frame budget; it never despawns already-active enemies.
+export const SPAWN_DIRECTOR_MAX_ACTIVE = 60;
+
+// Per-archetype mix weights: the relative selection likelihood at the START of
+// the ramp (BASE, elapsed 0) and at its PEAK (elapsed >= RAMP_DURATION). A weight
+// of 0 makes an archetype unselectable at that point. The Snake's BASE is 0 (held
+// back early) and PEAK is positive (present late) so the mix observably shifts
+// toward tougher combinations as a run wears on.
+export const SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT = 5;
+export const SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT = 4;
+export const SPAWN_DIRECTOR_GREEN_BASE_WEIGHT = 3;
+export const SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT = 4;
+export const SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT = 1;
+export const SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT = 3;
+export const SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT = 0;
+export const SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT = 2;
 
 // --- Black Hole hazard (feel / economy) -------------------------------------
 // The Black Hole (Epic 2's signature high-risk object) is a stationary, HP-based

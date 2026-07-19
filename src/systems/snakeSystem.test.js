@@ -20,7 +20,6 @@ import {
   SNAKE_SEGMENT_COUNT,
   SNAKE_SLITHER_AMPLITUDE_RAD,
   SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC,
-  SNAKE_SPAWN_INTERVAL_MS,
   SNAKE_SEGMENT_POOL_PREWARM,
   SNAKE_SEGMENT_SCORE,
   PLAYER_INVULN_MS,
@@ -422,39 +421,28 @@ describe('SnakeSystem — split on kill (fragmentation)', () => {
   });
 });
 
-describe('SnakeSystem — spawn cadence / placement', () => {
-  it('spawns ≈ floor(T / interval) snakes, independent of tick size', () => {
-    const T = SNAKE_SPAWN_INTERVAL_MS * 5;
-    const expected = Math.floor(T / SNAKE_SPAWN_INTERVAL_MS);
-
-    function runSpawns(tickMs) {
-      const system = makeSystem();
-      const ticks = Math.round(T / tickMs);
-      for (let i = 0; i < ticks; i++) system.fixedUpdate(tickMs);
-      return system.snakes.length;
-    }
-
-    const fine = runSpawns(DT);
-    const coarse = runSpawns(SNAKE_SPAWN_INTERVAL_MS);
-
-    expect(Math.abs(fine - coarse)).toBeLessThanOrEqual(1);
-    expect(fine).toBeGreaterThanOrEqual(expected - 1);
-    expect(fine).toBeLessThanOrEqual(expected + 1);
-    expect(coarse).toBeGreaterThanOrEqual(expected - 1);
-    expect(coarse).toBeLessThanOrEqual(expected + 1);
+describe('SnakeSystem — no self-spawn / public spawn / placement', () => {
+  it('fixedUpdate never spawns on its own, over many intervals with no director', () => {
+    const system = makeSystem();
+    for (let i = 0; i < 2000; i++) system.fixedUpdate(DT);
+    expect(system.snakes.length).toBe(0);
+    expect(system.enemyPool.activeCount).toBe(0);
   });
 
-  it('does not spawn before one full interval has accumulated', () => {
+  it('public spawn() pushes exactly one full SEGMENT_COUNT chain per call', () => {
     const system = makeSystem();
-    const ticks = Math.floor(SNAKE_SPAWN_INTERVAL_MS / DT) - 1;
-    for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
-    expect(system.snakes.length).toBe(0);
+    system.spawn();
+    expect(system.snakes.length).toBe(1);
+    expect(system.enemyPool.activeCount).toBe(SNAKE_SEGMENT_COUNT);
+    system.spawn();
+    expect(system.snakes.length).toBe(2);
+    expect(system.enemyPool.activeCount).toBe(SNAKE_SEGMENT_COUNT * 2);
   });
 
   it('spawns a full SEGMENT_COUNT chain on an edge with the head inside, body trailing outward', () => {
     // Top edge (edge index 0), free-axis t=0.5 → head at (mid, MIN_Y), heading +y.
     const system = makeSystem(seqRng([0.0, 0.5]));
-    system._spawnOne();
+    system.spawn();
     expect(system.snakes.length).toBe(1);
     const snake = system.snakes[0];
     expect(snake.segments.length).toBe(SNAKE_SEGMENT_COUNT);
@@ -479,7 +467,7 @@ describe('SnakeSystem — spawn cadence / placement', () => {
     ];
     for (const c of cases) {
       const system = makeSystem(seqRng(c.rng));
-      system._spawnOne();
+      system.spawn();
       const snake = system.snakes[0];
       const head = snake.segments[0];
       expect(head[c.axis]).toBe(c.at);
@@ -494,20 +482,22 @@ describe('SnakeSystem — pool prewarm (NFR2)', () => {
     expect(system.enemyPool.freeCount).toBe(SNAKE_SEGMENT_POOL_PREWARM);
     expect(system.enemyPool.activeCount).toBe(0);
 
-    system._spawnOne();
+    system.spawn();
     expect(system.enemyPool.activeCount).toBe(SNAKE_SEGMENT_COUNT);
     expect(system.enemyPool.activeCount + system.enemyPool.freeCount).toBe(
       SNAKE_SEGMENT_POOL_PREWARM,
     );
   });
 
-  it('does not grow the pool over many steady-state move/spawn steps', () => {
+  it('does not grow the pool over many steady-state move steps after a few spawns', () => {
     const system = makeSystem();
+    for (let i = 0; i < 3; i++) system.spawn();
     for (let i = 0; i < 500; i++) system.fixedUpdate(DT);
     expect(system.enemyPool.activeCount + system.enemyPool.freeCount).toBe(
       SNAKE_SEGMENT_POOL_PREWARM,
     );
-    expect(system.enemyPool.activeCount).toBeGreaterThan(0); // did spawn
+    // No self-spawn added any; segments only leave via kills (none here).
+    expect(system.enemyPool.activeCount).toBe(SNAKE_SEGMENT_COUNT * 3);
   });
 });
 

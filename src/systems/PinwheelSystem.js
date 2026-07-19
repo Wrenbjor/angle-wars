@@ -9,19 +9,16 @@ import {
   PINWHEEL_DRIFT_SPEED,
   PINWHEEL_WANDER_INTERVAL_MS,
   PINWHEEL_WANDER_MAX_TURN_RAD,
-  PINWHEEL_SPAWN_INTERVAL_MS,
   PINWHEEL_POOL_PREWARM,
 } from '../config/constants.js';
 
-// PinwheelSystem — Pinwheel/Wanderer wander + drift + wall-bounce + spawn cadence
-// (Phaser-free).
+// PinwheelSystem — Pinwheel/Wanderer wander + drift + wall-bounce (Phaser-free).
 //
 // Runs inside world.fixedUpdate(dt) at the constant fixed step (after the other
-// enemy systems, BEFORE the CollisionSystem), so wander cadence, drift, and
-// spawn are identical regardless of render frame rate. Owns its own pinwheel
-// Pool (the single source of active/free truth — pinwheels are NOT in
-// world.entities; the pool is exposed for the collision/death systems and the
-// renderer).
+// enemy systems, BEFORE the CollisionSystem), so wander cadence and drift are
+// identical regardless of render frame rate. Owns its own pinwheel Pool (the
+// single source of active/free truth — pinwheels are NOT in world.entities; the
+// pool is exposed for the collision/death systems and the renderer).
 //
 // The Pinwheel is INDIFFERENT to the player: this system's constructor takes
 // only an injectable rng — it never reads the ship or the bullet pool, and its
@@ -35,8 +32,10 @@ import {
 //   3. Wall bounce: on crossing an inset bound, clamp the position back to the
 //      bound AND negate that axis's velocity component (reflection, not a
 //      park-at-the-wall clamp). Negation preserves the magnitude too.
-// Then accumulate dt and spawn one pinwheel per PINWHEEL_SPAWN_INTERVAL_MS on a
-// random arena edge with a random heading at the drift speed.
+//
+// This system NO LONGER self-spawns: the SpawnDirector is the sole spawn
+// authority and drives the public `spawn()` (its old `_spawnOne`), placing one
+// pinwheel on a random arena edge with a random heading at the drift speed.
 //
 // The steady-state path allocates nothing: the pool recycles freed instances and
 // the prewarm builds the free list up front.
@@ -64,15 +63,11 @@ export class PinwheelSystem extends System {
     for (let i = 0; i < warm.length; i++) {
       this.enemyPool.release(warm[i]);
     }
-
-    // Spawn-cadence accumulator (ms). Starts at 0 so the first pinwheel spawns
-    // after one full interval (ungated — spawning does not depend on any input).
-    this._accumMs = 0;
   }
 
   /**
    * Advance one fixed step: wander + integrate + wall-reflect each active
-   * pinwheel, then spawn at cadence.
+   * pinwheel.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
@@ -121,14 +116,6 @@ export class PinwheelSystem extends System {
         pw.vy = -pw.vy;
       }
     });
-
-    // Spawn at a constant cadence. Ungated (no input channel), so it always
-    // accumulates — mirrors the Seeker/Green Square systems.
-    this._accumMs += dt;
-    while (this._accumMs >= PINWHEEL_SPAWN_INTERVAL_MS) {
-      this._spawnOne();
-      this._accumMs -= PINWHEEL_SPAWN_INTERVAL_MS;
-    }
   }
 
   /**
@@ -136,10 +123,10 @@ export class PinwheelSystem extends System {
    * the fixed axis is pinned just inside the inset (by the radius), the free axis
    * is uniformly random within [inset+radius, dim−inset−radius]. Its heading is a
    * uniform random angle at the drift speed (so |v| == PINWHEEL_DRIFT_SPEED), and
-   * its wander accumulator is reset to 0.
-   * @private
+   * its wander accumulator is reset to 0. Public: the SpawnDirector is the sole
+   * caller during a run.
    */
-  _spawnOne() {
+  spawn() {
     const pw = this.enemyPool.acquire();
 
     const minX = ARENA_BORDER_INSET + PINWHEEL_RADIUS;

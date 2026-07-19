@@ -9,19 +9,18 @@ import {
   GREEN_SQUARE_FLEE_SPEED,
   GREEN_SQUARE_CHASE_SPEED,
   GREEN_SQUARE_THREAT_RADIUS,
-  GREEN_SQUARE_SPAWN_INTERVAL_MS,
   GREEN_SQUARE_POOL_PREWARM,
 } from '../config/constants.js';
 
-// GreenSquareSystem — Green Square flee/aggro behavior + spawn cadence (Phaser-free).
+// GreenSquareSystem — Green Square flee/aggro behavior (Phaser-free).
 //
 // Runs inside world.fixedUpdate(dt) at the constant fixed step (after the
 // EnemySystem and firing, BEFORE the CollisionSystem — so a provoking latch is
-// recorded before a hit can release the square), so behavior/threat/spawn are
-// identical regardless of render frame rate. Owns its own green-square Pool (the
-// single source of active/free truth — squares are NOT in world.entities; the
-// pool is exposed for the collision/death systems and the renderer) and reads
-// the shared bullet pool for threat detection.
+// recorded before a hit can release the square), so behavior/threat are identical
+// regardless of render frame rate. Owns its own green-square Pool (the single
+// source of active/free truth — squares are NOT in world.entities; the pool is
+// exposed for the collision/death systems and the renderer) and reads the shared
+// bullet pool for threat detection.
 //
 // Each fixed step, per active square:
 //   1. If not yet aggressive, test the square against every active bullet: if a
@@ -30,8 +29,10 @@ import {
 //   2. Compute velocity toward the ship (aggro) or directly away (fleeing),
 //      using the Seeker's unit-direction math with the coincident mag>0 guard.
 //   3. Integrate position, then clamp into the arena inset bounds on each axis.
-// Then accumulate dt and spawn one square per GREEN_SQUARE_SPAWN_INTERVAL_MS on
-// a random arena edge (each spawns fleeing, aggro=false).
+//
+// This system NO LONGER self-spawns: the SpawnDirector is the sole spawn
+// authority and drives the public `spawn()` (its old `_spawnOne`). Each spawn
+// places one fleeing square (aggro=false).
 //
 // The steady-state path allocates nothing: the pool recycles freed instances,
 // the prewarm builds the free list up front, and a reusable scratch array
@@ -68,15 +69,11 @@ export class GreenSquareSystem extends System {
 
     // Reusable scratch: materialized active bullet set, refilled each tick.
     this._bullets = [];
-
-    // Spawn-cadence accumulator (ms). Starts at 0 so the first square spawns
-    // after one full interval (ungated — spawning does not depend on any input).
-    this._accumMs = 0;
   }
 
   /**
    * Advance one fixed step: threat/aggro + flee/home + integrate + clamp each
-   * active square, then spawn at cadence.
+   * active square.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
@@ -135,24 +132,16 @@ export class GreenSquareSystem extends System {
       if (s.y < minY) s.y = minY;
       else if (s.y > maxY) s.y = maxY;
     });
-
-    // Spawn at a constant cadence. Ungated (no input channel), so it always
-    // accumulates — mirrors the EnemySystem.
-    this._accumMs += dt;
-    while (this._accumMs >= GREEN_SQUARE_SPAWN_INTERVAL_MS) {
-      this._spawnOne();
-      this._accumMs -= GREEN_SQUARE_SPAWN_INTERVAL_MS;
-    }
   }
 
   /**
    * Spawn one green square on a random arena edge, fully inside the drawn border:
    * the fixed axis is pinned just inside the inset (by the radius), the free axis
    * is uniformly random within [inset+radius, dim−inset−radius]. Spawns fleeing
-   * (aggro=false); the next behavior pass sets its velocity.
-   * @private
+   * (aggro=false); the next behavior pass sets its velocity. Public: the
+   * SpawnDirector is the sole caller during a run.
    */
-  _spawnOne() {
+  spawn() {
     const s = this.enemyPool.acquire();
 
     const minX = ARENA_BORDER_INSET + GREEN_SQUARE_RADIUS;
