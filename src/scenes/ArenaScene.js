@@ -13,6 +13,7 @@ import {
   COLOR_SEEKER,
   COLOR_GREEN_SQUARE,
   COLOR_PINWHEEL,
+  COLOR_SNAKE,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -35,6 +36,7 @@ import { FiringSystem } from '../systems/FiringSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
 import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
 import { PinwheelSystem } from '../systems/PinwheelSystem.js';
+import { SnakeSystem } from '../systems/SnakeSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
@@ -120,18 +122,31 @@ export class ArenaScene extends Phaser.Scene {
     // bounces off the walls, never referencing the ship.
     this.pinwheelSystem = new PinwheelSystem();
     this.world.addSystem(this.pinwheelSystem);
+    // SnakeSystem owns its own shared segment pool-per-archetype (never merged
+    // into another enemy pool). It runs after PinwheelSystem and BEFORE
+    // CollisionSystem, and is INDIFFERENT to the player — its constructor takes
+    // only an rng (no ship, no bullet pool). It reads collisionSystem.killedEnemies
+    // (late-bound below, after that system exists) only to split the chain where a
+    // segment was destroyed the prior tick.
+    this.snakeSystem = new SnakeSystem();
+    this.world.addSystem(this.snakeSystem);
     // The shared collision seam sees ALL archetype pools as an array, so a bullet
     // can destroy any enemy through one path (no per-type duplicate).
     this.enemyPools = [
       this.enemySystem.enemyPool,
       this.greenSquareSystem.enemyPool,
       this.pinwheelSystem.enemyPool,
+      this.snakeSystem.enemyPool,
     ];
     this.collisionSystem = new CollisionSystem(
       this.firingSystem.bulletPool,
       this.enemyPools,
     );
     this.world.addSystem(this.collisionSystem);
+    // Late-bind the collision system into the SnakeSystem now that it exists (the
+    // segment pool had to be constructed first so the collision system could
+    // reference it). Until this is set the snake's split reap is a guarded no-op.
+    this.snakeSystem.collisionSystem = this.collisionSystem;
 
     // --- Scoring ------------------------------------------------------------
     // ScoringSystem runs immediately after CollisionSystem so this tick's kills
@@ -175,6 +190,10 @@ export class ArenaScene extends Phaser.Scene {
       { x: 0, y: 0 },
       { x: 0, y: 0 },
     ];
+    // Snakes are placeholder filled circles (one per active segment), cleared and
+    // redrawn each render frame from the shared segment pool. Epic 4 replaces this
+    // with the real slithering-body aesthetic. Zero per-frame allocation.
+    this.snakeGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -350,6 +369,17 @@ export class ArenaScene extends Phaser.Scene {
       pwPts[3].x = pw.x - r;
       pwPts[3].y = pw.y;
       pwg.fillPoints(pwPts, true);
+    });
+
+    // Redraw active snake segments from the shared segment pool: clear once, then
+    // a filled circle per live segment (head and body alike). Placeholder shape
+    // only (Epic 4 adds the real slithering aesthetic). Drawn from each instance's
+    // own radius so the shape tracks the collision value.
+    const skg = this.snakeGraphics;
+    skg.clear();
+    skg.fillStyle(COLOR_SNAKE, 1);
+    this.snakeSystem.enemyPool.forEachActive((seg) => {
+      skg.fillCircle(seg.x, seg.y, seg.radius);
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.

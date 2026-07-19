@@ -157,6 +157,54 @@ export const PINWHEEL_POOL_PREWARM = 32;
 // unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never fold it in).
 export const PINWHEEL_SCORE = 125;
 
+// --- Snake enemy (feel) -----------------------------------------------------
+// The Snake (Epic 2's large threat) is a chain of pooled segments that follows a
+// self-propelled slithering head. The head drifts at a CONSTANT speed along a
+// serpentine path (its heading oscillates sinusoidally) and BOUNCES (reflects)
+// off the arena walls; each following segment geometrically trails the one ahead
+// at a fixed spacing. Like the Pinwheel it is INDIFFERENT to the player — the
+// SnakeSystem never reads the ship or bullets for motion. Every segment (head
+// included) is a uniform {x,y,vx,vy,radius,score} instance in ONE shared segment
+// pool, so it plugs into the existing enemyPools seams for lethal-on-contact and
+// bullet-kill+score with no seam changes. Killing a mid-body segment splits the
+// snake into two independent snakes ("breaks apart"). All values are tunable;
+// slither cadence and spawn all derive from the fixed-step dt, so they are
+// frame-rate-independent.
+
+// Collision/half-extent radius (px) of one segment, also the placeholder circle
+// radius and the spawn/bounce inset margin so a segment sits inside the border.
+export const SNAKE_SEGMENT_RADIUS = 12;
+// Head drift speed (px/s). The head advances by this along its (slither-modulated)
+// heading every fixed step; the constant speed reads as a steady slither.
+export const SNAKE_HEAD_SPEED = 120;
+// Fixed spacing (px) each body segment is pulled to behind the one ahead of it
+// (the follow-the-leader constraint distance). A touch under 2×radius so the
+// drawn segments overlap into a connected-looking body.
+export const SNAKE_SEGMENT_SPACING = 22;
+// Number of segments in a freshly spawned snake, head (segments[0]) included.
+export const SNAKE_SEGMENT_COUNT = 8;
+// Slither amplitude (radians): the peak deviation of the head's effective heading
+// from its base heading. eff = base + sin(phase)·amplitude, so the head weaves
+// ±this around the direction it is travelling.
+export const SNAKE_SLITHER_AMPLITUDE_RAD = Math.PI / 4; // 45°
+// Slither angular velocity (radians per SECOND): how fast the slither phase
+// advances. phase += this·dtSec, so the accumulated phase over elapsed sim time
+// is tick-size independent (a frame-rate-independent slither cadence).
+export const SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC = 3.0;
+// Spawn cadence (ms): one snake spawns per this much accumulated fixed-step time,
+// so spawns-per-second are frame-rate-independent. Snakes are large, so this is
+// longer than the single-body archetypes. Lower = more.
+export const SNAKE_SPAWN_INTERVAL_MS = 5000;
+// Idle SEGMENT instances prewarmed into the shared segment pool at construction
+// so the steady state never allocates on the move path (grows lazily beyond it,
+// only on spawn events — mirrors the other archetype pools). Sized for several
+// full snakes at once (SEGMENT_COUNT each).
+export const SNAKE_SEGMENT_POOL_PREWARM = 64;
+// Base score awarded per killed SEGMENT (head or body), carried on each instance
+// and summed unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never
+// fold it in). A whole snake is worth SEGMENT_COUNT × this.
+export const SNAKE_SEGMENT_SCORE = 75;
+
 // --- Player death / lives (feel) --------------------------------------------
 // Player lifecycle: lives, respawn invulnerability, and the invuln blink. All
 // tunable; the invulnerability window and its blink are tracked in milliseconds
@@ -187,6 +235,7 @@ export const COLOR_BULLET = 0xffee66;
 export const COLOR_SEEKER = 0x3366ff;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
 export const COLOR_PINWHEEL = 0xff66cc;
+export const COLOR_SNAKE = 0xffaa33;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
