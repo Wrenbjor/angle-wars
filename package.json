@@ -1,0 +1,22 @@
+{
+  "name": "angle-wars",
+  "version": "0.1.0",
+  "description": "Angle Wars — a twin-stick arena shooter (Phaser 3 + Vite).",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.7",
+    "vitest": "^3.0.0"
+  }
+}

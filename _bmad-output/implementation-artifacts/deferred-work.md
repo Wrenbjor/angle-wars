@@ -1,0 +1,7 @@
+# Deferred Work Ledger
+
+Findings surfaced during review that are real but out of scope for the story that surfaced them. The orchestrator owns their status and resolution.
+
+- source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-1-project-bootstrap-and-game-shell.md`
+  summary: The render-integration surface (Phaser.WEBGL enforcement, Scale.FIT/CENTER_BOTH letterboxing, Boot→Preload→Arena chain, and the render→sim decoupling wiring in ArenaScene.update) plus the ArenaScene sim-rate sampling math have zero automated coverage; consider extracting the sampling into a Phaser-free helper (unit-tested like the other core primitives) and/or adding a headless config-assertion smoke test for the scene setup.
+  evidence: Three independent review layers (verification-gap, adversarial/blind-hunter, intent-alignment) converged on the same gap. AC4's headline observable (steady sim ticks/sec independent of render FPS) and the intent's most distinctive "Always" invariants (WEBGL not AUTO; FIT/CENTER_BOTH; render callback never runs sim directly) are asserted only as config literals and human-read canvas text — a regression flipping the renderer to AUTO, breaking the scale mode, or calling world.fixedUpdate(delta) directly from update() would pass the entire existing suite (src/**/*.test.js covers only src/core/). The spec deliberately scoped headless unit-testing to Pool/FixedTimestep, so closing this adds a module beyond the story's captured intent.
