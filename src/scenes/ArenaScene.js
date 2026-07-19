@@ -12,6 +12,7 @@ import {
   COLOR_BULLET,
   COLOR_SEEKER,
   COLOR_GREEN_SQUARE,
+  COLOR_PINWHEEL,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -33,6 +34,7 @@ import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
 import { FiringSystem } from '../systems/FiringSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
 import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
+import { PinwheelSystem } from '../systems/PinwheelSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
@@ -111,11 +113,19 @@ export class ArenaScene extends Phaser.Scene {
       this.firingSystem.bulletPool,
     );
     this.world.addSystem(this.greenSquareSystem);
+    // PinwheelSystem owns its own pool-per-archetype (never merged into another
+    // enemy pool). It runs after GreenSquareSystem and BEFORE CollisionSystem, and
+    // is INDIFFERENT to the player — its constructor takes only an rng (no ship,
+    // no bullet pool). Its trajectory is a constant-speed wandering drift that
+    // bounces off the walls, never referencing the ship.
+    this.pinwheelSystem = new PinwheelSystem();
+    this.world.addSystem(this.pinwheelSystem);
     // The shared collision seam sees ALL archetype pools as an array, so a bullet
     // can destroy any enemy through one path (no per-type duplicate).
     this.enemyPools = [
       this.enemySystem.enemyPool,
       this.greenSquareSystem.enemyPool,
+      this.pinwheelSystem.enemyPool,
     ];
     this.collisionSystem = new CollisionSystem(
       this.firingSystem.bulletPool,
@@ -152,6 +162,19 @@ export class ArenaScene extends Phaser.Scene {
     // Green squares are placeholder green filled squares, cleared and redrawn
     // each render frame from their pool. Epic 4 replaces this with the aesthetic.
     this.greenSquareGraphics = this.add.graphics();
+    // Pinwheels are placeholder filled diamonds (a rotated square drawn as a
+    // polygon), cleared and redrawn each render frame from their pool. Epic 4
+    // replaces this with the real spinning-pinwheel aesthetic.
+    this.pinwheelGraphics = this.add.graphics();
+    // Reusable 4-point buffer for the diamond, mutated in place per pinwheel per
+    // frame so the render pass allocates nothing (matches the seeker/green-square
+    // zero-per-frame render discipline). Points are top/right/bottom/left.
+    this._pinwheelPoints = [
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+    ];
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -304,6 +327,29 @@ export class ArenaScene extends Phaser.Scene {
     // drawn square always tracks the value the collision seams actually use.
     this.greenSquareSystem.enemyPool.forEachActive((s) => {
       gsg.fillRect(s.x - s.radius, s.y - s.radius, s.radius * 2, s.radius * 2);
+    });
+
+    // Redraw active pinwheels from their pool: clear once, then a filled diamond
+    // (axis-aligned rhombus) centered on each live entity. Placeholder shape only
+    // (Epic 4 adds the real spinning-pinwheel aesthetic). Drawn from each
+    // instance's own radius so the shape tracks the collision value.
+    const pwg = this.pinwheelGraphics;
+    pwg.clear();
+    pwg.fillStyle(COLOR_PINWHEEL, 1);
+    const pwPts = this._pinwheelPoints;
+    this.pinwheelSystem.enemyPool.forEachActive((pw) => {
+      const r = pw.radius;
+      // Mutate the reusable 4-point buffer in place (top/right/bottom/left) — no
+      // per-frame allocation.
+      pwPts[0].x = pw.x;
+      pwPts[0].y = pw.y - r;
+      pwPts[1].x = pw.x + r;
+      pwPts[1].y = pw.y;
+      pwPts[2].x = pw.x;
+      pwPts[2].y = pw.y + r;
+      pwPts[3].x = pw.x - r;
+      pwPts[3].y = pw.y;
+      pwg.fillPoints(pwPts, true);
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.

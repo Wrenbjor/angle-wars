@@ -123,6 +123,40 @@ export const GREEN_SQUARE_POOL_PREWARM = 32;
 // unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never fold it in).
 export const GREEN_SQUARE_SCORE = 150;
 
+// --- Pinwheel / Wanderer enemy (feel) ---------------------------------------
+// The Pinwheel (Epic 2's "Wanderer") spawns at a random arena edge with a random
+// heading and drifts at a CONSTANT speed along a pseudo-random (wandering) path:
+// it periodically re-rolls its heading by a bounded random turn and BOUNCES
+// (reflects) off the arena walls. Unlike the Seeker (homes) and Green Square
+// (flees/aggros), it is INDIFFERENT to the player — it never reads the ship or
+// bullets. All values are tunable; wander cadence, motion, and spawn all derive
+// from the fixed-step dt, so they are frame-rate-independent.
+
+// Collision/half-extent radius (px), also the placeholder diamond half-size and
+// the spawn/bounce inset margin so a pinwheel sits fully inside the drawn border.
+export const PINWHEEL_RADIUS = 14;
+// Drift speed (px/s). Magnitude of the velocity vector, PRESERVED across wander
+// turns (rotation) and wall bounces (component negation) — the drifter never
+// speeds up or stalls.
+export const PINWHEEL_DRIFT_SPEED = 130;
+// Wander cadence (ms): every this much accumulated fixed-step time, a pinwheel
+// re-rolls its heading by a bounded random turn. Per-instance accumulator, so
+// the re-roll COUNT over elapsed sim time is tick-size independent. Lower = more
+// frequent heading changes (twitchier wander).
+export const PINWHEEL_WANDER_INTERVAL_MS = 700;
+// Max heading turn per wander (radians). Each re-roll rotates the velocity by a
+// uniform random angle in [−this, +this]. Larger = more erratic meander.
+export const PINWHEEL_WANDER_MAX_TURN_RAD = Math.PI / 6; // 30°
+// Spawn cadence (ms): one pinwheel spawns per this much accumulated fixed-step
+// time, so spawns-per-second are frame-rate-independent. Lower = more.
+export const PINWHEEL_SPAWN_INTERVAL_MS = 2000;
+// Idle instances prewarmed into the pool at construction so the steady state
+// never allocates (mirrors the Seeker/Green Square pools; grows lazily beyond it).
+export const PINWHEEL_POOL_PREWARM = 32;
+// Base score awarded per Pinwheel kill, carried on each instance and summed
+// unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never fold it in).
+export const PINWHEEL_SCORE = 125;
+
 // --- Player death / lives (feel) --------------------------------------------
 // Player lifecycle: lives, respawn invulnerability, and the invuln blink. All
 // tunable; the invulnerability window and its blink are tracked in milliseconds
@@ -152,6 +186,7 @@ export const COLOR_SHIP = 0x66ccff;
 export const COLOR_BULLET = 0xffee66;
 export const COLOR_SEEKER = 0x3366ff;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
+export const COLOR_PINWHEEL = 0xff66cc;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
