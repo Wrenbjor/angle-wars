@@ -8,6 +8,7 @@ import { BootScene } from './scenes/BootScene.js';
 import { PreloadScene } from './scenes/PreloadScene.js';
 import { TitleScene } from './scenes/TitleScene.js';
 import { ArenaScene } from './scenes/ArenaScene.js';
+import { SettingsScene } from './scenes/SettingsScene.js';
 
 // Entry point: build the Phaser.Game config and start the scene chain.
 //
@@ -27,7 +28,7 @@ const config = {
   // Enable the gamepad input plugin so the left stick is readable by the
   // player input sampler. Keyboard is on by default; this opts in the pad.
   input: { gamepad: true },
-  scene: [BootScene, PreloadScene, TitleScene, ArenaScene],
+  scene: [BootScene, PreloadScene, TitleScene, ArenaScene, SettingsScene],
 };
 
 new Phaser.Game(config);

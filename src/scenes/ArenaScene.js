@@ -95,7 +95,8 @@ import {
 } from './screenShake.js';
 import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 import { AudioEngine } from '../audio/audioEngine.js';
-import { createAudioSettingsStorage } from '../persistence/audioSettingsStorage.js';
+import { createSettingsStorage } from '../persistence/settingsStorage.js';
+import { FLOW_STATES, FLOW_EVENTS, nextFlowState, sceneForState } from './gameFlow.js';
 import {
   musicLayerGains,
   effectiveVolume,
@@ -471,12 +472,17 @@ export class ArenaScene extends Phaser.Scene {
     // disposed on the scene `shutdown` event so its continuously-running music
     // oscillators never stack/leak across restarts.
     this.audioEngine = new AudioEngine(this.sound && this.sound.context);
-    // Load persisted {muted, volume} through the guarded port (defaults on a
-    // missing/corrupt/blocked store) and apply the effective master gain now.
-    this.audioSettingsStorage = createAudioSettingsStorage();
-    const audioSettings = this.audioSettingsStorage.load();
-    this._muted = audioSettings.muted;
-    this._volume = audioSettings.volume;
+    // Load persisted { muted, volume, fullscreen } through the consolidated guarded
+    // port (defaults on a missing/corrupt/blocked store; a legacy {muted,volume}
+    // payload loads with fullscreen defaulted) and apply the effective master gain
+    // now. ArenaScene keeps its in-run M/-/+ audio behavior byte-identical; the only
+    // change is the port and carrying _fullscreen as a READ-ONLY passthrough so a
+    // save from here never clobbers the fullscreen field SettingsScene owns.
+    this.settingsStorage = createSettingsStorage();
+    const settings = this.settingsStorage.load();
+    this._muted = settings.muted;
+    this._volume = settings.volume;
+    this._fullscreen = settings.fullscreen;
     this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
     // Reusable per-frame music-gain buffer so the render-loop mapping allocates
     // nothing (mirrors the zero-per-frame-allocation discipline).
@@ -486,7 +492,13 @@ export class ArenaScene extends Phaser.Scene {
     // after every mute/volume change. Muted ⇒ effective gain 0 (silence) while the
     // sim, latches, and music voices keep running (only master gain is 0).
     const applyAudioSettings = () => {
-      this.audioSettingsStorage.save({ muted: this._muted, volume: this._volume });
+      // Include _fullscreen (a read-only passthrough here) so an in-run audio save
+      // never clobbers the fullscreen field the SettingsScene owns.
+      this.settingsStorage.save({
+        muted: this._muted,
+        volume: this._volume,
+        fullscreen: this._fullscreen,
+      });
       this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
     };
     // Keyboard controls (Story 5.3 later owns a settings UI): M toggles mute, and the
@@ -672,7 +684,7 @@ export class ArenaScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setVisible(false);
     this.gameOverPrompt = this.add
-      .text(cx, cy + 60, 'Press Enter / Space or click to restart', {
+      .text(cx, cy + 60, 'Press Enter / Space or click to restart    ·    T for Title', {
         font: GAMEOVER_PROMPT_FONT,
         color: COLOR_GAMEOVER_TEXT,
         align: 'center',
@@ -687,14 +699,39 @@ export class ArenaScene extends Phaser.Scene {
     // PlayerState, ScoreState) from zero. Guarded to only fire while gameOver
     // so an in-run keypress/click never restarts the run. These listeners live
     // on the scene's input plugin and are torn down/rebuilt across restart.
+    // A single shared one-shot latch across BOTH game-over exits (restart and
+    // return-to-title) so a same-frame Enter+T can only fire ONE transition — the
+    // first one wins and the destination is deterministic. It composes with (does
+    // not replace) each handler's existing gameOver guard.
+    let leaving = false;
     const restart = () => {
+      if (leaving) return;
       if (this.playerState.gameOver) {
+        leaving = true;
         this.scene.restart();
       }
     };
     this.input.keyboard.on('keydown-ENTER', restart);
     this.input.keyboard.on('keydown-SPACE', restart);
     this.input.on('pointerdown', restart);
+
+    // --- Return to title (Story 5.3 / FR14: no dead ends) -------------------
+    // A dedicated `T` key routes from the game-over overlay back to the title,
+    // governed by the flow seam: (GAME_OVER, RETURN_TO_TITLE) → TITLE → the scene
+    // key sceneForState names. Guarded on the seam result being non-null AND
+    // playerState.gameOver (so an in-run press never leaves the arena) AND the shared
+    // `leaving` latch (so a same-frame Enter+T is deterministic). Distinct from Story
+    // 5.2's Esc/P pause (which still does nothing at game over).
+    this.input.keyboard.on('keydown-T', () => {
+      if (leaving) return;
+      const target = sceneForState(
+        nextFlowState(FLOW_STATES.GAME_OVER, FLOW_EVENTS.RETURN_TO_TITLE),
+      );
+      if (target && this.playerState.gameOver) {
+        leaving = true;
+        this.scene.start(target);
+      }
+    });
 
     // --- Pause overlay (Story 5.2) ------------------------------------------
     // A dimming full-arena rectangle plus a stacked "PAUSED" title and resume

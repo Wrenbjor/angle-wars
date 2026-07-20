@@ -27,7 +27,7 @@ import {
 // "blip" oscillators per SFX event. It is the disclosed MANUAL-VERIFICATION BOUNDARY
 // (the 4.1–4.4 render-wiring precedent): the Web Audio globals (AudioContext,
 // oscillators, gains) are browser-bound and absent under vitest/node, so the
-// Phaser-free AudioDirectorSystem + audioMix + audioSettingsStorage carry the
+// Phaser-free AudioDirectorSystem + audioMix + settingsStorage carry the
 // automated coverage while this engine is exercised by `npm run dev`.
 //
 // GUARDED: the constructor takes an AudioContext or null. A null/absent/blocked

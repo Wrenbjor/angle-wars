@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TITLE_TEXT,
   START_PROMPT,
+  SETTINGS_PROMPT,
   CONTROLS_LINES,
   formatHighScore,
 } from './titleScreen.js';
@@ -50,6 +51,12 @@ describe('title-screen content constants', () => {
   it('START_PROMPT is a non-empty string', () => {
     expect(typeof START_PROMPT).toBe('string');
     expect(START_PROMPT.length).toBeGreaterThan(0);
+  });
+
+  it('SETTINGS_PROMPT is a non-empty string naming the S key', () => {
+    expect(typeof SETTINGS_PROMPT).toBe('string');
+    expect(SETTINGS_PROMPT.length).toBeGreaterThan(0);
+    expect(SETTINGS_PROMPT).toContain('S');
   });
 
   it('CONTROLS_LINES is a non-empty array of non-empty strings', () => {

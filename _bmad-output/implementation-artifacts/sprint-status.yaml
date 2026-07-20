@@ -72,7 +72,7 @@ development_status:
   epic-5: backlog
   5-1-title-and-start-screen: done
   5-2-pause-and-resume: done
-  5-3-game-flow-state-machine: backlog
+  5-3-game-flow-state-machine: done
   5-4-input-config-and-gamepad-polish: backlog
   5-5-performance-hardening-and-web-build: backlog
   epic-5-retrospective: optional

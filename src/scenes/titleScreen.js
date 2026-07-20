@@ -15,10 +15,12 @@ export const TITLE_TEXT = 'ANGLE WARS';
 /** The "press start" prompt inviting any start input. */
 export const START_PROMPT = 'Press Enter / Space, click, or a gamepad button to start';
 
+/** The prompt inviting the player into the SettingsScene (Story 5.3), naming `S`. */
+export const SETTINGS_PROMPT = 'Press S for Settings';
+
 /**
- * The basic-controls lines, describing ONLY the controls that exist today
- * (Story 5.1 does not add pause, settings, or gamepad bomb — see the spec's
- * Never list). Move: WASD/arrows/left stick; Aim & Fire: mouse/right stick;
+ * The basic-controls lines, now including Pause (Esc/P — Story 5.2) and Settings
+ * (S — Story 5.3). Move: WASD/arrows/left stick; Aim & Fire: mouse/right stick;
  * Smart Bomb: Shift (PlayerInputSampler binds KC.SHIFT); Mute: M; Volume: -/+.
  * @type {string[]}
  */
@@ -26,6 +28,7 @@ export const CONTROLS_LINES = [
   'Move:  WASD / Arrows / Left Stick',
   'Aim & Fire:  Mouse / Right Stick',
   'Smart Bomb:  Shift    Mute: M    Volume: - / +',
+  'Pause:  Esc / P    Settings:  S',
 ];
 
 /**

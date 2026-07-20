@@ -612,25 +612,28 @@ export const SCREEN_NEARMISS_COOLDOWN_MS = 400;
 // bombSystem.shockwaveMs rising edge (bomb), playerDeathSystem.deathSeq increment
 // (death) — into render-consumable SFX-request latches, and reads the SpawnDirector
 // difficulty ramp (progressAt) into a live musicIntensity level. audioMix.js holds
-// the intensity→layer-gain and volume/mute math; audioSettingsStorage.js persists
-// {muted, volume}; audioEngine.js is the browser-bound synth (SFX blips + adaptive
+// the intensity→layer-gain and volume/mute math; settingsStorage.js persists
+// {muted, volume, fullscreen}; audioEngine.js is the browser-bound synth (SFX blips + adaptive
 // music voices). Every value here is a documented post-launch placeholder (tuned
 // later), mirroring the GRID_* / PARTICLE_* / SCREEN_* discipline — no inline magic
 // numbers in the system, the mix seam, the engine, or the ArenaScene call sites.
 
 // Master volume default (0..1): the effective output gain at run start when not
-// muted. Persisted per-player via audioSettingsStorage and re-applied on load.
+// muted. Persisted per-player via settingsStorage and re-applied on load.
 export const AUDIO_MASTER_VOLUME_DEFAULT = 0.6;
 // Volume step (0..1): how much each volume-up/down key press moves the master
 // volume, clamped to [0,1] (audioMix.adjustVolume).
 export const AUDIO_VOLUME_STEP = 0.1;
 // Muted default: whether a fresh player (no stored setting) starts muted.
 export const AUDIO_MUTED_DEFAULT = false;
-// The single localStorage key under which {muted, volume} persists (its own slot,
-// mirroring HIGH_SCORE_STORAGE_KEY). Story 5.3 later consolidates settings; keeping
-// this a tiny isolated port makes that a move, not a rewrite. Namespaced so it never
-// collides with unrelated app storage.
-export const AUDIO_SETTINGS_STORAGE_KEY = 'angleWars.audioSettings';
+// The single localStorage key under which the consolidated settings object
+// { muted, volume, fullscreen } persists (its own slot, mirroring
+// HIGH_SCORE_STORAGE_KEY). Story 5.3 consolidated the former audio-only port into
+// settingsStorage.js; the key VALUE is REUSED unchanged ('angleWars.audioSettings')
+// so previously stored {muted,volume} payloads still load (fullscreen defaults off)
+// — a rename + superset, not a data migration. Namespaced so it never collides with
+// unrelated app storage.
+export const SETTINGS_STORAGE_KEY = 'angleWars.audioSettings';
 
 // Number of continuously-running adaptive-music layers (oscillator voices). More
 // difficulty ⇒ more layers audible; each layer i fades in over its [i/N, (i+1)/N]
@@ -728,3 +731,24 @@ export const TITLE_PROMPT_FONT = '24px monospace';
 // The basic-controls lines (move / aim-fire / bomb / mute-volume).
 export const COLOR_TITLE_CONTROLS = '#88ffcc';
 export const TITLE_CONTROLS_FONT = '18px monospace';
+
+// --- Settings screen (Story 5.3) --------------------------------------------
+// The SettingsScene reached from the title with `S`: a neon "SETTINGS" hero
+// title plus stacked volume / mute / fullscreen lines and a key hint, each
+// applying + persisting immediately. Colors and fonts are centralized here so
+// its feel is tunable in one place (mirroring the TITLE_* block above); no
+// inline magic values live in the scene.
+// The hero title is put into additive blend so it reads as a bright neon sign;
+// its color is a Phaser text `color` string.
+export const COLOR_SETTINGS_TITLE_STRING = '#33ffee';
+export const SETTINGS_TITLE_FONT = '64px monospace';
+// The volume / mute / fullscreen setting lines (from the settingsMenu formatters).
+export const COLOR_SETTINGS_ITEM = '#e6f2ff';
+export const SETTINGS_ITEM_FONT = '28px monospace';
+// The key-hint line naming the controls.
+export const COLOR_SETTINGS_HINT = '#88ffcc';
+export const SETTINGS_HINT_FONT = '18px monospace';
+// Whether a fresh player (no stored setting) starts in fullscreen. Browsers
+// forbid entering fullscreen without a user gesture, so this preference is
+// applied on the toggle keypress only — never auto-restored at page load.
+export const SETTINGS_FULLSCREEN_DEFAULT = false;
