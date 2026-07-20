@@ -66,6 +66,28 @@ export class CollisionSystem extends System {
     // alongside release. Read by the ScoringSystem, which runs immediately after
     // this system. Reused array — no per-tick allocation.
     this.killedEnemies = [];
+
+    // Public read-only observability latch (Story 4.2): the number of enemies THIS
+    // system destroyed by a player bullet this tick — i.e. the length of
+    // killedEnemies at the end of THIS system's fixedUpdate, BEFORE later systems
+    // (BlackHoleSystem absorbs, BombSystem clears) append their own removals to the
+    // same shared array. The array is only ever appended to, never reordered, so
+    // killedEnemies[0 .. bulletKillCount) is exactly this tick's bullet kills. The
+    // GridFieldSystem reads this to emit an explosion ripple per bullet kill only.
+    // Purely observational — it never affects kills, scoring, lives, or any pool.
+    this.bulletKillCount = 0;
+
+    // Public read-only coordinate SNAPSHOTS (Story 4.2), parallel to the first
+    // bulletKillCount entries of killedEnemies: bulletKillX[k]/bulletKillY[k] are the
+    // position of the k-th bullet kill, captured AT KILL TIME. Snapshots are load-
+    // bearing: this system releases a bullet-killed enemy back to its pool this tick,
+    // and a later same-tick system (e.g. BlackHoleSystem._spawnSeekerAtEdge) can
+    // acquire() that very object and overwrite its x/y — so reading the enemy object's
+    // coords at end-of-tick could yield the recycled spawn position, not the kill
+    // point. Snapshotting here makes the grid's explosion origin recycle-proof.
+    // Reused arrays — length reset + push, no per-tick allocation.
+    this.bulletKillX = [];
+    this.bulletKillY = [];
   }
 
   /**
@@ -99,6 +121,11 @@ export class CollisionSystem extends System {
     // previous tick's kills are never re-counted (length reset, no alloc).
     const killedEnemies = this.killedEnemies;
     killedEnemies.length = 0;
+    // Reset the parallel bullet-kill coordinate snapshots too (Story 4.2).
+    const bulletKillX = this.bulletKillX;
+    const bulletKillY = this.bulletKillY;
+    bulletKillX.length = 0;
+    bulletKillY.length = 0;
 
     // Pass 1: mark hits. A bullet stops after its first hit (consumed); an enemy
     // already hit this tick is skipped (destroyed once).
@@ -129,11 +156,21 @@ export class CollisionSystem extends System {
       const s = enemies[j];
       if (hitEnemies.has(s)) {
         killedEnemies.push(s);
+        // Snapshot the kill coordinates NOW, before releasing the object to its
+        // pool — a later same-tick acquire() could overwrite s.x/s.y (Story 4.2).
+        bulletKillX.push(s.x);
+        bulletKillY.push(s.y);
         owners[j].release(s);
       }
     }
     for (const b of hitBullets) {
       this.bulletPool.release(b);
     }
+
+    // Latch this tick's bullet-kill count (Story 4.2). Captured here, at the end of
+    // pass 2, so it reflects ONLY the enemies bullets destroyed this tick — before
+    // BlackHoleSystem/BombSystem append their (unscored) removals to killedEnemies.
+    // Read-only observability for the grid; changes no gameplay behavior.
+    this.bulletKillCount = killedEnemies.length;
   }
 }

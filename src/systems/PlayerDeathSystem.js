@@ -57,6 +57,17 @@ export class PlayerDeathSystem extends System {
     this.playerState = playerState;
     this.scoreState = scoreState;
 
+    // Public read-only observability latch (Story 4.2): the player's death point.
+    // On every death (both a respawning death and the final game-over death) the
+    // ship's position AT THE MOMENT OF THE LETHAL CONTACT is captured here, BEFORE
+    // the respawn teleports the ship to arena center, and deathSeq is bumped. The
+    // GridFieldSystem (which runs later in the tick) emits one death ripple per
+    // deathSeq increment at (deathX, deathY). Purely observational — capturing these
+    // never changes lives, respawn, invulnerability, scoring, or the game-over flow.
+    this.deathSeq = 0;
+    this.deathX = 0;
+    this.deathY = 0;
+
     // Reusable scratch: materialized union of active enemies, refilled each tick.
     this._enemies = [];
     // Hoisted collect callback so the per-pool `forEachActive` reuses one closure
@@ -111,6 +122,13 @@ export class PlayerDeathSystem extends System {
       const r = ship.radius + s.radius;
       // Squared compare avoids a sqrt; ≤ so a boundary touch counts.
       if (dx * dx + dy * dy <= r * r) {
+        // Story 4.2 death latch: capture the death point BEFORE the respawn below
+        // teleports the ship to arena center, so the grid's death ripple originates
+        // at the exact lethal-contact position. Fires for both a respawning death
+        // and the final game-over death. Read-only — changes no death behavior.
+        this.deathX = ship.x;
+        this.deathY = ship.y;
+        this.deathSeq += 1;
         ps.lives -= 1;
         if (ps.lives > 0) {
           // Respawn: copy the canonical spawn so arena-center lives in one place.

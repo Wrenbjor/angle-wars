@@ -192,6 +192,113 @@ describe('CollisionSystem.killedEnemies reporting', () => {
   });
 });
 
+describe('CollisionSystem.bulletKillCount latch (Story 4.2)', () => {
+  it('starts at 0 before any tick', () => {
+    const { system } = makeSystem();
+    expect(system.bulletKillCount).toBe(0);
+  });
+
+  it('equals the number of bullet kills this tick', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 400, 400);
+    addSeeker(enemyPool, 100, 100);
+    addSeeker(enemyPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletKillCount).toBe(2);
+    expect(system.bulletKillCount).toBe(system.killedEnemies.length);
+  });
+
+  it('captures per-kill coordinate snapshots in bulletKillX/Y, one per bullet kill', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 400, 400);
+    addSeeker(enemyPool, 100, 100);
+    addSeeker(enemyPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletKillX.length).toBe(2);
+    expect(system.bulletKillY.length).toBe(2);
+    // The snapshots hold the kill coordinates (order matches killedEnemies).
+    for (let k = 0; k < system.bulletKillCount; k++) {
+      expect(system.bulletKillX[k]).toBe(system.killedEnemies[k].x);
+      expect(system.bulletKillY[k]).toBe(system.killedEnemies[k].y);
+    }
+    // The set of captured coords is exactly the two kill points.
+    const coords = system.bulletKillX
+      .map((x, i) => `${x},${system.bulletKillY[i]}`)
+      .sort();
+    expect(coords).toEqual(['100,100', '400,400']);
+  });
+
+  it('snapshots survive a later recycle of the killed enemy object (Story 4.2)', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 250, 175);
+    addSeeker(enemyPool, 250, 175); // one bullet kill
+
+    system.fixedUpdate(DT);
+    expect(system.bulletKillX[0]).toBe(250);
+    expect(system.bulletKillY[0]).toBe(175);
+
+    // The killed seeker is released to the pool; simulate a later same-tick system
+    // re-acquiring it and overwriting its position (e.g. a black-hole feed-spawn).
+    const recycled = enemyPool.acquire();
+    recycled.x = 12; // moved to a spawn edge
+    recycled.y = 9999;
+    // The coordinate snapshot is unaffected — it captured the kill point, not a ref.
+    expect(system.bulletKillX[0]).toBe(250);
+    expect(system.bulletKillY[0]).toBe(175);
+  });
+
+  it('is 0 on a tick with no bullet kills', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 0, 0);
+    addSeeker(enemyPool, 500, 500); // far — no hit
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletKillCount).toBe(0);
+  });
+
+  it('is NOT changed by later systems appending to killedEnemies (absorb/bomb)', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 100, 100);
+    addSeeker(enemyPool, 100, 100); // one bullet kill
+
+    system.fixedUpdate(DT);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.killedEnemies.length).toBe(1);
+
+    // Simulate BlackHoleSystem/BombSystem appending their (unscored) removals to the
+    // shared kill report AFTER CollisionSystem ran — the latch must not move, so the
+    // grid's [0 .. bulletKillCount) slice stays pure bullet kills.
+    system.killedEnemies.push({ x: 1, y: 2 }, { x: 3, y: 4 });
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.killedEnemies.length).toBe(3);
+    // The coordinate snapshots are likewise unaffected by later killedEnemies appends.
+    expect(system.bulletKillX.length).toBe(1);
+    expect(system.bulletKillY.length).toBe(1);
+    expect(system.bulletKillX[0]).toBe(100);
+    expect(system.bulletKillY[0]).toBe(100);
+  });
+
+  it('re-latches each tick (a prior tick\'s count does not carry over)', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    // Tick A: one kill.
+    addBullet(bulletPool, 100, 100);
+    addSeeker(enemyPool, 100, 100);
+    system.fixedUpdate(DT);
+    expect(system.bulletKillCount).toBe(1);
+
+    // Tick B: nothing overlaps → count resets to 0.
+    system.fixedUpdate(DT);
+    expect(system.bulletKillCount).toBe(0);
+  });
+});
+
 describe('CollisionSystem — multiple archetype pools', () => {
   // Build a bullet pool plus TWO enemy pools (a seeker pool and a green-square
   // pool) and a collision system spanning both.

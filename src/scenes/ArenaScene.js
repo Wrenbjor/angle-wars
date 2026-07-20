@@ -70,6 +70,12 @@ import {
   telegraphScale,
 } from './telegraphCue.js';
 import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
+import {
+  GRID_FRAGMENT_SRC,
+  buildGridUniforms,
+  packGridUniforms,
+} from './gridField.js';
+import { GridFieldSystem } from '../systems/GridFieldSystem.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -85,6 +91,25 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   create() {
+    // --- Deforming grid field (Story 4.2) -----------------------------------
+    // The signature "living grid": ONE full-arena fragment-shader quad drawn on the
+    // GPU, added FIRST so it renders BEHIND every entity/HUD. All ripple + warp
+    // deformation happens inside the shader from custom uniforms; the CPU only writes
+    // those uniforms (packGridUniforms, once per render frame). The BaseShader is
+    // seeded with the uniform config from the Phaser-free gridField seam; per-frame
+    // packing targets this.gridShader.uniforms (Phaser deep-copies the config into
+    // the live GameObject at creation, so the live copy is the write target). Sized
+    // to the arena with a top-left origin so fragment space maps 1:1 to arena pixels.
+    this.gridShader = this.add
+      .shader(
+        new Phaser.Display.BaseShader('grid', GRID_FRAGMENT_SRC, undefined, buildGridUniforms()),
+        0,
+        0,
+        ARENA_WIDTH,
+        ARENA_HEIGHT,
+      )
+      .setOrigin(0, 0);
+
     // --- Arena border -------------------------------------------------------
     // Kept as an instance ref (this.borderGraphics) so the neon wiring below can
     // include it in the additive-blend layer list (Story 4.1).
@@ -328,6 +353,22 @@ export class ArenaScene extends Phaser.Scene {
     );
     this.world.addSystem(this.highScoreSystem);
 
+    // --- Deforming grid field system (Story 4.2) ----------------------------
+    // Registered LAST — after HighScoreSystem — so within every fixed tick each
+    // input it reads is already final: collisionSystem.bulletKillCount (this tick's
+    // bullet kills, before BlackHole/Bomb appends), bombSystem's shockwave latch,
+    // playerDeathSystem's death latch, and blackHoleSystem.holePool. It owns a
+    // bounded ripple pool + a single warp target and only writes its own state (no
+    // gameplay effect); the render loop packs that state into the grid shader's
+    // uniforms. A fresh instance each run (scene.restart) resets the grid to calm.
+    this.gridFieldSystem = new GridFieldSystem(
+      this.collisionSystem,
+      this.bombSystem,
+      this.playerDeathSystem,
+      this.blackHoleSystem.holePool,
+    );
+    this.world.addSystem(this.gridFieldSystem);
+
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
@@ -495,6 +536,12 @@ export class ArenaScene extends Phaser.Scene {
     this.fixedTimestep.advance(delta, (dt) => {
       if (!this.playerState.gameOver) this.world.fixedUpdate(dt);
     });
+
+    // Story 4.2: pack the grid system's live ripple + warp state into the shader's
+    // uniforms once per render frame (zero allocation — Float32Array/{x,y,z} mutated
+    // in place). All deformation is then computed on the GPU inside the fragment
+    // shader; the CPU never deforms the grid.
+    packGridUniforms(this.gridShader.uniforms, this.gridFieldSystem);
 
     // Sync the placeholder sprite from the ship entity each render frame.
     this.shipSprite.setPosition(this.ship.x, this.ship.y);

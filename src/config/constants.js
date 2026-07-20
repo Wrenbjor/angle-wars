@@ -447,6 +447,49 @@ export const NEON_BLOOM_STRENGTH = 1.2;
 // smoother, wider glow at a higher fill cost. Kept modest to protect NFR1.
 export const NEON_BLOOM_STEPS = 4;
 
+// --- Deforming grid field (Story 4.2) ---------------------------------------
+// The signature Geometry Wars "living grid": a neon floor grid that fills the
+// arena, ripples outward from explosions/bombs/deaths, and bows toward an active
+// Black Hole (NFR5, FR13). It is drawn entirely on the GPU by ONE full-arena
+// fragment-shader quad (see src/scenes/gridField.js) added behind all entities;
+// ALL deformation happens in the shader from these values, passed as uniforms —
+// the CPU never walks vertices. GridFieldSystem (the Phaser-free sim seam) owns a
+// bounded ripple pool and a single warp target and only writes uniforms. Every
+// value here is a documented post-launch placeholder (tuned later), mirroring the
+// NEON_BLOOM_* discipline — no inline magic numbers in the GLSL or at the call site.
+
+// Grid line spacing (px, arena space): the gap between adjacent grid lines.
+export const GRID_SPACING = 48;
+// Grid line half-width (px) used by the shader's smoothstep — larger = thicker,
+// softer lines. The camera Bloom (Story 4.1) turns these into glowing neon lines.
+export const GRID_LINE_WIDTH = 1.5;
+// Grid line color (0xRRGGBB). Converted to a normalized vec3 in the pure seam and
+// passed to the shader; a dim blue that reads as neon once bloom bleeds it.
+export const GRID_COLOR = 0x1b3f7a;
+// Ripple pool size: the fixed number of concurrent ripple slots (a bounded uniform
+// array => bounded GPU cost, independent of how many explosions occur). Emitting
+// past this overwrites the oldest ripple.
+export const GRID_MAX_RIPPLES = 16;
+// Ripple lifetime (ms): a ripple advances by the fixed-step dt and expires (its
+// slot frees) once its age reaches this. Counted in sim time (frame-rate-independent).
+export const GRID_RIPPLE_DURATION_MS = 900;
+// Ripple ring expansion speed (px/sec): the radial wavefront radius = age·this, so
+// the ring races outward from the origin over the ripple's life.
+export const GRID_RIPPLE_SPEED = 480;
+// Ripple displacement amplitude (px): the peak sideways push a ripple applies to
+// the sampled grid coordinate, scaled by an age envelope (fades to 0 at expiry).
+export const GRID_RIPPLE_AMPLITUDE = 14;
+// Ripple wavelength (px): the spatial period of the radial sine wave — smaller =
+// tighter concentric rings.
+export const GRID_RIPPLE_WAVELENGTH = 60;
+// Warp peak displacement (px): the strongest pull the grid feels at a Black Hole's
+// core, scaled down by distance falloff and the hole's current strength (0..1).
+export const GRID_WARP_MAX_DISPLACEMENT = 60;
+// Warp reach (px): grid points strictly inside this distance of the hole are pulled
+// toward it; anything at/beyond is unaffected. Matched to the hole's gravity radius
+// so the visual warp footprint equals the actual gravity footprint (Story 2.4).
+export const GRID_WARP_RADIUS = BLACKHOLE_GRAVITY_RADIUS;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';

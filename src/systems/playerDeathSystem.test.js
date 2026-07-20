@@ -481,6 +481,118 @@ describe('PlayerDeathSystem — multiplier reset on death (Story 3.1, FR8)', () 
   });
 });
 
+describe('PlayerDeathSystem death latch (Story 4.2)', () => {
+  it('starts at deathSeq 0 with a zeroed death point', () => {
+    const { system } = makeSystem();
+    expect(system.deathSeq).toBe(0);
+    expect(system.deathX).toBe(0);
+    expect(system.deathY).toBe(0);
+  });
+
+  it('a respawning death latches the PRE-respawn ship position and bumps deathSeq', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 250;
+    ship.y = 175;
+    addSeeker(enemyPool, 250, 175); // overlapping → death
+
+    system.fixedUpdate(DT);
+
+    // Respawning death (lives remain), ship teleported to center...
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(ship.x).toBe(CENTER_X);
+    expect(ship.y).toBe(CENTER_Y);
+    // ...but the latch captured the death point BEFORE the respawn moved it.
+    expect(system.deathSeq).toBe(1);
+    expect(system.deathX).toBe(250);
+    expect(system.deathY).toBe(175);
+  });
+
+  it('the final game-over death also latches the death point and bumps deathSeq', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    playerState.lives = 1; // last life → game-over
+    ship.x = 90;
+    ship.y = 610;
+    addSeeker(enemyPool, 90, 610);
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.gameOver).toBe(true);
+    expect(system.deathSeq).toBe(1);
+    expect(system.deathX).toBe(90);
+    expect(system.deathY).toBe(610);
+  });
+
+  it('fires exactly once per death (no re-latch without a new death)', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 300;
+    ship.y = 300;
+    addSeeker(enemyPool, 300, 300);
+
+    system.fixedUpdate(DT); // death 1 → invulnerable now
+    expect(system.deathSeq).toBe(1);
+
+    // Next tick: invulnerable, so no new death, no new latch.
+    system.fixedUpdate(DT);
+    expect(system.deathSeq).toBe(1);
+  });
+
+  it('does not latch when no death occurs', () => {
+    const { ship, enemyPool, system } = makeSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 500, 500); // far — no contact
+
+    system.fixedUpdate(DT);
+
+    expect(system.deathSeq).toBe(0);
+    expect(system.deathX).toBe(0);
+    expect(system.deathY).toBe(0);
+  });
+
+  it('does not latch a death that was prevented by invulnerability', () => {
+    const { ship, enemyPool, system, playerState } = makeSystem();
+    ship.x = 100;
+    ship.y = 100;
+    playerState.invulnMs = 500;
+    addSeeker(enemyPool, 100, 100); // overlapping but invulnerable
+
+    system.fixedUpdate(DT);
+
+    expect(system.deathSeq).toBe(0);
+  });
+
+  it('increments deathSeq once per successive death (multi-death run)', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    // Death 1.
+    ship.x = 100;
+    ship.y = 100;
+    const s = addSeeker(enemyPool, 100, 100);
+    system.fixedUpdate(DT);
+    expect(system.deathSeq).toBe(1);
+    expect(system.deathX).toBe(100);
+
+    // Burn off invulnerability without contact.
+    s.x = 5000;
+    s.y = 5000;
+    let guard = 0;
+    while (playerState.invulnMs > 0 && guard < 10000) {
+      system.fixedUpdate(DT);
+      guard += 1;
+    }
+
+    // Death 2 at a different point.
+    ship.x = 700;
+    ship.y = 500;
+    s.x = 700;
+    s.y = 500;
+    system.fixedUpdate(DT);
+    expect(system.deathSeq).toBe(2);
+    expect(system.deathX).toBe(700);
+    expect(system.deathY).toBe(500);
+  });
+});
+
 describe('PlayerDeathSystem — multiple archetype pools', () => {
   // Build a ship, a seeker pool AND a green-square pool, and a death system
   // spanning both.
