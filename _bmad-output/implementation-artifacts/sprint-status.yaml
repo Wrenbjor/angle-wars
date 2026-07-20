@@ -24,7 +24,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-07-19
-last_updated: 2026-07-19
+last_updated: 2026-07-20
 project: Angle Wars
 project_key: NOKEY
 tracking_system: file-system
@@ -76,3 +76,10 @@ development_status:
   5-4-input-config-and-gamepad-polish: done
   5-5-performance-hardening-and-web-build: done
   epic-5-retrospective: optional
+
+  # Epic 6 — Feel & Signature Hazards (Post-Launch Tweaks)
+  epic-6: backlog
+  6-1-grid-subtlety-and-reduced-motion-accessibility: backlog
+  6-2-black-hole-instability-rework: backlog
+  6-3-mirror-reflector-dumbbell-hazard: backlog
+  epic-6-retrospective: optional

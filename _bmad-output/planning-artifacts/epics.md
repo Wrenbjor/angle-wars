@@ -29,6 +29,9 @@ This document provides the complete epic and story breakdown for Angle Wars, dec
 - **FR14** — Game flow: title → play → game over → restart/title.
 - **FR15** — Pause and resume.
 - **FR16** — Input: gamepad twin-stick with deadzones + keyboard/mouse fallback; hot-swap.
+- **FR17** — Accessibility/feel: grid kill-ripple toned down by default; a persisted Reduced-Motion setting scales down or disables grid warp, the full-screen flash, and camera shake (WCAG 2.3.1).
+- **FR18** — Black-hole instability (revises FR13): absorbing matter grows the hole toward an unstable threshold; reaching it detonates as a lethal, screen-clearing blast that costs the player a life; sustained fire shrinks it to a safe destruction; a rising red pulse + audio urgency track its approach to instability.
+- **FR19** — Mirror Reflector ("dumbbell") hazard: a spinning two-weight bar that drifts the arena and reflects player bullets off its bar; immune to gunfire, destroyed only by flying the ship through its center; the weights are lethal on contact.
 
 ### NonFunctional Requirements
 
@@ -87,6 +90,7 @@ This document provides the complete epic and story breakdown for Angle Wars, dec
 3. **Epic 3 — Score, Multiplier, Bombs & Lives:** The RE1 economy — the 10× multiplier that resets on death, smart bombs, extra lives, and persistent high score.
 4. **Epic 4 — Signature Aesthetic & Juice:** Neon bloom, the deforming grid, the pooled particle system, screen feel, and audio.
 5. **Epic 5 — Game Shell, Flow & Release:** Title, pause, full game-flow state machine, input polish, and performance-hardened web build.
+6. **Epic 6 — Feel & Signature Hazards (Post-Launch Tweaks):** Discovered-through-play refinements — calmer visual feedback with reduced-motion accessibility, the black hole re-cast as an unstable ticking bomb, and the mirror-reflector "dumbbell" hazard.
 
 ---
 
@@ -621,3 +625,80 @@ So that it's genuinely shippable.
 **Given** the project
 **When** built for production
 **Then** it produces a static bundle deployable to any static host, loading quickly in modern desktop browsers (NFR6, NFR7)
+
+---
+
+## Epic 6: Feel & Signature Hazards (Post-Launch Tweaks)
+
+**Goal:** The refinements that only surface once the game is actually played. Angle Wars boots, runs, and ships — but the grid feedback is too loud, the black hole reads as a chore instead of a threat, and the roster wants one more hazard with a distinct verb. This epic tones the visual feedback down (and finally hangs a reduced-motion accessibility option on the settings screen built in Epic 5), inverts the black hole into an unstable ticking bomb, and adds the mirror-reflector "dumbbell." These are tuning-and-content stories layered on the finished core — each is independently shippable and reuses the existing systems (settings persistence, the smart-bomb shockwave, the spawn director + telegraph, the collision/death seams).
+
+### Story 6.1: Grid Subtlety and Reduced-Motion Accessibility
+
+As a player sensitive to motion or flashing,
+I want calmer default feedback and a reduced-motion option,
+So that the game is comfortable to look at and accessible to play.
+
+**Acceptance Criteria:**
+
+**Given** a run with frequent kills
+**When** enemies are destroyed
+**Then** the grid deformation kill-ripple is markedly subtler by default than before (reduced amplitude/reach), still readable as feedback but no longer visually distracting (FR17)
+
+**Given** the settings screen
+**When** the player enables Reduced Motion
+**Then** grid warp, the full-screen flash, and camera shake are scaled down or disabled, and the preference applies immediately and persists across sessions via localStorage (FR17, NFR-persistence)
+
+**Given** Reduced Motion is enabled
+**When** a bomb detonates or the player dies
+**Then** the white full-screen flash and the camera shake are suppressed (or minimized), while the event still reads clearly through non-motion cues (color/particles/audio)
+
+> Closes the deferred Story 4.4 accessibility item (WCAG 2.3.1): the flash + shake had no escape hatch until Epic 5 added the settings/persistence infrastructure this story now reads.
+
+### Story 6.2: Black Hole Instability Rework
+
+As a player,
+I want the black hole to be a ticking bomb I have to shut down,
+So that ignoring it is genuinely dangerous and defusing it in time is a real decision.
+
+**Acceptance Criteria:**
+
+**Given** an active black hole
+**When** it absorbs enemies and matter
+**Then** it grows toward an unstable threshold instead of a harmless cap, and as it nears instability it pulses an escalating red and a rising audio urgency cue tracks its approach (FR18)
+
+**Given** a black hole reaches the unstable threshold
+**When** it goes unstable
+**Then** it detonates like a smart bomb — a screen-clearing shockwave that destroys enemies on screen — AND the detonation costs the player a life (triggering the normal death/respawn + multiplier reset) (FR18, FR9-style clear, FR12)
+
+**Given** the player fires on a black hole
+**When** bullets strike it
+**Then** it shrinks over time; sustained fire shrinks it out of existence, destroying it for its score payout with a safe implosion (no lethal blast) — the inverse of feeding it (FR18)
+
+**Given** an undestroyed black hole
+**When** the ship contacts its body
+**Then** the player dies on contact as before (FR13)
+
+> Inverts Story 2.4: feeding now pushes the hole toward a lethal detonation (not a harmless grow-and-emit), and sustained fire is the defuse. The old feed-driven seeker emission is removed — the hole's threat is now the instability clock, avoiding double jeopardy. Reuses the smart-bomb shockwave (Story 3.2) for the screen clear and the PlayerDeathSystem for the life cost.
+
+### Story 6.3: Mirror Reflector (Dumbbell) Hazard
+
+As a player,
+I want a spinning reflector I can't just shoot down,
+So that some threats demand positioning and nerve instead of firepower.
+
+**Acceptance Criteria:**
+
+**Given** a mirror reflector is present
+**When** it moves
+**Then** it drifts aimlessly around the arena while continuously spinning about its center, rendered as a dumbbell — two weights joined by a bar (FR19) — spawning through the existing spawn director + telegraph (FR5, Story 2.6) and drawn from a pool (NFR2)
+
+**Given** a player bullet strikes the reflector's bar
+**When** they collide
+**Then** the bullet reflects off the bar (angle of incidence about the bar's normal) and continues as a live player shot that can still destroy enemies; the reflector takes no damage from gunfire (FR19)
+
+**Given** a mirror reflector
+**When** the ship flies through its center point
+**Then** the reflector is destroyed for a score payout (FR19)
+**And** contact with either weight kills the player (FR6)
+
+> The reflect is a segment-vs-point collision plus a velocity mirror per bullet per tick — genuinely new collision code, modeled on the PinwheelSystem drift/pool pattern. Reflected bullets remain player-owned; whether they can harm the player is left as a tunable feel constant (default: harmless to the player) for post-launch play.
