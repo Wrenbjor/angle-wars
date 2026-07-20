@@ -39,6 +39,8 @@ import {
   BOMB_SHOCKWAVE_MS,
   BOMB_SHOCKWAVE_MAX_RADIUS,
   COLOR_BOMB_SHOCKWAVE,
+  SCREEN_FLASH_MS,
+  COLOR_SCREEN_FLASH,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
@@ -78,6 +80,13 @@ import {
 import { GridFieldSystem } from '../systems/GridFieldSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { particleAlpha } from './particleStyle.js';
+import { ScreenFeedbackSystem } from '../systems/ScreenFeedbackSystem.js';
+import {
+  shakeOffsetX,
+  shakeOffsetY,
+  flashAlpha,
+  decayTrauma,
+} from './screenShake.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -391,6 +400,27 @@ export class ArenaScene extends Phaser.Scene {
     // per-frame allocation (mirrors the bullet render). Glows under the camera Bloom.
     this.particleGraphics = this.add.graphics();
 
+    // --- Screen juice & feedback system (Story 4.4) -------------------------
+    // Registered LAST — after ParticleSystem — so within every fixed tick each input
+    // it reads is already final: collisionSystem.bulletKillCount (this tick's bullet
+    // kills, the subtle per-kill nudge — the SAME source the grid ripple / particles
+    // read), the bombSystem shockwave rising edge (bomb big event), the
+    // playerDeathSystem.deathSeq increment (death big event), and the post-move ship
+    // + enemy positions (the near-miss proximity scan). It is a PURE read-only
+    // observer — it mutates ONLY its own latch fields (no pool, entity, score, life,
+    // or death state). The render loop below consumes its latches into real-time
+    // countdowns that drive the camera shake, the flash overlay, and the hit-stop
+    // freeze. A fresh instance each run (scene.restart) resets the juice to calm,
+    // matching GridFieldSystem / ParticleSystem.
+    this.screenFeedbackSystem = new ScreenFeedbackSystem(
+      this.collisionSystem,
+      this.bombSystem,
+      this.playerDeathSystem,
+      this.ship,
+      this.enemyPools,
+    );
+    this.world.addSystem(this.screenFeedbackSystem);
+
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
@@ -463,6 +493,30 @@ export class ArenaScene extends Phaser.Scene {
     );
     addNeonBloom(this.cameras.main);
 
+    // --- Screen juice: flash overlay + render-owned countdowns (Story 4.4) ---
+    // A full-view white rectangle, pinned with setScrollFactor(0) so it always
+    // covers the view regardless of the camera shake, added AFTER every gameplay
+    // layer so a flash washes over them (and BEFORE the debug/HUD/game-over text
+    // built below, so those stay legible). Built once here; the render loop only
+    // sets its alpha (0 = fully off) from the flash countdown. It stays in NORMAL
+    // blend (not the additive neon layer) so the alpha reads as a plain wash.
+    this.flashOverlay = this.add.graphics();
+    this.flashOverlay.fillStyle(COLOR_SCREEN_FLASH, 1);
+    this.flashOverlay.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+    this.flashOverlay.setScrollFactor(0);
+    this.flashOverlay.setAlpha(0);
+
+    // Render-owned real-time countdowns for the juice. Owned at the render layer
+    // (not the sim) so they play out and settle over real time even while the sim
+    // is frozen (game-over or hit-stop) — a frozen full-screen flash must never
+    // blank the game-over screen, and a sim frozen by its own hit-stop cannot count
+    // itself back out. Fresh (zeroed) each create()/scene.restart() so no residual
+    // shake/flash/hit-stop carries into a new run.
+    this._trauma = 0;
+    this._flashMs = 0;
+    this._hitStopMs = 0;
+    this._shakePhase = 0;
+
     // --- Debug readout ------------------------------------------------------
     this.debugText = this.add.text(
       ARENA_BORDER_INSET + 8,
@@ -470,6 +524,11 @@ export class ArenaScene extends Phaser.Scene {
       '',
       { font: DEBUG_FONT, color: COLOR_DEBUG_TEXT },
     );
+    // Pinned (scrollFactor 0): the Story 4.4 camera shake writes cameras.main
+    // scrollX/Y, which would otherwise jitter these non-diegetic readouts. Keeping
+    // the UI screen-fixed is readability over juice — the shake belongs to the
+    // gameplay world, not the score/debug text.
+    this.debugText.setScrollFactor(0);
 
     // --- HUD (score + lives) ------------------------------------------------
     // Live readout of the run economy + remaining lives, top-right so it does
@@ -483,6 +542,8 @@ export class ArenaScene extends Phaser.Scene {
       { font: HUD_FONT, color: COLOR_HUD_TEXT, align: 'right' },
     );
     this.hudText.setOrigin(1, 0);
+    // Pinned (scrollFactor 0) so the camera shake never jitters the readout.
+    this.hudText.setScrollFactor(0);
 
     // --- Game-over overlay --------------------------------------------------
     // A dimming full-arena rectangle plus stacked title / final-score / restart
@@ -492,9 +553,15 @@ export class ArenaScene extends Phaser.Scene {
     this.gameOverOverlay.fillStyle(COLOR_GAMEOVER_OVERLAY, GAMEOVER_OVERLAY_ALPHA);
     this.gameOverOverlay.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
     this.gameOverOverlay.setVisible(false);
+    // Pinned (scrollFactor 0): a death adds the largest shake trauma right as the
+    // game-over screen appears, so the dimmer + text must stay screen-fixed rather
+    // than jitter with the camera (readability over juice for non-diegetic UI).
+    this.gameOverOverlay.setScrollFactor(0);
 
     const cx = ARENA_WIDTH / 2;
     const cy = ARENA_HEIGHT / 2;
+    // Pinned (scrollFactor 0) so the camera shake never jitters these readouts —
+    // readability over juice for non-diegetic UI.
     this.gameOverTitle = this.add
       .text(cx, cy - 60, 'GAME OVER', {
         font: GAMEOVER_TITLE_FONT,
@@ -502,6 +569,7 @@ export class ArenaScene extends Phaser.Scene {
         align: 'center',
       })
       .setOrigin(0.5)
+      .setScrollFactor(0)
       .setVisible(false);
     this.gameOverScore = this.add
       .text(cx, cy, '', {
@@ -510,6 +578,7 @@ export class ArenaScene extends Phaser.Scene {
         align: 'center',
       })
       .setOrigin(0.5)
+      .setScrollFactor(0)
       .setVisible(false);
     this.gameOverPrompt = this.add
       .text(cx, cy + 60, 'Press Enter / Space or click to restart', {
@@ -518,6 +587,7 @@ export class ArenaScene extends Phaser.Scene {
         align: 'center',
       })
       .setOrigin(0.5)
+      .setScrollFactor(0)
       .setVisible(false);
 
     // --- Restart input ------------------------------------------------------
@@ -553,12 +623,53 @@ export class ArenaScene extends Phaser.Scene {
     // fixed steps consume the latest move intent.
     this.inputSampler.sample();
 
-    // Freeze the simulation on game over at sub-step granularity: each fixed
-    // sub-step re-checks gameOver, so no system runs once death latches — even
-    // mid-frame during multi-sub-step catch-up — keeping the final score stable.
-    this.fixedTimestep.advance(delta, (dt) => {
-      if (!this.playerState.gameOver) this.world.fixedUpdate(dt);
-    });
+    // Story 4.4 hit-stop: while the render-owned _hitStopMs countdown is running,
+    // FREEZE the whole sim (skip feeding the fixed-timestep accumulator) and decay
+    // the countdown by the real render delta. This composes with the game-over gate
+    // inside the step callback below (game-over freezes the sim too). The countdown
+    // MUST live at render level — a sim frozen by its own hit-stop cannot advance a
+    // sim-side countdown back out of the freeze.
+    if (this._hitStopMs > 0) {
+      this._hitStopMs -= delta;
+      if (this._hitStopMs < 0) this._hitStopMs = 0;
+    } else {
+      // Freeze the simulation on game over at sub-step granularity: each fixed
+      // sub-step re-checks gameOver, so no system runs once death latches — even
+      // mid-frame during multi-sub-step catch-up — keeping the final score stable.
+      this.fixedTimestep.advance(delta, (dt) => {
+        if (!this.playerState.gameOver) this.world.fixedUpdate(dt);
+      });
+    }
+
+    // Story 4.4: pull the screen-feedback system's latches into the render-owned
+    // countdowns, then advance them by the real render delta so they play out and
+    // settle even while the sim is frozen (game-over / hit-stop). Trauma accumulates
+    // (clamped to 1 so the shake stays bounded and settles promptly); a raised flash
+    // or hit-stop request (re)arms its countdown to the full duration.
+    this._trauma += this.screenFeedbackSystem.consumePendingTrauma();
+    if (this._trauma > 1) this._trauma = 1;
+    const flashRequest = this.screenFeedbackSystem.consumeFlashRequest();
+    if (flashRequest > 0) this._flashMs = flashRequest;
+    const hitStopRequest = this.screenFeedbackSystem.consumeHitStopRequest();
+    if (hitStopRequest > 0) this._hitStopMs = hitStopRequest;
+
+    // Camera shake: advance the oscillation phase by real time, decay the trauma,
+    // and write the camera scroll offset from it. At trauma 0 the offset is exactly
+    // 0, so the camera returns cleanly to center (no drift). The flash overlay is
+    // pinned (setScrollFactor 0) so it covers the view regardless of this shake.
+    this._shakePhase += delta;
+    this._trauma = decayTrauma(this._trauma, delta);
+    this.cameras.main.scrollX = shakeOffsetX(this._trauma, this._shakePhase);
+    this.cameras.main.scrollY = shakeOffsetY(this._trauma, this._shakePhase);
+
+    // Flash overlay: decay the flash countdown by real time and set the overlay
+    // alpha from it (full at fire, fading to 0). Runs every frame regardless of the
+    // sim gate so a game-over flash fades rather than freezing white over the screen.
+    if (this._flashMs > 0) {
+      this._flashMs -= delta;
+      if (this._flashMs < 0) this._flashMs = 0;
+    }
+    this.flashOverlay.setAlpha(flashAlpha(this._flashMs, SCREEN_FLASH_MS));
 
     // Story 4.2: pack the grid system's live ripple + warp state into the shader's
     // uniforms once per render frame (zero allocation — Float32Array/{x,y,z} mutated

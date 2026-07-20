@@ -547,6 +547,60 @@ export const PARTICLE_TRAIL_SIZE = 2;
 // its thruster wash.
 export const PARTICLE_TRAIL_COLOR = 0x66ccff;
 
+// --- Screen juice & feedback (Story 4.4) ------------------------------------
+// The signature Geometry Wars "screen-feel" payoff (FR12, NFR2): the camera
+// shakes, the screen flashes, and the action hit-stops on impact. ScreenFeedback
+// System (the Phaser-free sim seam) observes the SAME event sources the grid
+// ripple (4.2) and particle burst (4.3) read — collisionSystem.bulletKillCount
+// (kills), bombSystem.shockwaveMs rising edge (bomb), playerDeathSystem.deathSeq
+// increment (death) — plus a throttled near-miss proximity scan, and turns them
+// into three render-consumable latches: pending shake trauma, a flash request, and
+// a hit-stop request. Big events (bomb + death) get shake + flash + hit-stop; small
+// events (kills + near-misses) get a subtle shake nudge ONLY. The screenShake.js
+// pure seam holds the trauma→offset / flash-alpha / trauma-decay math; ArenaScene
+// owns the real-time countdowns (so they settle even while the sim is frozen on
+// game-over). Every value here is a documented post-launch placeholder (tuned
+// later), mirroring the GRID_* / PARTICLE_* discipline — no inline magic numbers in
+// the system, the seam, or the ArenaScene call sites.
+
+// Max camera shake offset (px) at peak. shakeOffsetX/Y scale from 0 (trauma 0) up
+// to this bound (|offset| never exceeds it), so the whole view kicks by at most
+// this many pixels.
+export const SCREEN_SHAKE_MAX_OFFSET = 24;
+// Shake oscillation frequencies (radians per ms of render time) for the X and Y
+// axes. Different values decorrelate the two axes so the kick reads as a shake
+// rather than a diagonal slide.
+export const SCREEN_SHAKE_FREQ_X = 0.045;
+export const SCREEN_SHAKE_FREQ_Y = 0.037;
+// Trauma decay rate (trauma units per second): how fast a shake settles back to
+// rest. decayTrauma subtracts this × dtSec each frame, clamped at 0. Larger =
+// snappier settle.
+export const SCREEN_SHAKE_TRAUMA_DECAY_PER_SEC = 1.8;
+// Per-event trauma weights (0..1 scale; the render clamps accumulated trauma to 1).
+// Death shakes HARDER than a bomb (magnitude proportional to event severity); a
+// kill and a near-miss are subtle nudges that accumulate in a busy arena.
+export const SCREEN_SHAKE_TRAUMA_BOMB = 0.55;
+export const SCREEN_SHAKE_TRAUMA_DEATH = 0.85;
+export const SCREEN_SHAKE_TRAUMA_KILL = 0.08;
+export const SCREEN_SHAKE_TRAUMA_NEARMISS = 0.12;
+// Flash duration (ms): how long the full-screen flash overlay fades from full to
+// zero after a big event. Brief so it emphasizes without obscuring play.
+export const SCREEN_FLASH_MS = 120;
+// Flash overlay color (0xRRGGBB): a white wash over the whole view on a big event.
+export const COLOR_SCREEN_FLASH = 0xffffff;
+// Hit-stop duration (ms): how long the whole sim freezes on a big event to sell the
+// impact. Counted down at render level (a frozen sim cannot count itself back out).
+// Short — a momentary hitch, not a stall.
+export const SCREEN_HITSTOP_MS = 60;
+// Near-miss proximity radius (px): a non-telegraphing enemy whose center is closer
+// than this to the ship (but not overlapping its collision radius) registers a
+// near-miss nudge. The fuzzy part of the intent — a tunable placeholder.
+export const SCREEN_NEARMISS_RADIUS = 70;
+// Near-miss throttle cooldown (ms): after one near-miss fires, no further near-miss
+// registers until this much sim time elapses. A single global cooldown avoids
+// per-tick spam and needs no per-enemy identity tracking (recycle-safe).
+export const SCREEN_NEARMISS_COOLDOWN_MS = 400;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';
