@@ -97,7 +97,7 @@ describe('ArenaScene — debug readout stays DEV-gated (production safety)', () 
     // a crash that no vitest run catches (vitest runs with DEV=true). Strip every
     // DEV block and assert none of the debug identifiers survive.
     const stripped = stripDevBlocks(arenaSrc);
-    for (const id of ['debugText', '_ticksPerSec', '_sampleAccumMs', '_lastSampleTicks']) {
+    for (const id of ['debugText', '_simRateSampler', '_ticksPerSec', '_sampleAccumMs', '_lastSampleTicks']) {
       expect(stripped).not.toContain(id);
     }
   });

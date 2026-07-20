@@ -15,7 +15,8 @@ origin: migrated from legacy ledger (review of spec-1-1-project-bootstrap-and-ga
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-1-project-bootstrap-and-game-shell.md`
 location: `src/scenes/ArenaScene.js` (render→sim decoupling, sim-rate sampling), Boot→Preload→Arena chain
 reason: Three independent review layers (verification-gap, adversarial/blind-hunter, intent-alignment) converged on the same gap. AC4's headline observable (steady sim ticks/sec independent of render FPS) and the intent's most distinctive "Always" invariants (WEBGL not AUTO; FIT/CENTER_BOTH; render callback never runs sim directly) are asserted only as config literals and human-read canvas text — a regression flipping the renderer to AUTO, breaking the scale mode, or calling world.fixedUpdate(delta) directly from update() would pass the entire existing suite (src/**/*.test.js covers only src/core/). The spec deliberately scoped headless unit-testing to Pool/FixedTimestep, so closing this adds a module beyond the story's captured intent.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-scene-render-and-sim-rate-coverage
 
 ### DW-3: `PlayerInputSampler.sample()` — the keyboard `(right-left, down-up)` axis mapping and the gamepad-priority deadzone fall-through — has no automated coverage; consider driving `sample()` with a fake keys/pad object (or extracting the pure axis-resolution decision) to assert control mapping and pad↔keyboard priority.
 

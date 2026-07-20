@@ -40,6 +40,7 @@ import {
   COLOR_SCREEN_FLASH,
 } from '../config/constants.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
+import { SimRateSampler } from '../core/SimRateSampler.js';
 import { buildArenaWorld } from './buildArenaWorld.js';
 import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
 import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
@@ -518,9 +519,7 @@ export class ArenaScene extends Phaser.Scene {
     // Sampling state for a once-per-second sim ticks/sec measurement. DEV-only —
     // part of the debug readout, so it is initialized only when the readout exists.
     if (import.meta.env.DEV) {
-      this._lastSampleTicks = 0;
-      this._sampleAccumMs = 0;
-      this._ticksPerSec = 0;
+      this._simRateSampler = new SimRateSampler(1000);
     }
   }
 
@@ -751,13 +750,7 @@ export class ArenaScene extends Phaser.Scene {
     // DEV-only: gated so a production build eliminates the sampling from the
     // per-frame path (mirrors the debug-text gate in create()).
     if (import.meta.env.DEV) {
-      this._sampleAccumMs += delta;
-      if (this._sampleAccumMs >= 1000) {
-        const ticked = this.simClock.ticks - this._lastSampleTicks;
-        this._ticksPerSec = (ticked * 1000) / this._sampleAccumMs;
-        this._lastSampleTicks = this.simClock.ticks;
-        this._sampleAccumMs = 0;
-      }
+      this._simRateSampler.update(delta, this.simClock.ticks);
     }
 
     // --- HUD + game-over overlay (render only; never advances the sim) -------
@@ -784,7 +777,7 @@ export class ArenaScene extends Phaser.Scene {
       this.debugText.setText(
         [
           `render FPS : ${renderFps}`,
-          `sim ticks/s: ${this._ticksPerSec.toFixed(1)}  (target ${(1000 / FIXED_STEP_MS).toFixed(1)})`,
+          `sim ticks/s: ${this._simRateSampler.ticksPerSec.toFixed(1)}  (target ${(1000 / FIXED_STEP_MS).toFixed(1)})`,
           `sim ticks  : ${this.simClock.ticks}`,
           `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
         ].join('\n'),
