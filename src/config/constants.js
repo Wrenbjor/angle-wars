@@ -384,6 +384,18 @@ export const BOMB_SHOCKWAVE_MS = 300;
 // countdown. Placeholder only (Epic 4 owns the real aesthetic).
 export const BOMB_SHOCKWAVE_MAX_RADIUS = 900;
 
+// Extra lives (Story 3.3 / FR10): the RE1 milestone reward. Unlike bombs (a
+// repeating +1 every BOMB_AWARD_SCORE_INTERVAL), extra lives come from a DEFINED
+// FINITE ASCENDING LIST of milestone scores — each entry grants exactly one life
+// the first time the running score reaches or passes it (detected against a
+// monotonic index cursor so each fires once, even when one tick jumps past
+// several). The list is finite, so it bounds total awards naturally — there is NO
+// life cap and NO clamp (FR10 specifies neither). The award only ever ADDS to the
+// single PlayerState.lives counter that deaths decrement; it never resets on death.
+// Ascending, tunable placeholders (RE1-derived, tuned post-launch) — no inline
+// magic numbers on the award path.
+export const LIFE_AWARD_SCORE_THRESHOLDS = [100000, 250000, 500000, 1000000];
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;

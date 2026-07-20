@@ -57,6 +57,7 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
 import { BombSystem } from '../systems/BombSystem.js';
+import { ExtraLifeSystem } from '../systems/ExtraLifeSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
@@ -278,6 +279,21 @@ export class ArenaScene extends Phaser.Scene {
     // collider) — but it is deliberately NOT in the CollisionSystem list above,
     // since one bullet must not one-shot a multi-hit hole.
     this.playerState = createPlayerState();
+
+    // --- Extra lives (Story 3.3) --------------------------------------------
+    // ExtraLifeSystem runs AFTER ScoringSystem + BlackHoleSystem + BombSystem and
+    // BEFORE PlayerDeathSystem — the load-bearing tick position: (a) the score it
+    // reads for the milestone award is fully settled this tick (it catches a kill's
+    // award AND the black-hole payout with no one-tick lag), and (b) a life earned
+    // this tick is banked before the death check, so a threshold-crossing kill on
+    // the last life rescues the player from an otherwise-fatal contact this same
+    // tick (1→2 award, then 2→1 death, respawn) — symmetric to a bomb clearing
+    // enemies before the death check. It reads scoreState.score (never writes it)
+    // and only ADDS to PlayerState.lives, the same counter deaths decrement; the
+    // HUD already renders LIVES from that field, so no render change is needed.
+    this.extraLifeSystem = new ExtraLifeSystem(this.scoreState, this.playerState);
+    this.world.addSystem(this.extraLifeSystem);
+
     this.deathPools = [...this.enemyPools, this.blackHoleSystem.holePool];
     this.playerDeathSystem = new PlayerDeathSystem(
       this.ship,
