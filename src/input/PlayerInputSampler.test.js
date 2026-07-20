@@ -28,13 +28,16 @@ const { MOVE_DEADZONE, AIM_DEADZONE } = await import('../config/constants.js');
 
 /**
  * A fake gamepad. Sticks default to centered; buttons default to none pressed;
- * `connected` defaults to true. Model a real Phaser mid-play DISCONNECT by
- * passing `connected: false` (Phaser keeps the stale pad object in its array with
- * frozen stick values rather than nulling it — getPad() guards on this flag).
+ * `connected` defaults to true; `mapping` defaults to the W3C 'standard' id
+ * (override with e.g. `mapping: ''` to model a non-standard/unidentified pad).
+ * Model a real Phaser mid-play DISCONNECT by passing `connected: false` (Phaser
+ * keeps the stale pad object in its array with frozen stick values rather than
+ * nulling it — getPad() guards on this flag).
  */
-function makePad({ ls = { x: 0, y: 0 }, rs = { x: 0, y: 0 }, buttons = [], connected = true } = {}) {
+function makePad({ ls = { x: 0, y: 0 }, rs = { x: 0, y: 0 }, buttons = [], connected = true, mapping = 'standard' } = {}) {
   return {
     connected,
+    mapping,
     leftStick: ls,
     rightStick: rs,
     buttons: buttons.map((pressed) => ({ pressed })),
@@ -44,19 +47,25 @@ function makePad({ ls = { x: 0, y: 0 }, rs = { x: 0, y: 0 }, buttons = [], conne
 /**
  * Build a sampler over fully-mocked Phaser scene objects, returning handles to
  * drive it: the InputState it writes, the fake keys, the mutable pointer, the
- * mutable pad slot, and a way to fire a gamepad 'down' event.
+ * mutable pad list, and a way to fire a gamepad 'down' event.
+ *
+ * The gamepad mock holds a LIST of pads (mirroring Phaser's gamepads array so a
+ * pad can live at a non-zero slot — DW-34): `total` is the slot count and
+ * `getAll()` returns the list. Pass a single `pad` for the common case or a
+ * `pads` array for multi-slot scenarios; `setPad`/`setPads` mutate the list.
  */
-function makeHarness({ pad = null, ship = { x: 100, y: 100 }, pointerMoveTime = 0 } = {}) {
+function makeHarness({ pad = null, pads, ship = { x: 100, y: 100 }, pointerMoveTime = 0 } = {}) {
   const pointer = { moveTime: pointerMoveTime, downTime: 0, isDown: false, worldX: 0, worldY: 0 };
-  const slot = { pad };
+  const slot = { pads: pads ?? (pad ? [pad] : []) };
   const downListeners = [];
   let keys;
 
   const gamepad = {
     get total() {
-      return slot.pad ? 1 : 0;
+      return slot.pads.length;
     },
-    getPad: () => slot.pad,
+    getPad: (i) => slot.pads[i] ?? null,
+    getAll: () => slot.pads.slice(),
     on: (evt, fn) => {
       if (evt === 'down') downListeners.push(fn);
     },
@@ -87,13 +96,21 @@ function makeHarness({ pad = null, ship = { x: 100, y: 100 }, pointerMoveTime = 
     ship,
     keys,
     setPad: (p) => {
-      slot.pad = p;
+      slot.pads = p ? [p] : [];
+    },
+    setPads: (arr) => {
+      slot.pads = arr ?? [];
     },
     setPaused: (v) => {
       scene._paused = v;
     },
-    fireGamepadDown: (index) =>
-      downListeners.forEach((fn) => fn(slot.pad, { index })),
+    // Fire the gamepad 'down' edge. Defaults the event's pad to the first
+    // connected pad (falling back to the first slot), matching how Phaser hands
+    // the active pad to the listener; override with an explicit `pad`.
+    fireGamepadDown: (index, downPad) =>
+      downListeners.forEach((fn) =>
+        fn(downPad ?? slot.pads.find((p) => p && p.connected) ?? slot.pads[0], { index }),
+      ),
   };
 }
 
@@ -322,5 +339,76 @@ describe('PlayerInputSampler gamepad bomb listener', () => {
     h.fireGamepadDown(4);
     expect(h.input.consumeBomb()).toBe(true);
     expect(h.input.consumeBomb()).toBe(false);
+  });
+});
+
+describe('PlayerInputSampler pad selection (DW-34)', () => {
+  it('drives input from a connected pad at a NON-ZERO slot while index 0 is disconnected', () => {
+    // Phaser does not compact its gamepads array on disconnect: index 0 can be a
+    // stale disconnected pad while a reconnected pad lives at index 1. getPad()
+    // must select the first CONNECTED pad, not hard-pin index 0 — otherwise the
+    // reassigned pad drives nothing and the player is silently unbound.
+    const dead = makePad({ connected: false, rs: { x: 0.9, y: 0 } }); // stale @ index 0
+    const live = makePad({ ls: { x: 0.9, y: 0 }, rs: { x: 0, y: 0.9 } }); // @ index 1
+    const h = makeHarness({ pads: [dead, live], ship: { x: 100, y: 100 } });
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.KBM); // baseline
+
+    h.sampler.sample();
+
+    // The index-1 pad is selected and drives both channels.
+    expect(h.sampler.getPad()).toBe(live);
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.GAMEPAD);
+    expect(h.input.moveX).toBeGreaterThan(0); // left stick from the index-1 pad
+    expect(h.input.aimActive).toBe(true);
+    expect(h.input.aimY).toBeCloseTo(1, 6); // right stick +y from the index-1 pad
+  });
+
+  it('returns null (falls back to KBM) when every slot is disconnected', () => {
+    // Present-but-disconnected pads at every slot (total>0) must still yield null
+    // so the sampler defensively falls back to keyboard/mouse.
+    const h = makeHarness({
+      pads: [makePad({ connected: false }), makePad({ connected: false })],
+      ship: { x: 100, y: 100 },
+    });
+
+    h.sampler.sample();
+
+    expect(h.sampler.getPad()).toBeNull();
+  });
+});
+
+describe('PlayerInputSampler non-standard mapping diagnostic (DW-33)', () => {
+  it('warns exactly once across repeated samples for a connected non-standard pad, and the bomb still binds', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const h = makeHarness({ pad: makePad({ mapping: '' }) }); // unidentified pad
+
+      // Repeated frames must not re-warn: the diagnostic is once per instance.
+      h.sampler.sample();
+      h.sampler.sample();
+      h.sampler.sample();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // The bumper still queues a bomb (best-effort binding on a non-standard pad).
+      h.fireGamepadDown(4);
+      expect(h.input.consumeBomb()).toBe(true);
+      expect(h.input.consumeBomb()).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('never warns for a connected standard pad', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const h = makeHarness({ pad: makePad({ mapping: 'standard' }) });
+
+      h.sampler.sample();
+      h.sampler.sample();
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

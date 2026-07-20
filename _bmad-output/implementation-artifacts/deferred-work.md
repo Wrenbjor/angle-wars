@@ -265,7 +265,8 @@ origin: migrated from legacy ledger (review of spec-5-1-title-and-start-screen.m
 source_spec: `_bmad-output/implementation-artifacts/spec-5-1-title-and-start-screen.md`
 location: `src/scenes/ArenaScene.js:689-691` (game-over restart binding)
 reason: TitleScene binds `this.input.gamepad?.on('down', start)`; ArenaScene.js:689-691 restart binds only keydown-ENTER/keydown-SPACE/pointerdown. Game-over/restart flow is explicitly out of Story 5.1 scope — belongs to the Story 5.3 state machine and 5.4 gamepad polish.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-gamepad-input-robustness
 
 ### DW-32: ArenaScene's in-run audio keys (`M` mute, `-`/`+` volume) lack the `event.repeat` held-key guard that the new SettingsScene (and Story 5.2's pause) apply, so holding one steps every OS auto-repeat tick and the same control behaves differently in-run vs on the settings screen.
 
@@ -281,7 +282,8 @@ origin: migrated from legacy ledger (review of spec-5-4-input-config-and-gamepad
 source_spec: `_bmad-output/implementation-artifacts/spec-5-4-input-config-and-gamepad-polish.md`
 location: `PlayerInputSampler` (`isBombButton`, `GAMEPAD_BOMB_BUTTONS`, stick reads)
 reason: Adversarial review flagged it. `isBombButton` matches raw indices 4/5 and `isGamepadActive`/`sampleMove`/`sampleAim` read `pad.leftStick`/`pad.rightStick` — all standard-mapping assumptions. Pre-existing across the whole input path (the sticks already assume standard mapping since Stories 1.2/1.3); Story 5.4 extends the same assumption to the new bomb binding rather than introducing it. Not a defect against this story's literal ACs (which presume a conventional twin-stick pad), and Phaser normalizes most common controllers to standard mapping. Closing it needs a mapping-aware button/axis resolution (or a `pad.mapping === 'standard'` guard with a documented fallback) applied uniformly to sticks and the bomb — a broader input-robustness pass, not a trivial patch.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-gamepad-input-robustness
 
 ### DW-34: `PlayerInputSampler.getPad()` hard-pins gamepad index 0, so on a disconnect+reconnect where the browser reassigns the pad a non-zero `Gamepad.index`, `getPad(0)` returns null and the physically-connected, actively-used controller drives nothing until the player switches to keyboard/mouse.
 
@@ -289,7 +291,8 @@ origin: migrated from legacy ledger (review of spec-5-4-input-config-and-gamepad
 source_spec: `_bmad-output/implementation-artifacts/spec-5-4-input-config-and-gamepad-polish.md`
 location: `PlayerInputSampler.getPad()` (hard-pinned index 0)
 reason: Adversarial and edge-case review layers converged on it. `getPad()` returns `gp.getPad(0)` (verified: Phaser's `getPad` matches on `Gamepad.index`, and browsers can reassign a reconnected pad to index 1+). Pre-existing — the index-0 pin predates Story 5.4 (the old sampler already called `this.getPad()`); this story only added the `pad.connected` guard, which bounds the stuck-frozen-stick damage on disconnect but does not re-home input to the new slot. Not a defect against this story's literal ACs (which presume "a connected gamepad" — the single index-0 pad of a single-player game). Closing it needs `getPad()` to select the first *connected* pad (e.g. `gp.getAll().find(p => p.connected)`) instead of index 0, plus a harness update — a small robustness pass best done alongside any multi-pad or reconnect-handling work.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-gamepad-input-robustness
 
 ### DW-35: Story 5.5's headline ACs are verified one surface below where they live — NFR1 (60 FPS under peak load on mid-range hardware) and NFR7 (live canvas resize/letterbox + "no debug readout visible" in the shipped build) are manual-only, and NFR6 build correctness (dist relative asset paths, emitted separate phaser vendor chunk, tree-shaken "render FPS"/"sim ticks/s" strings) is asserted at the vite.config/source surface and via the `npm run build` verification command rather than an automated test that inspects the built `dist/` artifact.
 

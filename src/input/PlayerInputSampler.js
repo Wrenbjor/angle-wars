@@ -1,5 +1,9 @@
 import Phaser from 'phaser';
-import { applyRadialDeadzone, isBombButton } from './inputMath.js';
+import {
+  applyRadialDeadzone,
+  isBombButton,
+  mappingWarning,
+} from './inputMath.js';
 import { INPUT_METHOD, resolveActiveMethod } from './inputMethod.js';
 import {
   MOVE_DEADZONE,
@@ -46,6 +50,11 @@ export class PlayerInputSampler {
     // the first sample() (one frame of false KBM activation for a gamepad player).
     this._lastPointerMoveTime = scene.input.activePointer.moveTime;
 
+    // Once-per-instance latch for the non-standard-mapping diagnostic (DW-33):
+    // sample() warns at most once when a connected non-standard pad is present,
+    // so the warning does not repeat every render frame.
+    this._mappingWarned = false;
+
     // WASD + arrow keys, plus the smart-bomb key. addKeys returns Key objects
     // with live `isDown` (and usable with Phaser.Input.Keyboard.JustDown for a
     // one-shot edge). The bomb is bound to Shift (KC.SHIFT is the generic Shift
@@ -80,7 +89,10 @@ export class PlayerInputSampler {
     // flag — otherwise a bumper press while paused would latch a bomb that
     // detonates on resume (asymmetric with a frozen Shift, and a wasted bomb).
     scene.input.gamepad?.on('down', (pad, button) => {
-      if (!this.scene._paused && isBombButton(button.index)) {
+      // Pass the pad's mapping so isBombButton is mapping-aware (DW-33): the
+      // standard mapping uses the canonical bumper indices, a non-standard pad
+      // falls back to the same indices as a documented best-effort.
+      if (!this.scene._paused && isBombButton(button.index, pad?.mapping)) {
         this.input.queueBomb();
       }
     });
@@ -99,13 +111,41 @@ export class PlayerInputSampler {
    * direction with no way back to the mouse. Returning null on a dead pad is what
    * lets the sampler fall back to keyboard/mouse defensively (the intent's
    * disconnect requirement).
+   *
+   * Select the first *connected* pad rather than hard-pinning index 0 (DW-34):
+   * a pad reassigned to a non-zero navigator slot after a disconnect+reconnect
+   * would otherwise drive nothing. The `total === 0` short-circuit and the
+   * connected-guard are unchanged — a dead/disconnected pad still yields null,
+   * preserving the sticky-GAMEPAD freeze fix.
    * @returns {Phaser.Input.Gamepad.Gamepad|null}
    */
   getPad() {
     const gp = this.scene.input.gamepad;
     if (!gp || gp.total === 0) return null;
-    const pad = gp.getPad(0);
-    return pad && pad.connected ? pad : null;
+    const pad = gp.getAll().find((p) => p && p.connected);
+    return pad ?? null;
+  }
+
+  /**
+   * Emit the non-standard-mapping diagnostic at most once per sampler instance
+   * when a connected pad reports a mapping the browser could not fit to the W3C
+   * 'standard' layout (DW-33). Makes the mapping-awareness observable for the
+   * whole pad (sticks + bomb): a possible bomb-button misbind (see
+   * isBombButton's best-effort fallback) becomes discoverable in the console
+   * rather than silent. Emits at most once per instance, on the FIRST
+   * non-standard sighting; a standard pad never warns and is simply re-checked
+   * (cheaply) each frame. The latch prevents warning SPAM, not per-frame
+   * execution — it is set only when a warning fires, so a non-standard pad
+   * hot-swapped in after a standard one still warns the first time it is seen.
+   * @param {Phaser.Input.Gamepad.Gamepad|null} pad
+   */
+  warnOnNonStandardMapping(pad) {
+    if (this._mappingWarned || !pad) return;
+    const warning = mappingWarning(pad.mapping);
+    if (warning) {
+      this._mappingWarned = true;
+      console.warn(warning);
+    }
   }
 
   /**
@@ -118,6 +158,7 @@ export class PlayerInputSampler {
    */
   sample() {
     const pad = this.getPad();
+    this.warnOnNonStandardMapping(pad);
 
     const gamepadActive = this.isGamepadActive(pad);
     const kbmActive = this.isKbmActive();

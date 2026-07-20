@@ -4,6 +4,9 @@ import {
   clampToUnitCircle,
   normalizeToUnit,
   isBombButton,
+  isStandardMapping,
+  mappingWarning,
+  GAMEPAD_STANDARD_MAPPING,
 } from './inputMath.js';
 import { InputState } from './InputState.js';
 import { MOVE_DEADZONE, AIM_DEADZONE } from '../config/constants.js';
@@ -108,16 +111,68 @@ describe('per-channel deadzone split (MOVE vs AIM)', () => {
   });
 });
 
-describe('isBombButton', () => {
-  it('is true for either bumper (indices 4 and 5)', () => {
-    expect(isBombButton(4)).toBe(true);
-    expect(isBombButton(5)).toBe(true);
+describe('isStandardMapping', () => {
+  it('is true only for the exact W3C "standard" mapping id', () => {
+    expect(isStandardMapping('standard')).toBe(true);
+    expect(isStandardMapping(GAMEPAD_STANDARD_MAPPING)).toBe(true);
   });
 
-  it('is false for face buttons, sticks, and undefined', () => {
-    expect(isBombButton(0)).toBe(false); // A / face
-    expect(isBombButton(10)).toBe(false); // a stick click
+  it('is false for an empty, unidentified, or other mapping', () => {
+    expect(isStandardMapping('')).toBe(false);
+    expect(isStandardMapping(undefined)).toBe(false);
+    expect(isStandardMapping('xr-standard')).toBe(false);
+  });
+});
+
+describe('isBombButton', () => {
+  it('is true for either bumper (indices 4 and 5) on the standard mapping', () => {
+    expect(isBombButton(4, 'standard')).toBe(true);
+    expect(isBombButton(5, 'standard')).toBe(true);
+  });
+
+  it('is false for face buttons, sticks, and undefined on the standard mapping', () => {
+    expect(isBombButton(0, 'standard')).toBe(false); // A / face
+    expect(isBombButton(10, 'standard')).toBe(false); // a stick click
+    expect(isBombButton(undefined, 'standard')).toBe(false);
+  });
+
+  it('treats a missing/undefined mapping as a non-standard best-effort binding (bumpers still bind)', () => {
+    // A missing mapping arg flows through the non-standard branch, identical to
+    // how isStandardMapping / mappingWarning classify undefined — so the three
+    // seams never disagree on the same input. The bumpers still bind best-effort.
+    expect(isBombButton(4)).toBe(true);
+    expect(isBombButton(5)).toBe(true);
+    expect(isBombButton(0)).toBe(false);
     expect(isBombButton(undefined)).toBe(false);
+  });
+
+  it('classifies a missing mapping coherently with mappingWarning (warns yet still binds)', () => {
+    // Coherence lock: the same missing mapping that yields a non-null diagnostic
+    // must NOT be silently treated as standard by the bomb path.
+    expect(mappingWarning(undefined)).not.toBeNull();
+    expect(isBombButton(4, undefined)).toBe(true);
+  });
+
+  it('binds the bumpers best-effort on a non-standard / unidentified pad', () => {
+    // No reliable programmatic remap for an unknown pad exists; refusing to bind
+    // would leave the bomb unreachable, so the bumper indices still map through.
+    expect(isBombButton(4, '')).toBe(true);
+    expect(isBombButton(5, '')).toBe(true);
+    // Non-bumper indices remain non-bomb regardless of mapping.
+    expect(isBombButton(0, '')).toBe(false);
+  });
+});
+
+describe('mappingWarning', () => {
+  it('returns null for the standard mapping (no diagnostic needed)', () => {
+    expect(mappingWarning('standard')).toBeNull();
+    expect(mappingWarning(GAMEPAD_STANDARD_MAPPING)).toBeNull();
+  });
+
+  it('returns a non-null diagnostic string for a non-standard / empty mapping', () => {
+    expect(typeof mappingWarning('')).toBe('string');
+    expect(mappingWarning('')).not.toBeNull();
+    expect(typeof mappingWarning('some-oem-pad')).toBe('string');
   });
 });
 

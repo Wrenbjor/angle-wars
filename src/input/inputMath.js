@@ -73,15 +73,78 @@ export function normalizeToUnit(x, y) {
 }
 
 /**
+ * The W3C Gamepad "standard" mapping id. Phaser surfaces the browser's
+ * `Gamepad.mapping` string on each pad; when it equals this, `button.index`
+ * carries the canonical layout (LB=4, RB=5, …) our bomb constants assume.
+ */
+export const GAMEPAD_STANDARD_MAPPING = 'standard';
+
+/**
+ * Whether a pad reports the canonical W3C "standard" mapping.
+ *
+ * A pad with an empty / unidentified / non-'standard' `mapping` is one the
+ * browser could not fit to the standard layout, so its raw `button.index`
+ * values are not guaranteed to match the standard button positions.
+ *
+ * @param {string} [mapping] The pad's `Gamepad.mapping` string.
+ * @returns {boolean} True only for the exact 'standard' mapping.
+ */
+export function isStandardMapping(mapping) {
+  return mapping === GAMEPAD_STANDARD_MAPPING;
+}
+
+/**
  * Whether a gamepad button index maps to the smart-bomb action (either bumper).
  *
  * Pure lookup against the configured GAMEPAD_BOMB_BUTTONS so the sampler's
  * edge-triggered gamepad listener carries no inline button numbers. A
  * non-numeric / undefined index (a button with no index) is not a bomb button.
  *
+ * Mapping-aware but single-seam by design: on the 'standard' mapping the
+ * canonical bumper indices `[4,5]` are authoritative. On a non-standard /
+ * unidentified mapping there is no reliable programmatic remap for an unknown
+ * pad (a per-controller database is explicitly out of scope), so we fall back
+ * to the SAME indices as a documented best-effort — refusing to bind would
+ * leave the bomb unreachable for that player, which is strictly worse than a
+ * possible misbind. `mappingWarning` surfaces the non-standard pad so the risk
+ * is discoverable rather than silent. This is the one place a future per-pad
+ * remap table would diverge the two branches.
+ *
  * @param {number} index The pressed gamepad button's index.
+ * @param {string} [mapping] The pad's `Gamepad.mapping` string. A missing /
+ *   undefined mapping is classified as NON-standard (the best-effort branch),
+ *   identical to how `isStandardMapping` / `mappingWarning` treat it — so the
+ *   three seams never disagree on the same input.
  * @returns {boolean} True only for the configured bumper indices.
  */
-export function isBombButton(index) {
+export function isBombButton(index, mapping) {
+  if (isStandardMapping(mapping)) {
+    return GAMEPAD_BOMB_BUTTONS.includes(index);
+  }
+  // Non-standard / unidentified pad: best-effort fall back to the same bumper
+  // indices (see the doc note above) rather than leaving the bomb unbindable.
   return GAMEPAD_BOMB_BUTTONS.includes(index);
+}
+
+/**
+ * A one-line diagnostic for a pad whose mapping is not the canonical W3C
+ * 'standard', or `null` for a standard pad.
+ *
+ * Surfaces the non-standard pad so a possible bomb-button misbind (see
+ * `isBombButton`'s best-effort fallback) is discoverable rather than silent.
+ * The sampler emits this at most once per instance via `console.warn`.
+ *
+ * @param {string} [mapping] The pad's `Gamepad.mapping` string.
+ * @returns {string|null} A diagnostic message for a non-standard mapping, else null.
+ */
+export function mappingWarning(mapping) {
+  if (isStandardMapping(mapping)) {
+    return null;
+  }
+  const reported = mapping ? `"${mapping}"` : '(empty)';
+  return (
+    `Gamepad reports a non-standard mapping ${reported}; button positions ` +
+    `may not match the standard layout, so the smart-bomb bumpers ` +
+    `(${GAMEPAD_BOMB_BUTTONS.join(', ')}) are a best-effort binding.`
+  );
 }

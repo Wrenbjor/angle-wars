@@ -404,7 +404,7 @@ export class ArenaScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setVisible(false);
     this.gameOverPrompt = this.add
-      .text(cx, cy + 60, 'Press Enter / Space or click to restart    ·    T for Title', {
+      .text(cx, cy + 60, 'Press Enter / Space / gamepad or click to restart    ·    T for Title', {
         font: GAMEOVER_PROMPT_FONT,
         color: COLOR_GAMEOVER_TEXT,
         align: 'center',
@@ -434,6 +434,12 @@ export class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ENTER', restart);
     this.input.keyboard.on('keydown-SPACE', restart);
     this.input.on('pointerdown', restart);
+    // A pad-only player must also be able to restart (DW-31): any gamepad button
+    // routes through the SAME guarded `restart` closure (shared `leaving` latch +
+    // gameOver guard), so it fires only at game over and only once. The gamepad
+    // plugin is present only when enabled in the game config, so it is guarded.
+    // Restart-only by design — the keyboard `T` remains the sole title route.
+    this.input.gamepad?.on('down', restart);
 
     // --- Return to title (Story 5.3 / FR14: no dead ends) -------------------
     // A dedicated `T` key routes from the game-over overlay back to the title,
