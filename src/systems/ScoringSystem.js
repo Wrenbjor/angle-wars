@@ -55,7 +55,11 @@ export class ScoringSystem extends System {
     const killed = this.collisionSystem.killedEnemies;
     for (let i = 0; i < killed.length; i++) {
       // Award at the multiplier in effect for this kill (before any step-up).
-      ss.score += killed[i].score * ss.multiplier;
+      // Skip a non-finite base score so a future scoreless archetype cannot
+      // poison ScoreState.score with NaN.
+      if (Number.isFinite(killed[i].score)) {
+        ss.score += killed[i].score * ss.multiplier;
+      }
       // Advance the streak only while below the cap; frozen once capped.
       if (ss.multiplier < SCORE_MULTIPLIER_MAX) {
         if (++ss.multiplierKills >= SCORE_MULTIPLIER_KILLS_PER_STEP) {

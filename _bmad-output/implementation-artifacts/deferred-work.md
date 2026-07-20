@@ -224,7 +224,8 @@ origin: migrated from legacy ledger (review of spec-3-1-score-multiplier-system.
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-3-1-score-multiplier-system.md`
 location: `ScoringSystem.fixedUpdate` (unguarded `.score` multiply)
 reason: Adversarial and edge-case layers converged. Pre-existing latent gap — the pre-multiplier code (`+= killed[i].score`) had the identical exposure — so it was not introduced by this story, and it is not reachable today (all four current factories carry a numeric `score`). It is real for the seam's stated purpose (every future archetype credits through this one type-agnostic path, per the ScoringSystem contract). Close it when the seam gains its next consumer with a `typeof base === 'number'` guard or a dev-time finite-number assert. Not a defect against this story's literal ACs.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-scoring-award-score-guard
 
 ### DW-27: The load-bearing four-system tick order (Collision→Scoring→BlackHole→Bomb→PlayerDeath) that every Smart-Bombs guarantee rests on — unscored clear (Bomb after Scoring), same-tick rescue (Bomb before PlayerDeath), and a fully-settled score for the +1-bomb award (Bomb after BlackHole) — is asserted only inside `bombIntegration.test.js`'s own hardcoded `runTick`; no test binds it to `ArenaScene`'s real `addSystem` registration order, so a future reorder of `BombSystem` in the scene would pass every test while silently breaking all three guarantees in the running game.
 

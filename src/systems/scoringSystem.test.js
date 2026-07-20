@@ -72,6 +72,34 @@ describe('ScoringSystem', () => {
     system.fixedUpdate(DT);
     expect(scoreState.score).toBe(SEEKER_SCORE);
   });
+
+  it('skips the award for a scoreless kill without poisoning the score with NaN', () => {
+    const { collisionSystem, scoreState, system } = makeSystem();
+    // A hypothetical archetype pooled without a numeric `score` — the guard must
+    // skip the credit rather than award `undefined * m === NaN`.
+    collisionSystem.killedEnemies = [{}];
+    system.fixedUpdate(DT);
+    expect(scoreState.score).toBe(0);
+    expect(Number.isNaN(scoreState.score)).toBe(false);
+    // Per spec Design Notes: the guard wraps only the score credit — a scoreless
+    // kill still advances the multiplier streak (no step crossed here).
+    expect(scoreState.multiplierKills).toBe(1);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+  });
+
+  it('credits only the finite entry on a mixed scoreless + numeric tick', () => {
+    const { collisionSystem, scoreState, system } = makeSystem();
+    // A scoreless entry and a real archetype the same tick: only the finite base
+    // is credited (× the current 1× multiplier); the scoreless entry adds nothing.
+    collisionSystem.killedEnemies = [{}, createSeeker()];
+    system.fixedUpdate(DT);
+    expect(scoreState.score).toBe(SEEKER_SCORE);
+    expect(Number.isNaN(scoreState.score)).toBe(false);
+    // Per spec Design Notes: both entries advance the streak — the scoreless
+    // kill counts toward the multiplier even though its award is skipped.
+    expect(scoreState.multiplierKills).toBe(2);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+  });
 });
 
 describe('ScoringSystem — score multiplier (Story 3.1, FR7/FR8)', () => {
