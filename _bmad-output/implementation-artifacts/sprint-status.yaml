@@ -61,7 +61,7 @@ development_status:
 
   # Epic 4 — Signature Aesthetic & Juice
   epic-4: backlog
-  4-1-neon-vector-art-and-bloom: backlog
+  4-1-neon-vector-art-and-bloom: done
   4-2-deforming-grid-field: backlog
   4-3-pooled-particle-system: backlog
   4-4-screen-juice-and-feedback: backlog

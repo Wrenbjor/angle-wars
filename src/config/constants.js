@@ -419,6 +419,34 @@ export const COLOR_BLACK_HOLE = 0x9933ff;
 // real shockwave aesthetic is Epic 4 — this is a plain stroked circle only.
 export const COLOR_BOMB_SHOCKWAVE = 0xffffff;
 
+// --- Neon aesthetic / bloom (Story 4.1) -------------------------------------
+// The signature Geometry Wars "everything glows and bleeds light" look (NFR4).
+// It is produced two ways, both wired in ArenaScene.create() once (never per
+// frame): (1) the neon vector layers are put into additive blend so bright
+// shapes accumulate light over the near-black COLOR_BACKGROUND, and (2) ONE
+// camera-level Bloom post-FX pass (cameras.main.postFX.addBloom) bleeds that
+// light across the whole frame. Registering bloom once at the camera makes its
+// cost a single screen-space pass independent of entity count — the load-bearing
+// performance decision for the busy-arena 60 FPS target (NFR1). These six values
+// are the addBloom(color, offsetX, offsetY, blurStrength, strength, steps) tuple
+// in that exact order. All are tunable placeholders (tuned post-launch); no
+// inline magic numbers live at the ArenaScene call site.
+// Bloom tint (0xRRGGBB): white keeps every neon hue's own color while adding a
+// bright halo around it.
+export const NEON_BLOOM_COLOR = 0xffffff;
+// Horizontal / vertical bloom offset (Phaser defaults 1). How far the sampled
+// bright pixels are spread when the glow is composited.
+export const NEON_BLOOM_OFFSET_X = 1;
+export const NEON_BLOOM_OFFSET_Y = 1;
+// Blur strength of the bloom pass (Phaser default 1): how soft/wide the halo is.
+export const NEON_BLOOM_BLUR_STRENGTH = 1.2;
+// Blend strength of the bloom pass (Phaser default 1): how intensely the glow is
+// added back over the frame. Slightly above 1 for a visible neon bleed.
+export const NEON_BLOOM_STRENGTH = 1.2;
+// Number of bloom steps (Phaser default 4, must be an integer): more steps = a
+// smoother, wider glow at a higher fill cost. Kept modest to protect NFR1.
+export const NEON_BLOOM_STEPS = 4;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';

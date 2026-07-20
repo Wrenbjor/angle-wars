@@ -69,6 +69,7 @@ import {
   telegraphAlpha,
   telegraphScale,
 } from './telegraphCue.js';
+import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -85,9 +86,11 @@ export class ArenaScene extends Phaser.Scene {
 
   create() {
     // --- Arena border -------------------------------------------------------
-    const g = this.add.graphics();
-    g.lineStyle(ARENA_BORDER_THICKNESS, COLOR_ARENA_BORDER, 1);
-    g.strokeRect(
+    // Kept as an instance ref (this.borderGraphics) so the neon wiring below can
+    // include it in the additive-blend layer list (Story 4.1).
+    this.borderGraphics = this.add.graphics();
+    this.borderGraphics.lineStyle(ARENA_BORDER_THICKNESS, COLOR_ARENA_BORDER, 1);
+    this.borderGraphics.strokeRect(
       ARENA_BORDER_INSET,
       ARENA_BORDER_INSET,
       ARENA_WIDTH - ARENA_BORDER_INSET * 2,
@@ -367,6 +370,34 @@ export class ArenaScene extends Phaser.Scene {
     this.shipSprite.fillPath();
     this.shipSprite.setPosition(this.ship.x, this.ship.y);
     this.shipSprite.rotation = this.ship.angle;
+
+    // --- Neon aesthetic: additive blend + camera bloom (Story 4.1) ----------
+    // View-only. Put every neon vector layer into additive blend so bright
+    // shapes accumulate light over the near-black background (the Geometry Wars
+    // glow), then register ONE camera-level Bloom post-FX pass so bright
+    // elements bleed light across the whole frame. Both are configured ONCE here
+    // (never per frame in update()), preserving the zero-per-frame render
+    // discipline. The gameOverOverlay (a black dimming rect — additive black is
+    // a no-op) and all text objects deliberately stay in NORMAL blend; the
+    // camera bloom still gives text a subtle on-theme glow. Bloom at the camera
+    // is a single screen-space pass whose cost is independent of entity count —
+    // the load-bearing choice for holding 60 FPS in a busy arena (NFR1). The
+    // Phaser.BlendModes.ADD value is injected so neonStyle.js stays Phaser-free.
+    applyAdditiveBlend(
+      [
+        this.shipSprite,
+        this.bulletGraphics,
+        this.seekerGraphics,
+        this.greenSquareGraphics,
+        this.pinwheelGraphics,
+        this.snakeGraphics,
+        this.blackHoleGraphics,
+        this.bombShockwaveGraphics,
+        this.borderGraphics,
+      ],
+      Phaser.BlendModes.ADD,
+    );
+    addNeonBloom(this.cameras.main);
 
     // --- Debug readout ------------------------------------------------------
     this.debugText = this.add.text(
