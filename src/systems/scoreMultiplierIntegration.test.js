@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { ScoringSystem } from './ScoringSystem.js';
-import { PlayerDeathSystem } from './PlayerDeathSystem.js';
-import { Pool } from '../core/Pool.js';
-import { createScoreState } from '../state/ScoreState.js';
+import { buildArenaWorld } from '../scenes/buildArenaWorld.js';
 import { createPlayerState } from '../state/PlayerState.js';
-import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createSeeker } from '../entities/Seeker.js';
 import {
   FIXED_STEP_MS,
@@ -17,39 +13,31 @@ const DT = FIXED_STEP_MS;
 
 // Cross-system integration for the Story 3.1 "keep the points, lose the streak"
 // property. The unit tests exercise ScoringSystem and PlayerDeathSystem in
-// isolation; this file composes the REAL systems over ONE shared ScoreState in
-// the exact fixed-step order ArenaScene drives them (Scoring THEN PlayerDeath).
+// isolation; this file composes the REAL systems (via the shared buildArenaWorld
+// factory — the SAME construction ArenaScene uses) over ONE shared ScoreState and
+// drives only the Scoring THEN PlayerDeath slice of the chain.
 //
 // That ordering is the load-bearing guarantee from the spec's Design Notes: a
 // kill-and-die on the same tick is scored at the pre-death multiplier first, and
-// only then does the death wipe the streak. Phaser-free — a minimal collision
-// stand-in `{ killedEnemies: [...] }` drives scoring (mirroring
-// scoringSystem.test.js), and the death seam reads a real enemy Pool.
+// only then does the death wipe the streak. Phaser-free. Because this file's
+// runTick invokes ONLY scoringSystem → playerDeathSystem, the factory's real
+// collisionSystem never has its fixedUpdate called, so each test drives scoring by
+// assigning `ctx.collisionSystem.killedEnemies = [...]` directly and the value
+// persists across the tick (nothing resets it); the death seam reads the real
+// seeker enemy Pool.
 
-// Build the ship, a seeker death pool, shared player + score state, and the two
-// real systems wired over that ONE shared scoreState (the 4th PlayerDeathSystem
-// arg). The collision stand-in's killedEnemies is set per test.
+// Compose the real chain via the shared factory — the SAME construction (order,
+// pools, late-binds) ArenaScene uses — then pull the handles this file drives.
+// runTick calls ONLY scoring → death, so the factory's real collisionSystem never
+// has its fixedUpdate invoked; each test drives scoring by assigning
+// ctx.collisionSystem.killedEnemies directly (nothing resets it here). The seeker
+// pool is the archetype pool the death seam contacts. Factory used for
+// CONSTRUCTION only.
 function makeComposed() {
-  const ship = createPlayerShip();
-  const collisionSystem = { killedEnemies: [] };
-  const enemyPool = new Pool(createSeeker);
-  const scoreState = createScoreState();
-  const playerState = createPlayerState();
-  const scoringSystem = new ScoringSystem(collisionSystem, scoreState);
-  const playerDeathSystem = new PlayerDeathSystem(
-    ship,
-    [enemyPool],
-    playerState,
-    scoreState, // shared with the scoring system
-  );
+  const ctx = buildArenaWorld();
   return {
-    ship,
-    collisionSystem,
-    enemyPool,
-    scoreState,
-    playerState,
-    scoringSystem,
-    playerDeathSystem,
+    ...ctx,
+    enemyPool: ctx.enemySystem.enemyPool,
   };
 }
 

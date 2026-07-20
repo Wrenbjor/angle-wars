@@ -41,7 +41,8 @@ origin: migrated from legacy ledger (review of spec-1-4-blue-seeker-enemy.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-4-blue-seeker-enemy.md`
 location: `src/scenes/ArenaScene.js` (system registration + collision pools + seeker render), `CollisionSystem`
 reason: Two independent review layers (verification-gap, intent-alignment) converged: the story's ACs are stated at the running-game/integration surface ("the game is running", "a Seeker is on screen", "a player bullet collides with it") while every test operates one layer below at the isolated-primitive surface — `enemySystem.test.js`/`collisionSystem.test.js` construct their own pools and hand-place entities, and no test constructs a `World` with these systems or references `ArenaScene`. A reorder of the `addSystem` calls (Collision before Enemy) or a swapped/wrong pool reference would leave the entire suite green while breaking collision-sees-post-move-positions in-game, and `World.fixedUpdate` (`src/core/World.js:56-64`) itself flags this insertion order as load-bearing. Same deliberately-thin Phaser boundary as the Story 1.1 render-integration and Story 1.2/1.3 sampler deferrals above; closing it needs scene/World integration-harness infrastructure beyond this story's captured intent (orchestrator-owned).
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-6: The `ArenaScene` player-death wiring/render surface — the load-bearing `PlayerDeathSystem`-after-`CollisionSystem` registration order (so a seeker a bullet destroys this tick cannot also kill the player) and the invulnerability blink render (`shipSprite.alpha` derived from `invulnMs`) — has no automated coverage; consider a headless `buildWorld()`/wiring helper asserting system order (a seeker overlapping both a live bullet and the ship, one `fixedUpdate`, seeker released AND life kept — inverting the two `addSystem` calls should fail it), plus an extracted/tested blink-alpha helper.
 
@@ -49,7 +50,8 @@ origin: migrated from legacy ledger (review of spec-1-5-player-death-and-collisi
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-5-player-death-and-collision.md`
 location: `src/scenes/ArenaScene.js` (PlayerDeathSystem registration order + invuln blink render)
 reason: Two review layers (adversarial, verification-gap) converged. `PlayerDeathSystem` must run after `CollisionSystem` (`CollisionSystem.js` releases hit seekers in the same tick; `PlayerDeathSystem` reads the enemy pool after) — a real, load-bearing ordering dependency living only as `addSystem` order in `ArenaScene.js` (which has zero test surface). Every `playerDeathSystem.test.js` case constructs the system standalone over a bare ship + `Pool`, with no `CollisionSystem` and no `World`/`ArenaScene`, so reordering the registration or breaking the render blink formula (`Math.floor(invulnMs / PLAYER_INVULN_BLINK_MS) % 2`, `ArenaScene.js` update loop) would ship green. Same deliberately-thin Phaser/scene boundary as the Story 1.1–1.4 render/wiring deferrals above; closing it needs the same orchestrator-owned scene/World integration harness.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-7: The `ArenaScene` scoring/HUD/game-over integration surface — the load-bearing Collision→Scoring registration order (so `ScoringSystem` reads `collisionSystem.killedSeekers` after `CollisionSystem` fills and resets it), the game-over sim-freeze gate, and the restart-guard input wiring — has no automated coverage; consider a headless `buildWorld()`/wiring helper composing the real `CollisionSystem` + `ScoringSystem` through `World` (a bullet overlapping a seeker, one `fixedUpdate`, `scoreState.score === SEEKER_SCORE`; reversing the two `addSystem` calls should fail it), plus extracted/tested predicates for the freeze gate (`shouldAdvanceSim(playerState)`) and the restart guard.
 
@@ -57,7 +59,8 @@ origin: migrated from legacy ledger (review of spec-1-6-score-and-hud.md), 2026-
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-6-score-and-hud.md`
 location: `src/scenes/ArenaScene.js` (Collision→Scoring order, sim-freeze gate, restart guard)
 reason: Three review layers (adversarial, verification-gap, intent-alignment) converged. `ScoringSystem` is correct only because it is registered after `CollisionSystem`, which resets `killedSeekers` at the top of its own `fixedUpdate` — but `scoringSystem.test.js` stubs the collision system with a hand-built `{ killedSeekers: [...] }` (never the real reset/order), `collisionSystem.test.js` never invokes scoring, and `world.test.js` composes only unrelated recording systems, so a swapped `addSystem` order would credit the prior tick's kills (off-by-one) or drop the final game-over-tick kill while shipping green. Likewise the game-over sim-freeze (`if (!gameOver) world.fixedUpdate(dt)` inside `advance`) and the restart guard (`if (gameOver) scene.restart()`) are inline scene glue with no Phaser-free seam: dropping/inverting either would keep the sim running after death (unstable "final" score) or restart a live run on a mid-run keypress/click, with nothing to catch it. The system-order piece is headlessly testable; the freeze/restart glue is the same deliberately-thin Phaser/scene boundary as the Story 1.1–1.5 render/wiring deferrals above (orchestrator-owned scene/World integration harness).
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-8: The `ArenaScene` green-square wiring/render surface — the load-bearing `GreenSquareSystem`-before-`CollisionSystem` registration order (so a still-active bullet can provoke a nearby square before a hit releases it), the composition of the green-square pool into the `enemyPools` arrays passed to both `CollisionSystem` and `PlayerDeathSystem`, and the green-square render pass — has no automated coverage; consider the same headless `buildWorld()`/wiring harness proposed for Stories 1.4–1.6, extended to assert green squares route through collision (killable/scored), death (lethal, FR6), and render.
 
@@ -65,7 +68,8 @@ origin: migrated from legacy ledger (review of spec-2-1-green-square-enemy.md), 
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-1-green-square-enemy.md`
 location: `src/scenes/ArenaScene.js` + `GreenSquareSystem` (registration order, enemyPools composition, render)
 reason: Verification-gap and adversarial layers converged: the story's ACs are stated at the running-game surface while every test builds its own two-pool arrays (`[seekerPool, greenPool]`) and drives `GreenSquareSystem`/`CollisionSystem`/`PlayerDeathSystem` in isolation. Dropping the green pool from either `enemyPools` array (squares become invincible/unscored, or non-lethal — violating FR6), reordering `GreenSquareSystem` after `CollisionSystem` (near-miss provocation silently weakens because the consuming bullet is gone), or dropping the render pass (invisible) would all leave the suite green. This is the same deliberately-thin Phaser/scene boundary and orchestrator-owned integration-harness deferral logged for Stories 1.1–1.6.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-9: Green-square flee behavior is a straight-line retreat that clamps and parks against the arena wall/corner it flees into, and squares are never despawned or capped, so unshot fleeing squares accumulate at the walls over a run; the PRD's "must be cornered" / AC1's "moving agilely around the arena" agility expectation is not represented — a feel-and-balance item for post-launch tuning (PRD Pillar 3) that is also entangled with the spawn-cap/despawn behavior owned by Story 2.5 (Escalating Spawn Director).
 
@@ -90,7 +94,8 @@ origin: migrated from legacy ledger (review of spec-2-2-pinwheel-wanderer-enemy.
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-2-pinwheel-wanderer-enemy.md`
 location: `src/scenes/ArenaScene.js` + `PinwheelSystem` (registration, enemyPools composition, render)
 reason: Verification-gap and intent-alignment layers converged: the AC2/AC3 tests reconstruct `CollisionSystem`/`PlayerDeathSystem`/`ScoringSystem` by hand over a locally-built `[pinwheelPool]` (proving shape-compatibility with the seams) but nothing exercises `ArenaScene`. Dropping `this.pinwheelSystem.enemyPool` from the `enemyPools` array (pinwheels become invincible/unscored/non-lethal), removing `world.addSystem(this.pinwheelSystem)` (the feature is silently dead — never spawns or moves), or breaking the render pass (invisible) would all leave the full suite green. This is the same deliberately-thin Phaser/scene boundary and orchestrator-owned integration-harness deferral logged for Stories 1.1–2.1.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-12: Pinwheels are never despawned or capped and, being genuinely indifferent to the player, are removed ONLY by a bullet kill, so over a run they accumulate faster than the homing Seeker / fleeing Green Square (which cluster near or get shot by the player); past `PINWHEEL_POOL_PREWARM` (32) the pool grows lazily (one-time factory allocation per new instance — not a per-frame hot-loop allocation) and on-screen clutter/collision cost climb. Separately, a pinwheel whose heading grazes a wall (reachable within the ±`PINWHEEL_WANDER_MAX_TURN_RAD` wander) bounces and slides along the border until the next wander turn redirects it inward — a feel item. Both are post-launch tuning entangled with Story 2.5's spawn cap/despawn and difficulty ramp.
 
@@ -148,7 +153,8 @@ origin: migrated from legacy ledger (review of spec-2-3-snake-enemy.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-3-snake-enemy.md`
 location: `src/scenes/ArenaScene.js` + `SnakeSystem` (registration order, enemyPools, late-bind collisionSystem, render)
 reason: Verification-gap and intent-alignment layers converged: the AC2/AC3 tests reconstruct `CollisionSystem`/`PlayerDeathSystem`/`ScoringSystem` by hand over a locally-built `[segmentPool]` and manually set `system.collisionSystem`, so they prove seam-compatibility but never exercise `ArenaScene`. Dropping the late-bind (splitting silently never happens), omitting the pool from `enemyPools` (snakes non-lethal/unscored), or registering `SnakeSystem` after `CollisionSystem` (reap reads same-tick instead of prior-tick kills) would all leave the full suite green. Same deliberately-thin Phaser/scene boundary and orchestrator-owned integration-harness deferral logged for Stories 1.1–2.2.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-19: `SnakeSystem._spawnOne` pins the new head just inside a random arena edge (`INSET+RADIUS` from the wall) with no check against the ship's current position and acquires it live on the same tick, so a snake head can materialize on top of a border-hugging player for an unavoidable death; the head — unlike the off-border body tail already logged — spawns INSIDE the play border and so can overlap the ship. Safe-spawn placement (avoid the ship's position) plus the pre-active non-lethal telegraph window are explicitly owned by Story 2.6 (Enemy Spawn Telegraph) per the epic.
 
@@ -197,7 +203,8 @@ origin: migrated from legacy ledger (review of spec-2-4-black-hole-hazard.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-4-black-hole-hazard.md`
 location: `src/scenes/ArenaScene.js` (BlackHole registration order, deathPools composition, late-bound collisionSystem)
 reason: Verification-gap and intent-alignment layers converged. This is the same deliberately-thin Phaser/scene integration-harness gap deferred for Stories 1.1–2.3 (no test imports `ArenaScene`; a reordered `addSystem` or an omitted `holePool` would ship green). The intent-alignment layer additionally found the spec Design Notes' blanket rationale ("every mover advances position as `x += …`, never an absolute assignment") is imperfect — `SnakeSystem` absolute-assigns body-segment positions and `GreenSquare`/`Pinwheel` absolute-assign on wall clamp — yet the AC1 observable (ship/enemies/bullets are pulled toward the well) still holds for every archetype because the snake HEAD integrates and the body follows it, and the absolute-assigns are wall-clamp edge writes, not the steady path. Closing both needs the orchestrator-owned scene/World integration harness (and, optionally, a headless mover+BlackHoleSystem tick test); the observable is satisfied, so this is a coverage/rationale-accuracy gap, not a functional defect against the ACs.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-25: The `SpawnDirector`'s load-bearing `ArenaScene` wiring has no automated coverage — the registration order (director added AFTER `SnakeSystem`, BEFORE `CollisionSystem`, so a director-spawned enemy is present but un-moved for this tick's collision, reproducing the old self-spawn timing), the mapping of the eight `SPAWN_DIRECTOR_*` weight constants onto the correct four archetypes, and reset-by-reconstruction on `scene.restart()` (AC3) are verified only by unit tests on a bare director over fakes plus `npm run build` and a manual run. A reordered `addSystem`, a base/peak weight swapped onto the wrong archetype, or a regression that made the director persist across restart (defeating the ramp reset) would ship green.
 
@@ -205,7 +212,8 @@ origin: migrated from legacy ledger (review of spec-2-5-escalating-spawn-directo
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-5-escalating-spawn-director.md`
 location: `src/scenes/ArenaScene.js` + `SpawnDirector` (registration order, weight→archetype mapping, restart reset)
 reason: Adversarial, verification-gap, and intent-alignment layers converged. This is the same deliberately-thin Phaser/scene integration-harness gap deferred for Stories 1.1–2.4 (no test imports `ArenaScene`). The AC3 reset test builds a second fresh director and asserts the base ramp — the constructor surface, not the `scene.restart()` lifecycle surface where the intent lives — which the spec Design Notes explicitly acknowledge as the unit-level proxy for reset-by-reconstruction; the real `create()`/`scene.restart()` path is present and correct (ArenaScene construct + restart) but only build/manual-verified. Closing it needs the orchestrator-owned scene/World integration harness (a world-order assertion that the director sits between Snake and Collision, and a restart smoke test). Not a defect against this story's literal ACs.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-26: The shared per-kill scoring seam (`ScoringSystem.fixedUpdate`) computes `killedEnemies[i].score * multiplier` with no guard on `.score`; a future enemy archetype pooled without a numeric `score` field would make the award `NaN` and permanently poison `ScoreState.score` (the HUD and game-over screen then render `NaN` for the rest of the run).
 
@@ -221,7 +229,8 @@ origin: migrated from legacy ledger (review of spec-3-2-smart-bombs.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-3-2-smart-bombs.md`
 location: `src/scenes/ArenaScene.js` (BombSystem registration order) vs `bombIntegration.test.js`
 reason: Verification-gap layer flagged it as the strongest gap (broken-verification-gap); adversarial and intent-alignment layers corroborated that the whole feature's correctness hinges on placement. Same deliberately-thin Phaser/scene integration-harness gap deferred for Stories 1.1–3.1 (no test imports `ArenaScene`; its `addSystem` order is unverified repo-wide). Closing it needs the orchestrator-owned scene/World integration harness — most cleanly a single shared ordered-system factory that both `ArenaScene` and `bombIntegration.test.js` consume, so a scene reorder fails a test (a refactor, not a trivial patch). Not a defect against this story's literal ACs; the code is currently correct and the behavior (given the order) is fully covered.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-28: ExtraLifeSystem's load-bearing tick placement (after Scoring/BlackHole/Bomb so the milestone award reads a fully-settled score, before PlayerDeath so an earned life is banked ahead of the death check → the last-life same-tick rescue) is asserted only inside `extraLifeIntegration.test.js`'s own hardcoded `runTick`; no test binds it to `ArenaScene`'s real `addSystem` registration order, so a future reorder of `ExtraLifeSystem` in the scene would pass every test while silently breaking the settled-score award and the same-tick rescue in the running game.
 
@@ -229,7 +238,8 @@ origin: migrated from legacy ledger (review of spec-3-3-extra-lives.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-3-3-extra-lives.md`
 location: `src/scenes/ArenaScene.js` (ExtraLifeSystem registration order) vs `extraLifeIntegration.test.js`
 reason: Verification-gap and adversarial layers converged on this as the strongest gap (regression-gap). It is the SAME repo-wide untested-Phaser-scene integration gap already deferred for Stories 1.1–3.2 (no test imports `ArenaScene`; its `addSystem` order is unverified everywhere). Closing it needs the orchestrator-owned scene/World integration harness — most cleanly one shared ordered-system factory that both `ArenaScene` and the integration tests consume, so a scene reorder fails a test (a refactor, not a trivial patch). Not a defect against this story's literal ACs; the code is currently correct (verified: BlackHole registered at ArenaScene 241 < ExtraLife 295 < PlayerDeath 305) and the behavior (given the order) is covered by the hand-built chain.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-29: HighScoreSystem's load-bearing tick placement (registered AFTER PlayerDeathSystem so it observes `gameOver` on the same tick a last-life contact latches it — before the `if (!gameOver) world.fixedUpdate` gate freezes the world next tick — and persists the beaten score) is asserted only inside `highScoreIntegration.test.js`'s own hardcoded `runTick`; no test binds it to `ArenaScene`'s real `addSystem` registration order, so a future reorder of `HighScoreSystem` before `PlayerDeathSystem` would pass every test while silently shipping a game that never persists the high score (the system would see `gameOver=false` on the latching tick, then never run again once the gate engages).
 
@@ -237,7 +247,8 @@ origin: migrated from legacy ledger (review of spec-3-4-persistent-high-score.md
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-3-4-persistent-high-score.md`
 location: `src/scenes/ArenaScene.js` (HighScoreSystem registration order) vs `highScoreIntegration.test.js`
 reason: Verification-gap layer flagged it CONFIRMED as the strongest gap (broken-verification-gap); adversarial layer corroborated. It is the SAME repo-wide untested-Phaser-scene integration gap already deferred for Stories 1.1–3.3 (no test imports `ArenaScene`; its `addSystem` order is unverified everywhere — `grep` for ArenaScene imports returns only `src/main.js`). Closing it needs the orchestrator-owned scene/World integration harness — most cleanly one shared ordered-system factory that both `ArenaScene` and the integration tests consume, so a scene reorder fails a test (a refactor, not a trivial patch; importing `ArenaScene` in a node/no-jsdom test is not viable — `create()` needs a full Phaser scene context). Not a defect against this story's literal ACs; the code is currently correct (verified: PlayerDeath registered at ArenaScene.js:307 < HighScore at :326) and the behavior (given the order) is covered by the hand-built chain.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-arena-world-wiring-harness
 
 ### DW-30: The Story 4.4 juice adds a full-screen white flash (peak alpha 1) and a camera shake on every bomb detonation and player death, with no reduced-motion / flash-off / juice-intensity setting anywhere — a photosensitivity and motion-sickness accessibility gap (WCAG 2.3.1 territory) with no escape hatch for affected players.
 

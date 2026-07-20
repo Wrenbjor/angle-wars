@@ -1,16 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CollisionSystem } from './CollisionSystem.js';
-import { ScoringSystem } from './ScoringSystem.js';
-import { BlackHoleSystem } from './BlackHoleSystem.js';
-import { BombSystem } from './BombSystem.js';
-import { PlayerDeathSystem } from './PlayerDeathSystem.js';
-import { Pool } from '../core/Pool.js';
-import { InputState } from '../input/InputState.js';
-import { createScoreState } from '../state/ScoreState.js';
-import { createPlayerState } from '../state/PlayerState.js';
-import { createPlayerShip } from '../entities/PlayerShip.js';
-import { createSeeker } from '../entities/Seeker.js';
-import { createBullet } from '../entities/Bullet.js';
+import { buildArenaWorld } from '../scenes/buildArenaWorld.js';
 import {
   FIXED_STEP_MS,
   PLAYER_START_LIVES,
@@ -40,57 +29,19 @@ function seqRng(values) {
   return () => values[i++ % values.length];
 }
 
-// Compose the real five-system chain over one shared state. The seeker pool is
-// the single archetype pool the bomb/collision/death seams share; the Black Hole
-// owns its own holePool (deliberately NOT in enemyPools) and the death seam sees
-// [...enemyPools, holePool], mirroring ArenaScene.
+// Compose the real chain via the shared factory — the SAME construction (order,
+// pools, late-binds) ArenaScene uses — then pull the handles this file drives.
+// The seeker pool is the archetype pool the bomb/collision/death seams share;
+// the Black Hole owns its own holePool (deliberately NOT in enemyPools) and the
+// death seam sees [...enemyPools, holePool], mirroring ArenaScene. runTick drives
+// a curated subset over hand-placed entities, so the factory is used for
+// CONSTRUCTION only (world.fixedUpdate is never invoked here).
 function makeComposed() {
-  const ship = createPlayerShip();
-  const inputState = new InputState();
-  const bulletPool = new Pool(createBullet);
-  const enemyPool = new Pool(createSeeker);
-  const enemyPools = [enemyPool];
-  const scoreState = createScoreState();
-  const playerState = createPlayerState();
-
-  const collisionSystem = new CollisionSystem(bulletPool, enemyPools);
-  const scoringSystem = new ScoringSystem(collisionSystem, scoreState);
-  const blackHoleSystem = new BlackHoleSystem(
-    ship,
-    bulletPool,
-    enemyPools,
-    enemyPool, // spawn pool for fed seekers (irrelevant here)
-    scoreState,
-    seqRng([0.5, 0.5]),
-  );
-  blackHoleSystem.collisionSystem = collisionSystem;
-  const bombSystem = new BombSystem(
-    inputState,
-    enemyPools,
-    collisionSystem,
-    scoreState,
-    ship,
-  );
-  const deathPools = [...enemyPools, blackHoleSystem.holePool];
-  const playerDeathSystem = new PlayerDeathSystem(
-    ship,
-    deathPools,
-    playerState,
-    scoreState,
-  );
-
+  const ctx = buildArenaWorld({ rng: seqRng([0.5, 0.5]) });
   return {
-    ship,
-    inputState,
-    bulletPool,
-    enemyPool,
-    scoreState,
-    playerState,
-    collisionSystem,
-    scoringSystem,
-    blackHoleSystem,
-    bombSystem,
-    playerDeathSystem,
+    ...ctx,
+    bulletPool: ctx.firingSystem.bulletPool,
+    enemyPool: ctx.enemySystem.enemyPool,
   };
 }
 

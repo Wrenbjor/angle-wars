@@ -1,18 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CollisionSystem } from './CollisionSystem.js';
-import { ScoringSystem } from './ScoringSystem.js';
-import { BlackHoleSystem } from './BlackHoleSystem.js';
-import { BombSystem } from './BombSystem.js';
-import { ExtraLifeSystem } from './ExtraLifeSystem.js';
-import { PlayerDeathSystem } from './PlayerDeathSystem.js';
-import { HighScoreSystem } from './HighScoreSystem.js';
-import { Pool } from '../core/Pool.js';
-import { InputState } from '../input/InputState.js';
-import { createScoreState } from '../state/ScoreState.js';
-import { createPlayerState } from '../state/PlayerState.js';
-import { createPlayerShip } from '../entities/PlayerShip.js';
-import { createSeeker } from '../entities/Seeker.js';
-import { createBullet } from '../entities/Bullet.js';
+import { buildArenaWorld } from '../scenes/buildArenaWorld.js';
 import { FIXED_STEP_MS } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -54,58 +41,24 @@ function makeFakePort(stored = 0) {
   };
 }
 
+// Compose the real chain via the shared factory — the SAME construction (order,
+// pools, late-binds) ArenaScene uses — injecting the fake high-score port so the
+// HighScoreSystem (registered LAST, after PlayerDeathSystem — the placement under
+// test) persists through it. This also fixes the prior drift where
+// PlayerDeathSystem was hand-wired with enemyPools; the factory wires it with
+// deathPools ([...enemyPools, holePool]). runTick drives a curated subset over
+// hand-placed entities, so the factory is used for CONSTRUCTION only.
 function makeComposed({ storedHigh = 0 } = {}) {
-  const ship = createPlayerShip();
-  const inputState = new InputState();
-  const bulletPool = new Pool(createBullet);
-  const enemyPool = new Pool(createSeeker);
-  const enemyPools = [enemyPool];
-  const scoreState = createScoreState();
-  const playerState = createPlayerState();
   const port = makeFakePort(storedHigh);
-
-  const collisionSystem = new CollisionSystem(bulletPool, enemyPools);
-  const scoringSystem = new ScoringSystem(collisionSystem, scoreState);
-  const blackHoleSystem = new BlackHoleSystem(
-    ship,
-    bulletPool,
-    enemyPools,
-    enemyPool,
-    scoreState,
-    seqRng([0.5, 0.5]),
-  );
-  blackHoleSystem.collisionSystem = collisionSystem;
-  const bombSystem = new BombSystem(
-    inputState,
-    enemyPools,
-    collisionSystem,
-    scoreState,
-    ship,
-  );
-  const extraLifeSystem = new ExtraLifeSystem(scoreState, playerState);
-  const playerDeathSystem = new PlayerDeathSystem(
-    ship,
-    enemyPools,
-    playerState,
-    scoreState,
-  );
-  // Registered LAST, after PlayerDeathSystem — the placement under test.
-  const highScoreSystem = new HighScoreSystem(scoreState, playerState, port);
-
+  const ctx = buildArenaWorld({
+    rng: seqRng([0.5, 0.5]),
+    highScoreStorage: port,
+  });
   return {
-    ship,
-    bulletPool,
-    enemyPool,
-    scoreState,
-    playerState,
+    ...ctx,
     port,
-    collisionSystem,
-    scoringSystem,
-    blackHoleSystem,
-    bombSystem,
-    extraLifeSystem,
-    playerDeathSystem,
-    highScoreSystem,
+    bulletPool: ctx.firingSystem.bulletPool,
+    enemyPool: ctx.enemySystem.enemyPool,
   };
 }
 

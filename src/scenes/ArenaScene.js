@@ -30,14 +30,6 @@ import {
   COLOR_PAUSE_TEXT,
   PAUSE_TITLE_FONT,
   PAUSE_PROMPT_FONT,
-  SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
-  SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
-  SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
-  SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT,
-  SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT,
-  SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
-  SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
-  SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_TELEGRAPH_MIN_ALPHA,
   SPAWN_TELEGRAPH_MIN_SCALE,
@@ -47,29 +39,9 @@ import {
   SCREEN_FLASH_MS,
   COLOR_SCREEN_FLASH,
 } from '../config/constants.js';
-import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
-import { SimClockSystem } from '../systems/SimClockSystem.js';
-import { createPlayerShip } from '../entities/PlayerShip.js';
-import { InputState } from '../input/InputState.js';
+import { buildArenaWorld } from './buildArenaWorld.js';
 import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
-import { PlayerMovementSystem } from '../systems/PlayerMovementSystem.js';
-import { FiringSystem } from '../systems/FiringSystem.js';
-import { EnemySystem } from '../systems/EnemySystem.js';
-import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
-import { PinwheelSystem } from '../systems/PinwheelSystem.js';
-import { SnakeSystem } from '../systems/SnakeSystem.js';
-import { SpawnDirector } from '../systems/SpawnDirector.js';
-import { CollisionSystem } from '../systems/CollisionSystem.js';
-import { ScoringSystem } from '../systems/ScoringSystem.js';
-import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
-import { BombSystem } from '../systems/BombSystem.js';
-import { ExtraLifeSystem } from '../systems/ExtraLifeSystem.js';
-import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
-import { HighScoreSystem } from '../systems/HighScoreSystem.js';
-import { createHighScoreStorage } from '../persistence/highScoreStorage.js';
-import { createPlayerState } from '../state/PlayerState.js';
-import { createScoreState } from '../state/ScoreState.js';
 import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
 import {
   spawnTelegraphProgress,
@@ -83,17 +55,13 @@ import {
   buildGridUniforms,
   packGridUniforms,
 } from './gridField.js';
-import { GridFieldSystem } from '../systems/GridFieldSystem.js';
-import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { particleAlpha } from './particleStyle.js';
-import { ScreenFeedbackSystem } from '../systems/ScreenFeedbackSystem.js';
 import {
   shakeOffsetX,
   shakeOffsetY,
   flashAlpha,
   decayTrauma,
 } from './screenShake.js';
-import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 import { AudioEngine } from '../audio/audioEngine.js';
 import { createSettingsStorage } from '../persistence/settingsStorage.js';
 import { FLOW_STATES, FLOW_EVENTS, nextFlowState, sceneForState } from './gameFlow.js';
@@ -159,310 +127,55 @@ export class ArenaScene extends Phaser.Scene {
     // The fixed-timestep accumulator releases banked render time to the world
     // in constant FIXED_STEP_MS slices; the spiral guard caps catch-up steps.
     this.fixedTimestep = new FixedTimestep(FIXED_STEP_MS, MAX_SUB_STEPS);
-    this.world = new World();
-    // SimClockSystem gives the pipeline a real, observable job (tick counting).
-    this.simClock = new SimClockSystem();
-    this.world.addSystem(this.simClock);
+    // Build the entire simulation world — World + ship + input + states + pools
+    // + the 19 systems in canonical registration order, with both load-bearing
+    // late-binds — via the shared, Phaser-free factory. The scene assigns each
+    // returned handle onto this.* (the render loop below reads them) and keeps all
+    // Phaser/render setup (graphics, input sampler, audio engine, FixedTimestep)
+    // inline. The factory is the seam that makes the load-bearing wiring headlessly
+    // assertable (buildArenaWorld.test.js); create() cannot be unit-tested because
+    // it needs a live Phaser context.
+    const arena = buildArenaWorld();
+    this.world = arena.world;
+    this.ship = arena.ship;
+    this.inputState = arena.inputState;
+    this.scoreState = arena.scoreState;
+    this.playerState = arena.playerState;
+    this.enemyPools = arena.enemyPools;
+    this.deathPools = arena.deathPools;
+    this.highScoreStorage = arena.highScoreStorage;
+    this.simClock = arena.simClock;
+    this.playerMovementSystem = arena.playerMovementSystem;
+    this.firingSystem = arena.firingSystem;
+    this.enemySystem = arena.enemySystem;
+    this.greenSquareSystem = arena.greenSquareSystem;
+    this.pinwheelSystem = arena.pinwheelSystem;
+    this.snakeSystem = arena.snakeSystem;
+    this.spawnDirector = arena.spawnDirector;
+    this.collisionSystem = arena.collisionSystem;
+    this.scoringSystem = arena.scoringSystem;
+    this.blackHoleSystem = arena.blackHoleSystem;
+    this.bombSystem = arena.bombSystem;
+    this.extraLifeSystem = arena.extraLifeSystem;
+    this.playerDeathSystem = arena.playerDeathSystem;
+    this.highScoreSystem = arena.highScoreSystem;
+    this.gridFieldSystem = arena.gridFieldSystem;
+    this.particleSystem = arena.particleSystem;
+    this.screenFeedbackSystem = arena.screenFeedbackSystem;
+    this.audioDirector = arena.audioDirector;
 
-    // --- Player -------------------------------------------------------------
-    // The ship is a plain entity moved by the (Phaser-free) movement system
-    // inside the fixed-timestep loop. Input is sampled at render rate into a
-    // shared InputState the movement system reads at sim rate.
-    this.ship = createPlayerShip();
-    this.world.addEntity(this.ship);
-    this.inputState = new InputState();
+    // Input sampler + placeholder graphics relocated here from inside the old
+    // inline world build (the factory is Phaser-free, so these scene-only Phaser
+    // concerns cannot live in it). Kept in their original creation order so the
+    // display-object depth/z-order is unchanged: the input sampler (not a display
+    // object), then the bullet, bomb-shockwave, and particle graphics — all after
+    // the grid/border layers and before the enemy layers below. Each is cleared
+    // and redrawn each render frame from its owning system's pool (Epic 4 replaces
+    // these placeholders with the real aesthetic).
     this.inputSampler = new PlayerInputSampler(this, this.inputState, this.ship);
-    this.world.addSystem(new PlayerMovementSystem(this.ship, this.inputState));
-
-    // --- Firing -------------------------------------------------------------
-    // Added after movement so bullets spawn from the ship's post-move position
-    // this tick. Owns its own bullet pool (not world.entities); ArenaScene only
-    // reads that pool to render, never runs firing math in the render callback.
-    this.firingSystem = new FiringSystem(this.ship, this.inputState);
-    this.world.addSystem(this.firingSystem);
-    // Bullets are placeholder vector circles, cleared and redrawn each render
-    // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.bulletGraphics = this.add.graphics();
-
-    // --- Enemies ------------------------------------------------------------
-    // EnemySystem must run after PlayerMovementSystem so seekers home toward the
-    // ship's post-move position this tick (firing does not move the ship);
-    // CollisionSystem must run after both FiringSystem and EnemySystem so it sees
-    // post-move bullet and seeker positions. Both own no world entities — the
-    // enemy pool is the single source of active/free truth, read here only to
-    // render (never sim in render).
-    this.enemySystem = new EnemySystem(this.ship);
-    this.world.addSystem(this.enemySystem);
-    // GreenSquareSystem owns its own pool-per-archetype (never merged into the
-    // Seeker pool). It runs after EnemySystem and BEFORE CollisionSystem so a
-    // provoking latch (bullet within the threat radius) is recorded before a hit
-    // can release the square; it reads the bullet pool for that threat detection.
-    this.greenSquareSystem = new GreenSquareSystem(
-      this.ship,
-      this.firingSystem.bulletPool,
-    );
-    this.world.addSystem(this.greenSquareSystem);
-    // PinwheelSystem owns its own pool-per-archetype (never merged into another
-    // enemy pool). It runs after GreenSquareSystem and BEFORE CollisionSystem, and
-    // is INDIFFERENT to the player — its constructor takes only an rng (no ship,
-    // no bullet pool). Its trajectory is a constant-speed wandering drift that
-    // bounces off the walls, never referencing the ship.
-    this.pinwheelSystem = new PinwheelSystem();
-    this.world.addSystem(this.pinwheelSystem);
-    // SnakeSystem owns its own shared segment pool-per-archetype (never merged
-    // into another enemy pool). It runs after PinwheelSystem and BEFORE
-    // CollisionSystem, and is INDIFFERENT to the player — its constructor takes
-    // only an rng (no ship, no bullet pool). It reads collisionSystem.killedEnemies
-    // (late-bound below, after that system exists) only to split the chain where a
-    // segment was destroyed the prior tick.
-    this.snakeSystem = new SnakeSystem();
-    this.world.addSystem(this.snakeSystem);
-    // SpawnDirector is the SOLE spawn authority for the four combat archetypes
-    // (each no longer self-spawns). It is added AFTER SnakeSystem and BEFORE
-    // CollisionSystem so a fresh enemy exists for this tick's collision/death
-    // exactly as the old end-of-update self-spawn did (spawned but un-moved this
-    // tick). It owns the escalating ramp (interval floor + mix interpolation) and
-    // the global active cap; a fresh instance each run (scene.restart) resets it
-    // to the base ramp. Default rng (run-scoped randomness).
-    this.spawnDirector = new SpawnDirector(
-      [
-        {
-          system: this.enemySystem,
-          baseWeight: SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
-          peakWeight: SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
-        },
-        {
-          system: this.greenSquareSystem,
-          baseWeight: SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
-          peakWeight: SPAWN_DIRECTOR_GREEN_PEAK_WEIGHT,
-        },
-        {
-          system: this.pinwheelSystem,
-          baseWeight: SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT,
-          peakWeight: SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
-        },
-        {
-          system: this.snakeSystem,
-          baseWeight: SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
-          peakWeight: SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
-        },
-      ],
-      // Default rng (run-scoped randomness); pass the ship so the director keeps
-      // every spawn point ≥ SPAWN_SAFE_RADIUS from the player (Story 2.6). The
-      // avoid point flows only as a spawn() argument — Pinwheel/Snake never store
-      // the ship and stay player-indifferent in their motion.
-      undefined,
-      this.ship,
-    );
-    this.world.addSystem(this.spawnDirector);
-    // The shared collision seam sees ALL archetype pools as an array, so a bullet
-    // can destroy any enemy through one path (no per-type duplicate).
-    this.enemyPools = [
-      this.enemySystem.enemyPool,
-      this.greenSquareSystem.enemyPool,
-      this.pinwheelSystem.enemyPool,
-      this.snakeSystem.enemyPool,
-    ];
-    this.collisionSystem = new CollisionSystem(
-      this.firingSystem.bulletPool,
-      this.enemyPools,
-    );
-    this.world.addSystem(this.collisionSystem);
-    // Late-bind the collision system into the SnakeSystem now that it exists (the
-    // segment pool had to be constructed first so the collision system could
-    // reference it). Until this is set the snake's split reap is a guarded no-op.
-    this.snakeSystem.collisionSystem = this.collisionSystem;
-
-    // --- Scoring ------------------------------------------------------------
-    // ScoringSystem runs immediately after CollisionSystem so this tick's kills
-    // (collisionSystem.killedEnemies) are already recorded, and before
-    // PlayerDeathSystem — order: …→ Collision → Scoring → PlayerDeath. It owns
-    // no pool; it credits each killed enemy's own base value (any archetype)
-    // into the shared ScoreState the HUD/game-over screen read. Rebuilt from
-    // zero on restart.
-    this.scoreState = createScoreState();
-    this.scoringSystem = new ScoringSystem(this.collisionSystem, this.scoreState);
-    this.world.addSystem(this.scoringSystem);
-
-    // --- Black Hole hazard --------------------------------------------------
-    // The Black Hole is a stationary, HP-based destructible — not a one-hit
-    // enemy. It runs AFTER ScoringSystem (so absorbed enemies it appends to
-    // collisionSystem.killedEnemies are removed but NOT scored) and BEFORE
-    // PlayerDeathSystem (so its holePool joins the death list below). It owns its
-    // own prewarmed holePool; it pulls the ship + bullets + enemies, feeds on and
-    // is damaged by bullets, absorbs enemies (through the same killedEnemies seam
-    // a bullet kill uses), grows + emits seekers at the edge, and on death credits
-    // BLACKHOLE_SCORE directly to the shared ScoreState (created above). The
-    // spawn target for fed seekers is the shared Seeker pool.
-    this.blackHoleSystem = new BlackHoleSystem(
-      this.ship,
-      this.firingSystem.bulletPool,
-      this.enemyPools,
-      this.enemySystem.enemyPool,
-      this.scoreState,
-    );
-    this.world.addSystem(this.blackHoleSystem);
-    // Late-bind the collision system now that it exists (the hole pool had to be
-    // constructed first). Until this is set, enemy absorption is a guarded no-op;
-    // gravity and bullet feed still run.
-    this.blackHoleSystem.collisionSystem = this.collisionSystem;
-
-    // --- Smart bombs (Story 3.2) --------------------------------------------
-    // BombSystem runs AFTER ScoringSystem + BlackHoleSystem and BEFORE
-    // PlayerDeathSystem — the load-bearing tick position: (a) bomb-cleared enemies
-    // it appends to collisionSystem.killedEnemies are removed but NOT scored (they
-    // never reach the multiplier), (b) the score it reads for the +1-bomb 100k
-    // award is fully settled this tick (it catches the black-hole payout too), and
-    // (c) the clear removes enemies before the death check, so a bomb genuinely
-    // rescues the player from an otherwise-lethal contact this tick — but ONLY
-    // for the four cleared archetype pools; the Black Hole is NOT cleared and
-    // stays lethal through a detonation. It consumes the latched bomb request from
-    // the shared InputState, clears the four archetype pools (never the Black
-    // Hole), and drives the placeholder shockwave.
-    this.bombSystem = new BombSystem(
-      this.inputState,
-      this.enemyPools,
-      this.collisionSystem,
-      this.scoreState,
-      this.ship,
-    );
-    this.world.addSystem(this.bombSystem);
-    // The placeholder expanding shockwave ring, cleared and redrawn each render
-    // frame from the BombSystem's sim-side countdown. Epic 4 replaces this with
-    // the real shockwave + screen-shake aesthetic.
     this.bombShockwaveGraphics = this.add.graphics();
-
-    // --- Player death / lives -----------------------------------------------
-    // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
-    // bullet this tick is already released and cannot also kill the player. It
-    // reads the ship, the enemy pools, and the shared PlayerState (lives,
-    // invulnerability, game-over), which the render loop reads for the blink.
-    // The Black Hole is lethal on contact too, so its holePool is appended to the
-    // death list here (that seam reads only {x,y,radius} and never destroys the
-    // collider) — but it is deliberately NOT in the CollisionSystem list above,
-    // since one bullet must not one-shot a multi-hit hole.
-    this.playerState = createPlayerState();
-
-    // --- Extra lives (Story 3.3) --------------------------------------------
-    // ExtraLifeSystem runs AFTER ScoringSystem + BlackHoleSystem + BombSystem and
-    // BEFORE PlayerDeathSystem — the load-bearing tick position: (a) the score it
-    // reads for the milestone award is fully settled this tick (it catches a kill's
-    // award AND the black-hole payout with no one-tick lag), and (b) a life earned
-    // this tick is banked before the death check, so a threshold-crossing kill on
-    // the last life rescues the player from an otherwise-fatal contact this same
-    // tick (1→2 award, then 2→1 death, respawn) — symmetric to a bomb clearing
-    // enemies before the death check. It reads scoreState.score (never writes it)
-    // and only ADDS to PlayerState.lives, the same counter deaths decrement; the
-    // HUD already renders LIVES from that field, so no render change is needed.
-    this.extraLifeSystem = new ExtraLifeSystem(this.scoreState, this.playerState);
-    this.world.addSystem(this.extraLifeSystem);
-
-    this.deathPools = [...this.enemyPools, this.blackHoleSystem.holePool];
-    this.playerDeathSystem = new PlayerDeathSystem(
-      this.ship,
-      this.deathPools,
-      this.playerState,
-      // Story 3.1: the death seam resets the run multiplier on every death.
-      this.scoreState,
-    );
-    this.world.addSystem(this.playerDeathSystem);
-
-    // --- Persistent high score (Story 3.4) ----------------------------------
-    // HighScoreSystem is registered LAST — AFTER PlayerDeathSystem — the
-    // load-bearing tick position: PlayerDeathSystem sets playerState.gameOver
-    // during its own fixedUpdate, and the world gate (`if (!gameOver)
-    // world.fixedUpdate(dt)` below) only stops systems on the NEXT tick, so
-    // running last lets this system observe game-over on the very tick it latches
-    // and persist the high score then. On all later ticks the world is gated off,
-    // and an internal write-once latch makes the save idempotent regardless. It
-    // reads scoreState.score + playerState.gameOver (never writes either) and
-    // funnels all localStorage access through the guarded port, which degrades to
-    // a no-op when the store is unavailable so persistence never breaks the run.
-    this.highScoreStorage = createHighScoreStorage();
-    this.highScoreSystem = new HighScoreSystem(
-      this.scoreState,
-      this.playerState,
-      this.highScoreStorage,
-    );
-    this.world.addSystem(this.highScoreSystem);
-
-    // --- Deforming grid field system (Story 4.2) ----------------------------
-    // Registered LAST — after HighScoreSystem — so within every fixed tick each
-    // input it reads is already final: collisionSystem.bulletKillCount (this tick's
-    // bullet kills, before BlackHole/Bomb appends), bombSystem's shockwave latch,
-    // playerDeathSystem's death latch, and blackHoleSystem.holePool. It owns a
-    // bounded ripple pool + a single warp target and only writes its own state (no
-    // gameplay effect); the render loop packs that state into the grid shader's
-    // uniforms. A fresh instance each run (scene.restart) resets the grid to calm.
-    this.gridFieldSystem = new GridFieldSystem(
-      this.collisionSystem,
-      this.bombSystem,
-      this.playerDeathSystem,
-      this.blackHoleSystem.holePool,
-    );
-    this.world.addSystem(this.gridFieldSystem);
-
-    // --- Pooled particle system (Story 4.3) ---------------------------------
-    // Registered LAST — after GridFieldSystem — so within every fixed tick each
-    // input it reads is already final: collisionSystem.bulletKillCount/bulletKillX/Y
-    // (this tick's bullet kills only, with recycle-proof kill-time snapshots — the
-    // SAME source the grid ripple reads), the post-move ship position/facing, and
-    // the render-sampled inputState move intent. It owns its own particle Pool and
-    // ONLY mutates that pool (no gameplay effect — a pure read-only observer). A
-    // fresh instance each run (scene.restart) resets particles to none, matching
-    // GridFieldSystem. The render loop draws its active pool as additive neon dots.
-    this.particleSystem = new ParticleSystem(
-      this.collisionSystem,
-      this.ship,
-      this.inputState,
-    );
-    this.world.addSystem(this.particleSystem);
-    // Particles are additive-blend neon dots, cleared and redrawn each render frame
-    // from the active pool (per-particle color + particleAlpha-derived alpha). Zero
-    // per-frame allocation (mirrors the bullet render). Glows under the camera Bloom.
     this.particleGraphics = this.add.graphics();
-
-    // --- Screen juice & feedback system (Story 4.4) -------------------------
-    // Registered LAST — after ParticleSystem — so within every fixed tick each input
-    // it reads is already final: collisionSystem.bulletKillCount (this tick's bullet
-    // kills, the subtle per-kill nudge — the SAME source the grid ripple / particles
-    // read), the bombSystem shockwave rising edge (bomb big event), the
-    // playerDeathSystem.deathSeq increment (death big event), and the post-move ship
-    // + enemy positions (the near-miss proximity scan). It is a PURE read-only
-    // observer — it mutates ONLY its own latch fields (no pool, entity, score, life,
-    // or death state). The render loop below consumes its latches into real-time
-    // countdowns that drive the camera shake, the flash overlay, and the hit-stop
-    // freeze. A fresh instance each run (scene.restart) resets the juice to calm,
-    // matching GridFieldSystem / ParticleSystem.
-    this.screenFeedbackSystem = new ScreenFeedbackSystem(
-      this.collisionSystem,
-      this.bombSystem,
-      this.playerDeathSystem,
-      this.ship,
-      this.enemyPools,
-    );
-    this.world.addSystem(this.screenFeedbackSystem);
-
-    // --- Sound & adaptive music system (Story 4.5) --------------------------
-    // Registered LAST — after ScreenFeedbackSystem — so within every fixed tick each
-    // event source it reads is already final: firingSystem.shotsFiredCount (fire),
-    // collisionSystem.bulletKillCount (kill — the SAME source the grid ripple /
-    // particles / screen juice read), spawnDirector.spawnCount (spawn), the bombSystem
-    // shockwave rising edge (bomb), the playerDeathSystem.deathSeq increment (death),
-    // and the spawnDirector difficulty ramp (musicIntensity). It is a PURE read-only
-    // observer — it mutates ONLY its own latch fields (no pool, entity, score, life,
-    // death, or spawn state). The render loop below consumes its SFX latches (capped
-    // per type) into engine blips and maps musicIntensity → per-layer music gains. A
-    // fresh instance each run (scene.restart) resets the audio cues to calm, matching
-    // GridFieldSystem / ParticleSystem / ScreenFeedbackSystem.
-    this.audioDirector = new AudioDirectorSystem(
-      this.firingSystem,
-      this.collisionSystem,
-      this.bombSystem,
-      this.playerDeathSystem,
-      this.spawnDirector,
-    );
-    this.world.addSystem(this.audioDirector);
 
     // --- Audio engine + settings (Story 4.5) --------------------------------
     // The browser-bound procedural synth (Web Audio). Reuse Phaser's own audio
