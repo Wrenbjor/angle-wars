@@ -57,6 +57,15 @@ export class SpawnDirector extends System {
     // Reusable weight scratch, refilled each spawn from the interpolated weights.
     // Its reference is stable for the director's lifetime — zero per-tick alloc.
     this._weights = new Array(spawnables.length).fill(0);
+
+    // Public read-only observability latch (Story 4.5): the number of director
+    // spawns THIS tick (one per actual spawn — a Snake adding many segments still
+    // counts as ONE spawn event). Reset at the top of every fixedUpdate (so an empty
+    // tick reports 0 and a spawn is never counted twice), then ++ once per spawn in
+    // _pickAndSpawn. Read by the AudioDirectorSystem (spawn SFX source) — mirrors
+    // CollisionSystem.bulletKillCount. Purely observational: it never affects the
+    // spawn cadence, cap, mix, or placement.
+    this.spawnCount = 0;
   }
 
   /** Elapsed sim time in ms (Σ of every dt seen). Read-only accessor. */
@@ -121,6 +130,10 @@ export class SpawnDirector extends System {
     // the interval is computed once from it (not re-derived per banked interval).
     this._elapsedMs += dt;
     this._accumMs += dt;
+
+    // Reset the per-tick spawn report (Story 4.5) so a tick with no spawns reports 0
+    // and a prior tick's spawns are never re-counted.
+    this.spawnCount = 0;
 
     const interval = this.intervalAt(this._elapsedMs);
     while (this._accumMs >= interval) {
@@ -192,6 +205,7 @@ export class SpawnDirector extends System {
       if (r < 0) {
         if (ship) spawnables[i].system.spawn(ship.x, ship.y);
         else spawnables[i].system.spawn();
+        this.spawnCount++; // Story 4.5 read-only spawn-event counter
         return;
       }
     }
@@ -201,6 +215,7 @@ export class SpawnDirector extends System {
       if (weights[i] > 0) {
         if (ship) spawnables[i].system.spawn(ship.x, ship.y);
         else spawnables[i].system.spawn();
+        this.spawnCount++; // Story 4.5 read-only spawn-event counter
         return;
       }
     }

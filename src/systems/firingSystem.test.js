@@ -179,6 +179,42 @@ describe('FiringSystem', () => {
     }
   });
 
+  // --- Story 4.5: read-only shotsFiredCount latch (the fire-event source) -----
+  it('shotsFiredCount tracks the bullets spawned this tick (1 per fire interval)', () => {
+    const { system } = makeSystem({ aim: [0, 1] });
+    // Fresh system reports 0 before any tick.
+    expect(system.shotsFiredCount).toBe(0);
+    // First active tick fires exactly one bullet (seeded accumulator).
+    system.fixedUpdate(DT);
+    expect(system.shotsFiredCount).toBe(1);
+  });
+
+  it('shotsFiredCount resets to 0 each tick (per-tick latch, not cumulative)', () => {
+    const { input, system } = makeSystem({ aim: [0, 1] });
+    system.fixedUpdate(DT);
+    expect(system.shotsFiredCount).toBe(1);
+    // A tick with no new spawn (aim released) reports 0, not the prior 1.
+    input.clearAim();
+    system.fixedUpdate(DT);
+    expect(system.shotsFiredCount).toBe(0);
+  });
+
+  it('shotsFiredCount is 0 on a tick that spawns nothing (aim inactive)', () => {
+    const { system } = makeSystem(); // no aim
+    system.fixedUpdate(DT);
+    expect(system.shotsFiredCount).toBe(0);
+  });
+
+  it('shotsFiredCount counts every bullet in a multi-spawn (coarse) tick', () => {
+    // A tick larger than several fire intervals banks multiple spawns in one step.
+    const { system } = makeSystem({ aim: [1, 0] });
+    system.fixedUpdate(FIRE_INTERVAL_MS * 3);
+    // Seeded accumulator + 3 intervals of banked time → the count matches the
+    // bullets actually spawned this tick (never a stale value).
+    expect(system.shotsFiredCount).toBe(system.bulletPool.activeCount);
+    expect(system.shotsFiredCount).toBeGreaterThan(1);
+  });
+
   it('recycles a freed bullet on the next spawn (no pool growth)', () => {
     const nearRight = ARENA_WIDTH - ARENA_BORDER_INSET - 1;
     const { ship, input, system } = makeSystem({

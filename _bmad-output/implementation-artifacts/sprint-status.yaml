@@ -65,7 +65,7 @@ development_status:
   4-2-deforming-grid-field: done
   4-3-pooled-particle-system: done
   4-4-screen-juice-and-feedback: done
-  4-5-sound-and-adaptive-music: backlog
+  4-5-sound-and-adaptive-music: done
   epic-4-retrospective: optional
 
   # Epic 5 — Game Shell, Flow & Release

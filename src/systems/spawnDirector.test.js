@@ -342,6 +342,61 @@ describe('SpawnDirector — spawn-point ship-avoidance forwarding (Story 2.6, AC
   });
 });
 
+describe('SpawnDirector — read-only spawnCount latch (Story 4.5)', () => {
+  it('is 0 on a fresh director before any tick', () => {
+    const dir = new SpawnDirector(fourMix(), seqRng([0.0]));
+    expect(dir.spawnCount).toBe(0);
+  });
+
+  it('reports 1 on the tick a single director spawn fires', () => {
+    const mix = fourMix();
+    const dir = new SpawnDirector(mix, seqRng([0.0]));
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS); // one interval → one spawn
+    expect(totalSpawns(mix)).toBe(1);
+    expect(dir.spawnCount).toBe(1);
+  });
+
+  it('counts one spawn event even when a snake adds many segments', () => {
+    // A snake-like archetype whose spawn() adds SNAKE_SEGMENT_COUNT segments is the
+    // only positive-weight pick — one director spawn is still ONE spawn event.
+    const snakeLike = countingSpawnable(1, 1, SNAKE_SEGMENT_COUNT);
+    const dir = new SpawnDirector([snakeLike], seqRng([0.0]));
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS);
+    expect(snakeLike.system.spawnCalls).toBe(1);
+    expect(dir.spawnCount).toBe(1); // one event, not SNAKE_SEGMENT_COUNT
+  });
+
+  it('resets to 0 each tick (per-tick latch, not cumulative)', () => {
+    const mix = fourMix();
+    const dir = new SpawnDirector(mix, seqRng([0.0]));
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS); // spawns → count 1
+    expect(dir.spawnCount).toBe(1);
+    dir.fixedUpdate(1); // tiny dt, no interval crossed → no spawn
+    expect(dir.spawnCount).toBe(0);
+  });
+
+  it('is 0 on a tick gated by the global active cap (no spawn taken)', () => {
+    const mix = fourMix();
+    mix[0].system.enemyPool.activeCount = SPAWN_DIRECTOR_MAX_ACTIVE; // at the cap
+    const dir = new SpawnDirector(mix, seqRng([0.0]));
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS);
+    expect(totalSpawns(mix)).toBe(0);
+    expect(dir.spawnCount).toBe(0);
+  });
+
+  it('counts a spawn taken via the float-guard fallback branch (rng lands on the top boundary)', () => {
+    // rng() === 1 → r = total; the first weighted loop subtracts every band without
+    // r ever going negative, so the pick resolves in the float-guard fallback (which
+    // awards the last positive-weight archetype). This exercises that branch's
+    // spawnCount++ (the seqRng([0.0]) tests only ever hit the first loop).
+    const a = fakeSpawnable(1, 1); // single positive-weight archetype
+    const dir = new SpawnDirector([a], () => 1);
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS); // one interval → one spawn
+    expect(a.system.spawnCalls).toBe(1); // a spawn actually occurred
+    expect(dir.spawnCount).toBe(1);
+  });
+});
+
 describe('SpawnDirector — reset by reconstruction (AC3)', () => {
   it('a freshly constructed director is at the base ramp regardless of a prior run', () => {
     const mixA = fourMix();

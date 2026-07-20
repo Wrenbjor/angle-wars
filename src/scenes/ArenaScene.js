@@ -87,6 +87,21 @@ import {
   flashAlpha,
   decayTrauma,
 } from './screenShake.js';
+import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
+import { AudioEngine } from '../audio/audioEngine.js';
+import { createAudioSettingsStorage } from '../persistence/audioSettingsStorage.js';
+import {
+  musicLayerGains,
+  effectiveVolume,
+  adjustVolume,
+} from '../audio/audioMix.js';
+import {
+  AUDIO_VOLUME_STEP,
+  AUDIO_MUSIC_LAYER_COUNT,
+  AUDIO_SFX_FIRE_MAX_PER_FRAME,
+  AUDIO_SFX_KILL_MAX_PER_FRAME,
+  AUDIO_SFX_SPAWN_MAX_PER_FRAME,
+} from '../config/constants.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -421,6 +436,76 @@ export class ArenaScene extends Phaser.Scene {
     );
     this.world.addSystem(this.screenFeedbackSystem);
 
+    // --- Sound & adaptive music system (Story 4.5) --------------------------
+    // Registered LAST — after ScreenFeedbackSystem — so within every fixed tick each
+    // event source it reads is already final: firingSystem.shotsFiredCount (fire),
+    // collisionSystem.bulletKillCount (kill — the SAME source the grid ripple /
+    // particles / screen juice read), spawnDirector.spawnCount (spawn), the bombSystem
+    // shockwave rising edge (bomb), the playerDeathSystem.deathSeq increment (death),
+    // and the spawnDirector difficulty ramp (musicIntensity). It is a PURE read-only
+    // observer — it mutates ONLY its own latch fields (no pool, entity, score, life,
+    // death, or spawn state). The render loop below consumes its SFX latches (capped
+    // per type) into engine blips and maps musicIntensity → per-layer music gains. A
+    // fresh instance each run (scene.restart) resets the audio cues to calm, matching
+    // GridFieldSystem / ParticleSystem / ScreenFeedbackSystem.
+    this.audioDirector = new AudioDirectorSystem(
+      this.firingSystem,
+      this.collisionSystem,
+      this.bombSystem,
+      this.playerDeathSystem,
+      this.spawnDirector,
+    );
+    this.world.addSystem(this.audioDirector);
+
+    // --- Audio engine + settings (Story 4.5) --------------------------------
+    // The browser-bound procedural synth (Web Audio). Reuse Phaser's own audio
+    // context so Phaser handles the autoplay-policy unlock/resume on the first user
+    // gesture; a null/blocked context degrades the engine to a silent no-op (like the
+    // guarded high-score store). Built fresh each create()/scene.restart() and
+    // disposed on the scene `shutdown` event so its continuously-running music
+    // oscillators never stack/leak across restarts.
+    this.audioEngine = new AudioEngine(this.sound && this.sound.context);
+    // Load persisted {muted, volume} through the guarded port (defaults on a
+    // missing/corrupt/blocked store) and apply the effective master gain now.
+    this.audioSettingsStorage = createAudioSettingsStorage();
+    const audioSettings = this.audioSettingsStorage.load();
+    this._muted = audioSettings.muted;
+    this._volume = audioSettings.volume;
+    this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
+    // Reusable per-frame music-gain buffer so the render-loop mapping allocates
+    // nothing (mirrors the zero-per-frame-allocation discipline).
+    this._musicGains = new Array(AUDIO_MUSIC_LAYER_COUNT).fill(0);
+
+    // Persist the current settings AND re-apply the effective master gain. Called
+    // after every mute/volume change. Muted ⇒ effective gain 0 (silence) while the
+    // sim, latches, and music voices keep running (only master gain is 0).
+    const applyAudioSettings = () => {
+      this.audioSettingsStorage.save({ muted: this._muted, volume: this._volume });
+      this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
+    };
+    // Keyboard controls (Story 5.3 later owns a settings UI): M toggles mute, and the
+    // MINUS / PLUS keys step the volume by AUDIO_VOLUME_STEP (clamped 0..1). These
+    // listeners live on the scene input plugin and are torn down/rebuilt across
+    // restart (same as the ENTER/SPACE restart handlers below).
+    this.input.keyboard.on('keydown-M', () => {
+      this._muted = !this._muted;
+      applyAudioSettings();
+    });
+    this.input.keyboard.on('keydown-MINUS', () => {
+      this._volume = adjustVolume(this._volume, -AUDIO_VOLUME_STEP);
+      applyAudioSettings();
+    });
+    this.input.keyboard.on('keydown-PLUS', () => {
+      this._volume = adjustVolume(this._volume, AUDIO_VOLUME_STEP);
+      applyAudioSettings();
+    });
+    // Dispose the engine on scene shutdown (fires on scene.restart before the next
+    // create()), tearing down the persistent music oscillators so a new run never
+    // stacks another set on the shared audio context (leak-free restart).
+    this.events.once('shutdown', () => {
+      this.audioEngine.dispose();
+    });
+
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
@@ -670,6 +755,26 @@ export class ArenaScene extends Phaser.Scene {
       if (this._flashMs < 0) this._flashMs = 0;
     }
     this.flashOverlay.setAlpha(flashAlpha(this._flashMs, SCREEN_FLASH_MS));
+
+    // Story 4.5: drive audio from the director's latches + intensity. Consume the
+    // per-event SFX requests (a reused object — no per-frame allocation), capped per
+    // accumulating type so a burst / multi-sub-step catch-up frame cannot flood the
+    // mixer, and trigger one engine blip per allowed request; bomb/death are one-shot.
+    // Then map the live music intensity (the difficulty ramp) through musicLayerGains
+    // (into the reused buffer) to the engine's per-layer gains — more difficulty ⇒
+    // more layers audible. The engine no-ops when its audio context is unavailable.
+    const sfx = this.audioDirector.consumeSfxRequests();
+    const fireN = Math.min(sfx.fire, AUDIO_SFX_FIRE_MAX_PER_FRAME);
+    for (let i = 0; i < fireN; i++) this.audioEngine.playSfx('fire');
+    const killN = Math.min(sfx.kill, AUDIO_SFX_KILL_MAX_PER_FRAME);
+    for (let i = 0; i < killN; i++) this.audioEngine.playSfx('kill');
+    const spawnN = Math.min(sfx.spawn, AUDIO_SFX_SPAWN_MAX_PER_FRAME);
+    for (let i = 0; i < spawnN; i++) this.audioEngine.playSfx('spawn');
+    if (sfx.bomb) this.audioEngine.playSfx('bomb');
+    if (sfx.death) this.audioEngine.playSfx('death');
+    this.audioEngine.setMusicLayerGains(
+      musicLayerGains(this.audioDirector.musicIntensity, this._musicGains),
+    );
 
     // Story 4.2: pack the grid system's live ripple + warp state into the shader's
     // uniforms once per render frame (zero allocation — Float32Array/{x,y,z} mutated

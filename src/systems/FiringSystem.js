@@ -56,6 +56,14 @@ export class FiringSystem extends System {
     // Fire-cadence accumulator (ms). Seeded to the interval so the first active
     // tick fires immediately (responsive), not after a full interval of delay.
     this._accumMs = FIRE_INTERVAL_MS;
+
+    // Public read-only observability latch (Story 4.5): the number of bullets THIS
+    // system spawned this tick. Reset at the top of every fixedUpdate (so an empty
+    // tick reports 0 and a shot is never counted twice), then ++ per bullet spawned.
+    // Read by the AudioDirectorSystem (fire SFX source) — mirrors
+    // CollisionSystem.bulletKillCount. Purely observational: it never affects the
+    // fire cadence, cap, mix, or placement.
+    this.shotsFiredCount = 0;
   }
 
   /**
@@ -65,6 +73,10 @@ export class FiringSystem extends System {
   fixedUpdate(dt) {
     const dtSec = dt / 1000;
     const pool = this.bulletPool;
+
+    // Reset the per-tick shots-fired report (Story 4.5) so a tick with no spawns
+    // reports 0 and a prior tick's shots are never re-counted.
+    this.shotsFiredCount = 0;
 
     // 1. Advance existing bullets; collect any that have left the arena. Runs
     //    even when aim is inactive so in-flight bullets keep travelling.
@@ -93,6 +105,7 @@ export class FiringSystem extends System {
         b.y = this.ship.y + input.aimY * this.ship.radius;
         b.vx = input.aimX * BULLET_SPEED;
         b.vy = input.aimY * BULLET_SPEED;
+        this.shotsFiredCount++; // Story 4.5 read-only fire-event counter
         this._accumMs -= FIRE_INTERVAL_MS;
       }
     } else {

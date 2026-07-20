@@ -601,6 +601,78 @@ export const SCREEN_NEARMISS_RADIUS = 70;
 // per-tick spam and needs no per-enemy identity tracking (recycle-safe).
 export const SCREEN_NEARMISS_COOLDOWN_MS = 400;
 
+// --- Audio & adaptive music (Story 4.5) -------------------------------------
+// The signature Geometry Wars "everything sounds like Retro Evolved" payoff
+// (FR13, NFR: immersion). There are ZERO art/audio assets in this project — every
+// visual is procedurally drawn — so audio is procedurally SYNTHESISED too (Web
+// Audio API), with no asset pipeline. AudioDirectorSystem (the Phaser-free sim
+// seam) observes the SAME event sources the grid ripple (4.2) / particles (4.3) /
+// screen juice (4.4) read — firingSystem.shotsFiredCount (fire),
+// collisionSystem.bulletKillCount (kill), spawnDirector.spawnCount (spawn),
+// bombSystem.shockwaveMs rising edge (bomb), playerDeathSystem.deathSeq increment
+// (death) — into render-consumable SFX-request latches, and reads the SpawnDirector
+// difficulty ramp (progressAt) into a live musicIntensity level. audioMix.js holds
+// the intensity→layer-gain and volume/mute math; audioSettingsStorage.js persists
+// {muted, volume}; audioEngine.js is the browser-bound synth (SFX blips + adaptive
+// music voices). Every value here is a documented post-launch placeholder (tuned
+// later), mirroring the GRID_* / PARTICLE_* / SCREEN_* discipline — no inline magic
+// numbers in the system, the mix seam, the engine, or the ArenaScene call sites.
+
+// Master volume default (0..1): the effective output gain at run start when not
+// muted. Persisted per-player via audioSettingsStorage and re-applied on load.
+export const AUDIO_MASTER_VOLUME_DEFAULT = 0.6;
+// Volume step (0..1): how much each volume-up/down key press moves the master
+// volume, clamped to [0,1] (audioMix.adjustVolume).
+export const AUDIO_VOLUME_STEP = 0.1;
+// Muted default: whether a fresh player (no stored setting) starts muted.
+export const AUDIO_MUTED_DEFAULT = false;
+// The single localStorage key under which {muted, volume} persists (its own slot,
+// mirroring HIGH_SCORE_STORAGE_KEY). Story 5.3 later consolidates settings; keeping
+// this a tiny isolated port makes that a move, not a rewrite. Namespaced so it never
+// collides with unrelated app storage.
+export const AUDIO_SETTINGS_STORAGE_KEY = 'angleWars.audioSettings';
+
+// Number of continuously-running adaptive-music layers (oscillator voices). More
+// difficulty ⇒ more layers audible; each layer i fades in over its [i/N, (i+1)/N]
+// intensity band (audioMix.musicLayerGains).
+export const AUDIO_MUSIC_LAYER_COUNT = 4;
+// Peak gain (0..1) any single music layer reaches once fully faded in. Kept low so
+// the layered voices sit under the SFX rather than drowning them.
+export const AUDIO_MUSIC_LAYER_MAX_GAIN = 0.12;
+// Base oscillator frequency (Hz) of the lowest music layer; higher layers are
+// harmonics of it (layer i ⇒ BASE_FREQ × (i+1)). 55 Hz ≈ A1, a deep drone floor.
+export const AUDIO_MUSIC_BASE_FREQ = 55;
+// Music layer-gain smoothing time constant (seconds) for the engine's
+// setTargetAtTime ramp, so intensity changes glide rather than click.
+export const AUDIO_MUSIC_GAIN_SMOOTHING = 0.4;
+
+// Per-SFX synthesis: oscillator frequency (Hz), envelope duration (ms), and peak
+// gain (0..1) of each event's short enveloped blip. Fire is a rapid high tick, kill
+// a mid pop, spawn a high chirp, bomb a low boom, death a longer descending tone.
+export const AUDIO_SFX_FIRE_FREQ = 880;
+export const AUDIO_SFX_FIRE_MS = 60;
+export const AUDIO_SFX_FIRE_GAIN = 0.12;
+export const AUDIO_SFX_KILL_FREQ = 440;
+export const AUDIO_SFX_KILL_MS = 120;
+export const AUDIO_SFX_KILL_GAIN = 0.25;
+export const AUDIO_SFX_SPAWN_FREQ = 1200;
+export const AUDIO_SFX_SPAWN_MS = 90;
+export const AUDIO_SFX_SPAWN_GAIN = 0.15;
+export const AUDIO_SFX_BOMB_FREQ = 80;
+export const AUDIO_SFX_BOMB_MS = 500;
+export const AUDIO_SFX_BOMB_GAIN = 0.5;
+export const AUDIO_SFX_DEATH_FREQ = 300;
+export const AUDIO_SFX_DEATH_MS = 600;
+export const AUDIO_SFX_DEATH_GAIN = 0.4;
+
+// Per-frame SFX caps: the most blips of each accumulating SFX type (fire/kill/spawn)
+// the render loop triggers in a single frame, so a burst (or a multi-sub-step catch-up
+// frame) cannot flood the mixer with dozens of overlapping voices. Bomb/death are
+// one-shot booleans and need no count cap.
+export const AUDIO_SFX_FIRE_MAX_PER_FRAME = 2;
+export const AUDIO_SFX_KILL_MAX_PER_FRAME = 4;
+export const AUDIO_SFX_SPAWN_MAX_PER_FRAME = 3;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';
