@@ -362,6 +362,28 @@ export const SCORE_MULTIPLIER_MAX = 10;
 // frozen once the cap is reached.
 export const SCORE_MULTIPLIER_KILLS_PER_STEP = 5;
 
+// Smart bombs (Story 3.2): the RE1 emergency screen-clear economy. A run starts
+// with BOMB_START_COUNT bombs (run-economy state on ScoreState, reset only on a
+// fresh run — never on death). A bomb press with ≥1 bomb destroys every active
+// enemy across the four archetype pools through the shared kill seam (removed but
+// UNSCORED — a defensive cost, not a reward) and decrements the count by one. One
+// extra bomb is awarded for each BOMB_AWARD_SCORE_INTERVAL boundary the running
+// score crosses (FR9 specifies NO cap). All tuning lives here — no inline magic
+// numbers on the detonation/award path.
+// Starting (and fresh-run) bomb count.
+export const BOMB_START_COUNT = 3;
+// Score interval (points): +1 bomb per this-many-point boundary the running score
+// crosses (detected against a monotonic cursor so each boundary fires once even
+// when a single kill jumps past several intervals).
+export const BOMB_AWARD_SCORE_INTERVAL = 100000;
+// Placeholder shockwave countdown (ms): how long the expanding-ring cue runs after
+// a detonation. A sim-side countdown (mirrors telegraphMs / invulnMs) the render
+// loop reads; the real shockwave + screen-shake juice is Epic 4.
+export const BOMB_SHOCKWAVE_MS = 300;
+// Placeholder shockwave peak radius (px): the ring expands from 0 to this over the
+// countdown. Placeholder only (Epic 4 owns the real aesthetic).
+export const BOMB_SHOCKWAVE_MAX_RADIUS = 900;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
@@ -374,6 +396,9 @@ export const COLOR_SNAKE = 0xffaa33;
 // Placeholder fill for the Black Hole body (the grid-warp visual is Epic 4 /
 // Story 4.2 — this is a plain filled circle only).
 export const COLOR_BLACK_HOLE = 0x9933ff;
+// Placeholder stroke for the smart-bomb expanding shockwave ring (Story 3.2). The
+// real shockwave aesthetic is Epic 4 — this is a plain stroked circle only.
+export const COLOR_BOMB_SHOCKWAVE = 0xffffff;
 
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';

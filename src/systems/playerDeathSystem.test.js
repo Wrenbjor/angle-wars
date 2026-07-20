@@ -445,6 +445,40 @@ describe('PlayerDeathSystem — multiplier reset on death (Story 3.1, FR8)', () 
     expect(ship.y).toBe(CENTER_Y);
     expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
   });
+
+  it('a respawning death does NOT touch the bomb count (bombs persist across death, FR9)', () => {
+    const { ship, enemyPool, playerState, scoreState, system } =
+      makeSystemWithScore();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // overlapping → death
+    scoreState.multiplier = 7;
+    scoreState.multiplierKills = 3;
+    scoreState.bombs = 2; // mid-run bomb stockpile
+
+    system.fixedUpdate(DT);
+
+    // Respawning death (lives remain) resets the streak but NEVER the bombs.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.bombs).toBe(2); // survived the death
+  });
+
+  it('the final game-over death also leaves the bomb count untouched (FR9)', () => {
+    const { ship, enemyPool, playerState, scoreState, system } =
+      makeSystemWithScore();
+    playerState.lives = 1; // last life → game-over
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+    scoreState.bombs = 2;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.gameOver).toBe(true);
+    expect(scoreState.bombs).toBe(2); // bombs persist even into game-over
+  });
 });
 
 describe('PlayerDeathSystem — multiple archetype pools', () => {

@@ -36,6 +36,9 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_TELEGRAPH_MIN_ALPHA,
   SPAWN_TELEGRAPH_MIN_SCALE,
+  BOMB_SHOCKWAVE_MS,
+  BOMB_SHOCKWAVE_MAX_RADIUS,
+  COLOR_BOMB_SHOCKWAVE,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
@@ -53,6 +56,7 @@ import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
+import { BombSystem } from '../systems/BombSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
@@ -238,6 +242,31 @@ export class ArenaScene extends Phaser.Scene {
     // constructed first). Until this is set, enemy absorption is a guarded no-op;
     // gravity and bullet feed still run.
     this.blackHoleSystem.collisionSystem = this.collisionSystem;
+
+    // --- Smart bombs (Story 3.2) --------------------------------------------
+    // BombSystem runs AFTER ScoringSystem + BlackHoleSystem and BEFORE
+    // PlayerDeathSystem — the load-bearing tick position: (a) bomb-cleared enemies
+    // it appends to collisionSystem.killedEnemies are removed but NOT scored (they
+    // never reach the multiplier), (b) the score it reads for the +1-bomb 100k
+    // award is fully settled this tick (it catches the black-hole payout too), and
+    // (c) the clear removes enemies before the death check, so a bomb genuinely
+    // rescues the player from an otherwise-lethal contact this tick — but ONLY
+    // for the four cleared archetype pools; the Black Hole is NOT cleared and
+    // stays lethal through a detonation. It consumes the latched bomb request from
+    // the shared InputState, clears the four archetype pools (never the Black
+    // Hole), and drives the placeholder shockwave.
+    this.bombSystem = new BombSystem(
+      this.inputState,
+      this.enemyPools,
+      this.collisionSystem,
+      this.scoreState,
+      this.ship,
+    );
+    this.world.addSystem(this.bombSystem);
+    // The placeholder expanding shockwave ring, cleared and redrawn each render
+    // frame from the BombSystem's sim-side countdown. Epic 4 replaces this with
+    // the real shockwave + screen-shake aesthetic.
+    this.bombShockwaveGraphics = this.add.graphics();
 
     // --- Player death / lives -----------------------------------------------
     // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
@@ -497,6 +526,21 @@ export class ArenaScene extends Phaser.Scene {
       bhg.fillCircle(h.x, h.y, h.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
     });
 
+    // Redraw the placeholder smart-bomb shockwave: a single stroked ring that
+    // expands from 0 to BOMB_SHOCKWAVE_MAX_RADIUS and fades out as the sim-side
+    // countdown decays. Cleared every frame; drawn only while the countdown runs.
+    // Placeholder only (Epic 4 owns the real shockwave + screen-shake aesthetic).
+    const swg = this.bombShockwaveGraphics;
+    swg.clear();
+    const swMs = this.bombSystem.shockwaveMs;
+    if (swMs > 0) {
+      // progress 0→1 over the countdown (1 at detonation, 0 as it ends).
+      const t = Math.min(Math.max(swMs / BOMB_SHOCKWAVE_MS, 0), 1);
+      const radius = BOMB_SHOCKWAVE_MAX_RADIUS * (1 - t);
+      swg.lineStyle(ARENA_BORDER_THICKNESS, COLOR_BOMB_SHOCKWAVE, t);
+      swg.strokeCircle(this.bombSystem.shockwaveX, this.bombSystem.shockwaveY, radius);
+    }
+
     // Sample sim ticks/sec roughly once per second so the readout is steady.
     this._sampleAccumMs += delta;
     if (this._sampleAccumMs >= 1000) {
@@ -510,7 +554,7 @@ export class ArenaScene extends Phaser.Scene {
     // Read fresh each frame so a kill (score) or a death (lives) shows on the
     // very next frame.
     this.hudText.setText(
-      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nLIVES ${this.playerState.lives}`,
+      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}`,
     );
 
     const over = this.playerState.gameOver;

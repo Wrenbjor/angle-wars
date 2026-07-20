@@ -22,6 +22,36 @@ export class InputState {
     this.aimY = 0;
     /** True when a valid aim direction is present (non-zero input). */
     this.aimActive = false;
+    /**
+     * Latched smart-bomb request (Story 3.2): the render↔sim edge seam for the
+     * discrete bomb press. The Phaser input boundary sets it on the key's
+     * just-down edge (queueBomb); the BombSystem reads-and-clears it once per
+     * fixed step (consumeBomb). A latch (not a level) so one key press yields at
+     * most one detonation regardless of how many render frames the key is held or
+     * how many key edges land within a single fixed-step window.
+     */
+    this.bombQueued = false;
+  }
+
+  /**
+   * Latch a smart-bomb request. Called at the Phaser input boundary on the bomb
+   * key's just-down edge. Idempotent within a fixed-step window — repeated calls
+   * before the next consumeBomb still yield a single latched request.
+   */
+  queueBomb() {
+    this.bombQueued = true;
+  }
+
+  /**
+   * Consume the latched smart-bomb request: return whether one was queued and
+   * clear the latch (reads-and-clears) so the same press never detonates twice.
+   * Called once per fixed step by the BombSystem.
+   * @returns {boolean} true if a bomb press was pending this step.
+   */
+  consumeBomb() {
+    const queued = this.bombQueued;
+    this.bombQueued = false;
+    return queued;
   }
 
   /**

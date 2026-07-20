@@ -23,7 +23,13 @@ export class PlayerInputSampler {
     this.input = inputState;
     this.ship = ship;
 
-    // WASD + arrow keys. addKeys returns Key objects with live `isDown`.
+    // WASD + arrow keys, plus the smart-bomb key. addKeys returns Key objects
+    // with live `isDown` (and usable with Phaser.Input.Keyboard.JustDown for a
+    // one-shot edge). The bomb is bound to Shift (KC.SHIFT is the generic Shift
+    // keycode — either Shift key fires it) — deliberately NOT Enter/Space/pointer,
+    // which are the game-over restart inputs — so a detonation can never double as
+    // a restart. A dedicated non-restart key is the real constraint; gamepad bomb
+    // and rebinding are Epic 5 input polish.
     const KC = Phaser.Input.Keyboard.KeyCodes;
     this.keys = scene.input.keyboard.addKeys({
       up: KC.W,
@@ -34,6 +40,7 @@ export class PlayerInputSampler {
       arrowDown: KC.DOWN,
       arrowLeft: KC.LEFT,
       arrowRight: KC.RIGHT,
+      bomb: KC.SHIFT,
     });
   }
 
@@ -56,6 +63,20 @@ export class PlayerInputSampler {
     const pad = this.getPad();
     this.sampleMove(pad);
     this.sampleAim(pad);
+    this.sampleBomb();
+  }
+
+  /**
+   * Latch a smart-bomb request on the bomb key's just-pressed EDGE. JustDown
+   * returns true exactly once per physical press (it consumes the key's internal
+   * edge state), so holding the key does not re-queue every frame — one press,
+   * one latched request the BombSystem consumes at sim rate. Gamepad bomb input
+   * is Epic 5 input polish; this is the keyboard boundary only.
+   */
+  sampleBomb() {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.bomb)) {
+      this.input.queueBomb();
+    }
   }
 
   /**

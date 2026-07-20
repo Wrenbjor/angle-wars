@@ -1,4 +1,4 @@
-import { SCORE_MULTIPLIER_START } from '../config/constants.js';
+import { SCORE_MULTIPLIER_START, BOMB_START_COUNT } from '../config/constants.js';
 
 // ScoreState — the shared run-economy state (plain data, Phaser-free).
 //
@@ -7,24 +7,31 @@ import { SCORE_MULTIPLIER_START } from '../config/constants.js';
 // PlayerState because score is a distinct concern (run economy) from the ship's
 // lives/invulnerability/game-over lifecycle. A fresh run rebuilds it from zero.
 //
-// Shape: { score, multiplier, multiplierKills }
+// Shape: { score, multiplier, multiplierKills, bombs }
 //  - score           : accumulated run score (starts at 0; grows by each killed
 //                       enemy's base value × the current multiplier).
 //  - multiplier      : the RE1 run multiplier (starts at SCORE_MULTIPLIER_START;
 //                       climbs on kills to the cap; reset to START on death).
 //  - multiplierKills : progress toward the next multiplier step (0..KILLS_PER_STEP);
 //                       resets to 0 on each step-up and on death.
+//  - bombs           : smart-bomb count (Story 3.2 / FR9). Starts at
+//                       BOMB_START_COUNT; the BombSystem decrements it on a
+//                       detonation and awards +1 per 100k score boundary. Run
+//                       economy — rebuilt from zero only on a fresh run, NEVER
+//                       reset on death (resetMultiplier leaves it untouched).
 
 /**
  * Create the run-economy state at the start of a run: score zero, multiplier at
- * its starting value, and zero progress toward the next step.
- * @returns {{score:number, multiplier:number, multiplierKills:number}}
+ * its starting value, zero progress toward the next step, and the starting bomb
+ * count.
+ * @returns {{score:number, multiplier:number, multiplierKills:number, bombs:number}}
  */
 export function createScoreState() {
   return {
     score: 0,
     multiplier: SCORE_MULTIPLIER_START,
     multiplierKills: 0,
+    bombs: BOMB_START_COUNT,
   };
 }
 
