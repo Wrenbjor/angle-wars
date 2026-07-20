@@ -297,4 +297,5 @@ origin: migrated from legacy ledger (review of spec-5-5-performance-hardening-an
 source_spec: `_bmad-output/implementation-artifacts/spec-5-5-performance-hardening-and-web-build.md`
 location: `buildConfig.test.js` / `vite.config` / `src/main.js` / built `dist/` artifact
 reason: All four review layers converged on the surface mismatch. No test constructs `ArenaScene` or runs a real build: `buildConfig.test.js` imports the vite config object and regex-matches `main.js` source text (both un-importable headlessly — `main.js` runs `new Phaser.Game` at load), and the NFR2 property is proven via a pool-count no-growth proxy, not a GC/allocation measurement. This is the same deliberately-thin Phaser/scene + build-artifact manual-verification boundary logged as orchestrator-owned for Stories 1.1–5.4; closing it needs a scene/World integration harness and/or a build-then-inspect smoke step (build-before-test ordering, better as a CI script than a vitest unit) beyond this story's captured intent. The DEV-gate source-text guard added this pass bounds the highest-risk regression (a production-only `debugText` crash) without the full harness.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-build-artifact-verification-test
