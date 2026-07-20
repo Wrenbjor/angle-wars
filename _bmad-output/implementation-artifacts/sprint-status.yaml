@@ -70,7 +70,7 @@ development_status:
 
   # Epic 5 — Game Shell, Flow & Release
   epic-5: backlog
-  5-1-title-and-start-screen: backlog
+  5-1-title-and-start-screen: done
   5-2-pause-and-resume: backlog
   5-3-game-flow-state-machine: backlog
   5-4-input-config-and-gamepad-polish: backlog

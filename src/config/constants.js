@@ -696,3 +696,22 @@ export const COLOR_GAMEOVER_TEXT = '#ffffff';
 export const GAMEOVER_TITLE_FONT = '48px monospace';
 export const GAMEOVER_SCORE_FONT = '28px monospace';
 export const GAMEOVER_PROMPT_FONT = '20px monospace';
+
+// --- Title screen (Story 5.1) -----------------------------------------------
+// The front-door TitleScene shown between Preload and Arena: the neon "ANGLE
+// WARS" hero title, the persisted high score, a start prompt, and the basic
+// controls. The title's colors and fonts are centralized here so its feel is
+// tunable in one place (matching the HUD / game-over blocks above).
+// The hero title is put into additive blend so it reads as a bright neon sign;
+// its color is a Phaser text `color` string.
+export const COLOR_TITLE_TEXT_STRING = '#33ffee';
+export const TITLE_FONT = '72px monospace';
+// The persisted high-score line (from formatHighScore(load())).
+export const COLOR_TITLE_HISCORE = '#e6f2ff';
+export const TITLE_HISCORE_FONT = '28px monospace';
+// The "press start" prompt inviting any start input.
+export const COLOR_TITLE_PROMPT = '#ffd23f';
+export const TITLE_PROMPT_FONT = '24px monospace';
+// The basic-controls lines (move / aim-fire / bomb / mute-volume).
+export const COLOR_TITLE_CONTROLS = '#88ffcc';
+export const TITLE_CONTROLS_FONT = '18px monospace';
