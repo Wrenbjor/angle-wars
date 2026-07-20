@@ -59,6 +59,8 @@ import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
 import { BombSystem } from '../systems/BombSystem.js';
 import { ExtraLifeSystem } from '../systems/ExtraLifeSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
+import { HighScoreSystem } from '../systems/HighScoreSystem.js';
+import { createHighScoreStorage } from '../persistence/highScoreStorage.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
 import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
@@ -303,6 +305,26 @@ export class ArenaScene extends Phaser.Scene {
       this.scoreState,
     );
     this.world.addSystem(this.playerDeathSystem);
+
+    // --- Persistent high score (Story 3.4) ----------------------------------
+    // HighScoreSystem is registered LAST — AFTER PlayerDeathSystem — the
+    // load-bearing tick position: PlayerDeathSystem sets playerState.gameOver
+    // during its own fixedUpdate, and the world gate (`if (!gameOver)
+    // world.fixedUpdate(dt)` below) only stops systems on the NEXT tick, so
+    // running last lets this system observe game-over on the very tick it latches
+    // and persist the high score then. On all later ticks the world is gated off,
+    // and an internal write-once latch makes the save idempotent regardless. It
+    // reads scoreState.score + playerState.gameOver (never writes either) and
+    // funnels all localStorage access through the guarded port, which degrades to
+    // a no-op when the store is unavailable so persistence never breaks the run.
+    this.highScoreStorage = createHighScoreStorage();
+    this.highScoreSystem = new HighScoreSystem(
+      this.scoreState,
+      this.playerState,
+      this.highScoreStorage,
+    );
+    this.world.addSystem(this.highScoreSystem);
+
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
@@ -570,7 +592,7 @@ export class ArenaScene extends Phaser.Scene {
     // Read fresh each frame so a kill (score) or a death (lives) shows on the
     // very next frame.
     this.hudText.setText(
-      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}`,
+      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}\nHIGH ${this.highScoreSystem.highScore}`,
     );
 
     const over = this.playerState.gameOver;

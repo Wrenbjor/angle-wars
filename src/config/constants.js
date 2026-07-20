@@ -396,6 +396,13 @@ export const BOMB_SHOCKWAVE_MAX_RADIUS = 900;
 // magic numbers on the award path.
 export const LIFE_AWARD_SCORE_THRESHOLDS = [100000, 250000, 500000, 1000000];
 
+// Persistent high score (Story 3.4 / FR11): the single localStorage key under
+// which the run's best score is stored across page reloads. The high score is
+// the ONLY value persisted this epic; centralizing the key here keeps the one
+// browser-storage seam (src/persistence/highScoreStorage.js) reading and writing
+// the same slot. Namespaced so it never collides with unrelated app storage.
+export const HIGH_SCORE_STORAGE_KEY = 'angleWars.highScore';
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
