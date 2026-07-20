@@ -219,15 +219,24 @@ export class ArenaScene extends Phaser.Scene {
     // MINUS / PLUS keys step the volume by AUDIO_VOLUME_STEP (clamped 0..1). These
     // listeners live on the scene input plugin and are torn down/rebuilt across
     // restart (same as the ENTER/SPACE restart handlers below).
-    this.input.keyboard.on('keydown-M', () => {
+    // event.repeat guard (the Story 5.2 held-key lesson, matching SettingsScene and
+    // the pause handler): these keys are bound via scene keyboard events with no
+    // registered Key object, so Phaser does NOT suppress OS key auto-repeat — without
+    // the guard, holding a key would step every repeat tick and the same control would
+    // behave differently in-run vs on the settings screen. A single tap still steps
+    // exactly once (the native KeyboardEvent has repeat === false).
+    this.input.keyboard.on('keydown-M', (event) => {
+      if (event && event.repeat) return;
       this._muted = !this._muted;
       applyAudioSettings();
     });
-    this.input.keyboard.on('keydown-MINUS', () => {
+    this.input.keyboard.on('keydown-MINUS', (event) => {
+      if (event && event.repeat) return;
       this._volume = adjustVolume(this._volume, -AUDIO_VOLUME_STEP);
       applyAudioSettings();
     });
-    this.input.keyboard.on('keydown-PLUS', () => {
+    this.input.keyboard.on('keydown-PLUS', (event) => {
+      if (event && event.repeat) return;
       this._volume = adjustVolume(this._volume, AUDIO_VOLUME_STEP);
       applyAudioSettings();
     });

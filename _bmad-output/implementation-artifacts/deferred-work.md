@@ -274,7 +274,8 @@ origin: migrated from legacy ledger (review of spec-5-3-game-flow-state-machine.
 source_spec: `_bmad-output/implementation-artifacts/spec-5-3-game-flow-state-machine.md`
 location: `src/scenes/ArenaScene.js` (keydown-M/MINUS/PLUS handlers)
 reason: Edge/adversarial review flagged the inconsistency. ArenaScene.js keydown-M/MINUS/PLUS handlers have no `if (event && event.repeat) return;` guard, whereas SettingsScene.js's identical handlers do (and Story 5.2 added the same guard to pause after its own review). Pre-existing Story 4.5 code, not caused or touched by Story 5.3 (which only swapped the storage port), so out of this story's scope — a one-line guard per handler when in-run audio input is next revisited (e.g. Story 5.4 input polish).
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-in-run-audio-key-repeat-guard
 
 ### DW-33: The gamepad smart-bomb binding (`GAMEPAD_BOMB_BUTTONS = [4, 5]`) and the stick reads assume the W3C "standard" gamepad mapping without checking `pad.mapping`, so a non-standard controller can report different bumper indices — leaving the smart bomb unbindable or misbound on those pads.
 
