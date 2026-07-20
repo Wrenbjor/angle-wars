@@ -105,6 +105,19 @@ describe('createBlackHole factory', () => {
   });
 });
 
+describe('BlackHoleSystem — hoisted collector stability (NFR2)', () => {
+  it('reuses the same hole + bullet collector references across ticks', () => {
+    // Collectors are stable constructor instance fields, not fresh per-tick
+    // closures — so forEachActive allocates no arrow per tick.
+    const { system } = makeSystem();
+    const holeRef = system._collectHole;
+    const bulletRef = system._collectBullet;
+    system.fixedUpdate(DT);
+    expect(system._collectHole).toBe(holeRef);
+    expect(system._collectBullet).toBe(bulletRef);
+  });
+});
+
 describe('BlackHoleSystem — gravity (AC1)', () => {
   it('pulls an entity within range toward the hole by STRENGTH·(1−d/R)·dtSec', () => {
     const { system, ship } = makeSystem();
@@ -852,7 +865,7 @@ describe('BlackHoleSystem — pool prewarm / no per-frame growth (NFR2)', () => 
     e.x = CENTER_X + 200;
     e.y = CENTER_Y - 150;
 
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 500; i++) {
       collision.fixedUpdate(DT);
       system.fixedUpdate(DT);
     }

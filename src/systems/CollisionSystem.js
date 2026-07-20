@@ -55,6 +55,10 @@ export class CollisionSystem extends System {
       this._enemies.push(s);
       this._owners.push(this._currentPool);
     };
+    // Hoisted bullet collector — a stable instance-field arrow created once (like
+    // `_collectEnemy`), so materializing the bullet set reuses one closure instead
+    // of allocating a fresh arrow per tick.
+    this._collectBullet = (b) => this._bullets.push(b);
     // Reusable pre-cleared hit-tracking sets, so a bullet that already hit is
     // skipped and an enemy already destroyed is skipped.
     this._hitBullets = new Set();
@@ -105,7 +109,7 @@ export class CollisionSystem extends System {
     bullets.length = 0;
     enemies.length = 0;
     owners.length = 0;
-    this.bulletPool.forEachActive((b) => bullets.push(b));
+    this.bulletPool.forEachActive(this._collectBullet);
     const pools = this.enemyPools;
     for (let p = 0; p < pools.length; p++) {
       this._currentPool = pools[p];

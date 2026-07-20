@@ -59,6 +59,15 @@ describe('CollisionSystem', () => {
     expect(bulletPool.freeCount).toBe(1);
   });
 
+  it('reuses the same hoisted bullet-collector reference across ticks (NFR2)', () => {
+    // The collector is a stable constructor instance field, not a fresh per-tick
+    // closure — so forEachActive allocates no arrow per tick.
+    const { system } = makeSystem();
+    const ref = system._collectBullet;
+    system.fixedUpdate(DT);
+    expect(system._collectBullet).toBe(ref);
+  });
+
   it('does nothing when the bullet is far from the seeker', () => {
     const { bulletPool, enemyPool, system } = makeSystem();
     addBullet(bulletPool, 0, 0);

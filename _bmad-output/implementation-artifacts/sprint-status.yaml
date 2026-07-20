@@ -74,5 +74,5 @@ development_status:
   5-2-pause-and-resume: done
   5-3-game-flow-state-machine: done
   5-4-input-config-and-gamepad-polish: done
-  5-5-performance-hardening-and-web-build: backlog
+  5-5-performance-hardening-and-web-build: done
   epic-5-retrospective: optional

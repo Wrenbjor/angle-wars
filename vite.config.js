@@ -10,6 +10,20 @@ export default defineConfig({
   build: {
     target: 'es2022',
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // Split Phaser (~95% of the bundle) into its own content-hashed vendor
+        // chunk so it is cached across deploys — an app-code change re-hashes only
+        // the small app chunk, not the large engine chunk.
+        manualChunks: {
+          phaser: ['phaser'],
+        },
+      },
+    },
+    // Raised deliberately above the split app+vendor chunk sizes so the routine
+    // "Some chunks are larger than 500 kB" warning (Phaser is legitimately large)
+    // does not fire on every build.
+    chunkSizeWarningLimit: 1600,
   },
   test: {
     environment: 'node',

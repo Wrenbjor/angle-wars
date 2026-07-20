@@ -66,6 +66,51 @@ describe('Pool', () => {
     expect(seen.size).toBe(2);
   });
 
+  it('forEachActive visits exactly the active instances after a release', () => {
+    // Matrix: visit-all — 3 acquired, 1 released → fn called for the 2 still active,
+    // never for the released one.
+    const pool = new Pool(() => ({}));
+    const a = pool.acquire();
+    const b = pool.acquire();
+    const c = pool.acquire();
+    pool.release(b);
+
+    const seen = [];
+    pool.forEachActive((o) => seen.push(o));
+    expect(seen).toContain(a);
+    expect(seen).toContain(c);
+    expect(seen).not.toContain(b); // released → not visited
+    expect(seen.length).toBe(2);
+  });
+
+  it('forEachActive is a no-op on an empty pool', () => {
+    // Matrix: empty pool — nothing acquired → fn is never called.
+    const pool = new Pool(() => ({}));
+    const fn = vi.fn();
+    pool.forEachActive(fn);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('forEachActive over a stable active set leaves counts unchanged across repeated calls', () => {
+    // Matrix: repeated iteration — N calls over a stable active set each visit the
+    // same set and never mutate activeCount/freeCount (no per-call growth).
+    const pool = new Pool(() => ({}));
+    const a = pool.acquire();
+    const b = pool.acquire();
+    pool.release(a); // 1 active (b), 1 free (a)
+
+    const activeBefore = pool.activeCount;
+    const freeBefore = pool.freeCount;
+    for (let i = 0; i < 5; i++) {
+      const seen = [];
+      pool.forEachActive((o) => seen.push(o));
+      expect(seen.length).toBe(1);
+      expect(seen[0]).toBe(b);
+      expect(pool.activeCount).toBe(activeBefore);
+      expect(pool.freeCount).toBe(freeBefore);
+    }
+  });
+
   it('throws when constructed without a factory function', () => {
     expect(() => new Pool()).toThrow(TypeError);
   });

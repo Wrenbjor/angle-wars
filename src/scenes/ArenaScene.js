@@ -620,18 +620,24 @@ export class ArenaScene extends Phaser.Scene {
     this._hitStopMs = 0;
     this._shakePhase = 0;
 
-    // --- Debug readout ------------------------------------------------------
-    this.debugText = this.add.text(
-      ARENA_BORDER_INSET + 8,
-      ARENA_BORDER_INSET + 8,
-      '',
-      { font: DEBUG_FONT, color: COLOR_DEBUG_TEXT },
-    );
-    // Pinned (scrollFactor 0): the Story 4.4 camera shake writes cameras.main
-    // scrollX/Y, which would otherwise jitter these non-diegetic readouts. Keeping
-    // the UI screen-fixed is readability over juice — the shake belongs to the
-    // gameplay world, not the score/debug text.
-    this.debugText.setScrollFactor(0);
+    // --- Debug readout (DEV-only) -------------------------------------------
+    // Developer FPS/sim-ticks diagnostic. Gated behind import.meta.env.DEV so a
+    // production `vite build` statically replaces the condition with `false` and
+    // tree-shakes the whole readout out of the shipped bundle — players never see
+    // it and it stays off the per-frame render path.
+    if (import.meta.env.DEV) {
+      this.debugText = this.add.text(
+        ARENA_BORDER_INSET + 8,
+        ARENA_BORDER_INSET + 8,
+        '',
+        { font: DEBUG_FONT, color: COLOR_DEBUG_TEXT },
+      );
+      // Pinned (scrollFactor 0): the Story 4.4 camera shake writes cameras.main
+      // scrollX/Y, which would otherwise jitter these non-diegetic readouts. Keeping
+      // the UI screen-fixed is readability over juice — the shake belongs to the
+      // gameplay world, not the score/debug text.
+      this.debugText.setScrollFactor(0);
+    }
 
     // --- HUD (score + lives) ------------------------------------------------
     // Live readout of the run economy + remaining lives, top-right so it does
@@ -796,10 +802,13 @@ export class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', togglePauseInput);
     this.input.keyboard.on('keydown-P', togglePauseInput);
 
-    // Sampling state for a once-per-second sim ticks/sec measurement.
-    this._lastSampleTicks = 0;
-    this._sampleAccumMs = 0;
-    this._ticksPerSec = 0;
+    // Sampling state for a once-per-second sim ticks/sec measurement. DEV-only —
+    // part of the debug readout, so it is initialized only when the readout exists.
+    if (import.meta.env.DEV) {
+      this._lastSampleTicks = 0;
+      this._sampleAccumMs = 0;
+      this._ticksPerSec = 0;
+    }
   }
 
   /**
@@ -1026,12 +1035,16 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.
-    this._sampleAccumMs += delta;
-    if (this._sampleAccumMs >= 1000) {
-      const ticked = this.simClock.ticks - this._lastSampleTicks;
-      this._ticksPerSec = (ticked * 1000) / this._sampleAccumMs;
-      this._lastSampleTicks = this.simClock.ticks;
-      this._sampleAccumMs = 0;
+    // DEV-only: gated so a production build eliminates the sampling from the
+    // per-frame path (mirrors the debug-text gate in create()).
+    if (import.meta.env.DEV) {
+      this._sampleAccumMs += delta;
+      if (this._sampleAccumMs >= 1000) {
+        const ticked = this.simClock.ticks - this._lastSampleTicks;
+        this._ticksPerSec = (ticked * 1000) / this._sampleAccumMs;
+        this._lastSampleTicks = this.simClock.ticks;
+        this._sampleAccumMs = 0;
+      }
     }
 
     // --- HUD + game-over overlay (render only; never advances the sim) -------
@@ -1051,14 +1064,18 @@ export class ArenaScene extends Phaser.Scene {
       this.gameOverScore.setText(`FINAL SCORE ${this.scoreState.score}`);
     }
 
-    const renderFps = Math.round(this.game.loop.actualFps);
-    this.debugText.setText(
-      [
-        `render FPS : ${renderFps}`,
-        `sim ticks/s: ${this._ticksPerSec.toFixed(1)}  (target ${(1000 / FIXED_STEP_MS).toFixed(1)})`,
-        `sim ticks  : ${this.simClock.ticks}`,
-        `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
-      ].join('\n'),
-    );
+    // DEV-only developer readout: the per-frame array + string build and setText
+    // are gated so a production build tree-shakes them off the render path.
+    if (import.meta.env.DEV) {
+      const renderFps = Math.round(this.game.loop.actualFps);
+      this.debugText.setText(
+        [
+          `render FPS : ${renderFps}`,
+          `sim ticks/s: ${this._ticksPerSec.toFixed(1)}  (target ${(1000 / FIXED_STEP_MS).toFixed(1)})`,
+          `sim ticks  : ${this.simClock.ticks}`,
+          `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
+        ].join('\n'),
+      );
+    }
   }
 }

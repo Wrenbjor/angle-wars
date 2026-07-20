@@ -53,6 +53,20 @@ export class FiringSystem extends System {
     // mutating the active set mid-iteration, so expired bullets are collected
     // here and released in a second pass. Reused every tick (no per-frame alloc).
     this._expired = [];
+    // Per-tick delta (seconds) stashed on `this` so the hoisted collector can read
+    // it without capturing a fresh per-tick closure (mirrors CollisionSystem's
+    // `_currentPool`). Set at the top of every fixedUpdate before iterating.
+    this._dtSec = 0;
+    // Hoisted expired-bullet collector — a stable instance-field arrow created once,
+    // so `forEachActive` reuses one closure instead of allocating a fresh arrow per
+    // tick. Advances each active bullet and collects any that left the arena.
+    this._collectExpired = (b) => {
+      b.x += b.vx * this._dtSec;
+      b.y += b.vy * this._dtSec;
+      if (isOutsideArena(b.x, b.y)) {
+        this._expired.push(b);
+      }
+    };
     // Fire-cadence accumulator (ms). Seeded to the interval so the first active
     // tick fires immediately (responsive), not after a full interval of delay.
     this._accumMs = FIRE_INTERVAL_MS;
@@ -79,15 +93,11 @@ export class FiringSystem extends System {
     this.shotsFiredCount = 0;
 
     // 1. Advance existing bullets; collect any that have left the arena. Runs
-    //    even when aim is inactive so in-flight bullets keep travelling.
+    //    even when aim is inactive so in-flight bullets keep travelling. Stash
+    //    dtSec on `this` so the hoisted collector reads it without a fresh closure.
+    this._dtSec = dtSec;
     this._expired.length = 0;
-    pool.forEachActive((b) => {
-      b.x += b.vx * dtSec;
-      b.y += b.vy * dtSec;
-      if (isOutsideArena(b.x, b.y)) {
-        this._expired.push(b);
-      }
-    });
+    pool.forEachActive(this._collectExpired);
     // Deferred release (second pass — safe to mutate the active set now).
     for (let i = 0; i < this._expired.length; i++) {
       pool.release(this._expired[i]);

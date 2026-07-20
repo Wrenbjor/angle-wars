@@ -318,6 +318,55 @@ describe('ParticleSystem — thrust trail', () => {
   });
 });
 
+describe('ParticleSystem — steady-state no-growth (NFR2)', () => {
+  it('does not grow the pool over >=500 steady-state churn steps (NFR2)', () => {
+    // Drive sustained emission that saturates the soft cap: enough bullet-kill
+    // snapshots that each tick refills to PARTICLE_MAX, plus continuous thrust so
+    // the trail path also churns. Particles expire (finite lifetime) and their
+    // slots are reused, so once the pool reaches its steady capacity the factory
+    // must never fire again — activeCount + freeCount stays flat.
+    const kills = Math.ceil(PARTICLE_MAX / PARTICLE_BURST_COUNT); // enough to hit the cap
+    const xs = [];
+    const ys = [];
+    for (let i = 0; i < kills; i++) {
+      xs.push((i % 100) + 1);
+      ys.push((i % 100) + 1);
+    }
+    const cs = fakeCollision(kills, xs, ys);
+    const system = new ParticleSystem(cs, fakeShip(640, 360, 0), fakeInput(1, 0), constRng(0.5));
+
+    // Warm up until the pool stops growing — loop-until-stable rather than a fixed
+    // step count, so a future particle-lifetime/cap re-tune can't snapshot capacity
+    // mid-growth (which would falsely fail the first steady-state assertion). Stable
+    // = total unchanged for 3 consecutive steps; bounded to avoid an infinite loop.
+    let capacity = system.pool.activeCount + system.pool.freeCount;
+    let stableStreak = 0;
+    for (let i = 0; i < 2000 && stableStreak < 3; i++) {
+      system.fixedUpdate(DT);
+      const total = system.pool.activeCount + system.pool.freeCount;
+      stableStreak = total === capacity ? stableStreak + 1 : 0;
+      capacity = total;
+    }
+    // The warm-up must actually have REACHED stability before the steady-state
+    // assertions below mean anything. Without this, a future particle-lifetime/cap
+    // re-tune that fails to plateau within 2000 steps would exit the loop mid-growth
+    // and snapshot a still-rising `capacity`, letting a slow leak pass the `toBe`
+    // checks against a moving baseline. Fail loudly instead of silently.
+    expect(stableStreak).toBeGreaterThanOrEqual(3);
+
+    // Steady state: over >=500 further steps the pool never grows and the live
+    // count never exceeds the cap (zero per-frame factory allocation).
+    for (let i = 0; i < 500; i++) {
+      system.fixedUpdate(DT);
+      expect(system.pool.activeCount + system.pool.freeCount).toBe(capacity);
+      expect(system.pool.activeCount).toBeLessThanOrEqual(PARTICLE_MAX);
+    }
+    // The cap actually bit — this exercised real saturation, not a trivial idle run.
+    expect(capacity).toBeLessThanOrEqual(PARTICLE_MAX);
+    expect(capacity).toBeGreaterThan(0);
+  });
+});
+
 describe('ParticleSystem — zero-alloc reuse', () => {
   it('reuses a freed slot on the next emission before growing the pool', () => {
     const cs = fakeCollision(1, [0], [0]);

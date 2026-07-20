@@ -42,6 +42,15 @@ describe('FiringSystem', () => {
     expect(system.bulletPool.activeCount).toBe(1);
   });
 
+  it('reuses the same hoisted expired-collector reference across ticks (NFR2)', () => {
+    // The collector is a stable constructor instance field, not a fresh per-tick
+    // closure — so forEachActive allocates no arrow per tick.
+    const { system } = makeSystem({ aim: [0, 1] });
+    const ref = system._collectExpired;
+    system.fixedUpdate(DT);
+    expect(system._collectExpired).toBe(ref);
+  });
+
   it('fires at a fixed cadence independent of tick size', () => {
     const T = 900; // ms of held aim
 
@@ -171,7 +180,7 @@ describe('FiringSystem', () => {
     // arena and despawn, keeping peak in-flight well under the prewarm. If total
     // capacity ever exceeded the prewarm, the factory ran — i.e. the steady
     // state allocated. Assert it never does, on every tick.
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 500; i++) {
       system.fixedUpdate(DT);
       expect(
         system.bulletPool.activeCount + system.bulletPool.freeCount,

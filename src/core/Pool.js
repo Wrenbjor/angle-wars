@@ -73,12 +73,21 @@ export class Pool {
    * otherwise add/remove active entries during iteration — mutating the active
    * Set mid-iteration is unsafe. Defer any releases until after iteration
    * completes (e.g. collect them into a list and release in a second pass).
+   *
+   * Iterates via `Set.prototype.forEach`, which walks the Set's internal
+   * backing directly — no `SetIterator` object is materialized per call (a
+   * `for..of` over the Set would allocate one every call). This is the single
+   * shared iteration seam every system funnels through, so keeping it
+   * zero-iterator-allocation removes the most frequent hot-loop allocation.
+   *
+   * ARITY: because this delegates to `Set.prototype.forEach`, `fn` is invoked
+   * with that method's full argument list `(value, value, set)`, not a single
+   * arg. Read only the first parameter, and do NOT pass a variadic function
+   * (e.g. `Array.prototype.push`, which would consume the extra `set` argument).
    * @param {(obj:T)=>void} fn
    */
   forEachActive(fn) {
-    for (const obj of this._active) {
-      fn(obj);
-    }
+    this._active.forEach(fn);
   }
 
   /**

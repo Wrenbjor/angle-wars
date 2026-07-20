@@ -118,6 +118,11 @@ export class BlackHoleSystem extends System {
       this._enemies.push(e);
       this._enemyOwners.push(this._currentPool);
     };
+    // Hoisted hole + bullet collectors — stable instance-field arrows created once
+    // (like `_collectEnemy`), so materializing the active sets reuses one closure
+    // each instead of allocating a fresh arrow per tick.
+    this._collectHole = (h) => this._holes.push(h);
+    this._collectBullet = (b) => this._bullets.push(b);
     this._consumedBullets = new Set();
     this._consumedEnemies = new Set();
     this._releaseBullets = [];
@@ -138,7 +143,7 @@ export class BlackHoleSystem extends System {
     // reusable scratch (length reset, no alloc), recording each enemy's owner.
     const holes = this._holes;
     holes.length = 0;
-    this.holePool.forEachActive((h) => holes.push(h));
+    this.holePool.forEachActive(this._collectHole);
 
     if (holes.length > 0) {
       const bullets = this._bullets;
@@ -147,7 +152,7 @@ export class BlackHoleSystem extends System {
       bullets.length = 0;
       enemies.length = 0;
       owners.length = 0;
-      this.bulletPool.forEachActive((b) => bullets.push(b));
+      this.bulletPool.forEachActive(this._collectBullet);
       const pools = this.enemyPools;
       for (let p = 0; p < pools.length; p++) {
         this._currentPool = pools[p];
