@@ -121,7 +121,8 @@ origin: migrated from legacy ledger (review of spec-2-3-snake-enemy.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-3-snake-enemy.md`
 location: `SnakeSystem` (follow-the-leader constraint on wall reversal)
 reason: Adversarial and edge-case layers converged on the bounce "crumple." It is a genuine emergent consequence of the spec-committed motion model (not a spec deviation and not a correctness bug): the followers reposition only when `dist > SPACING`, so a head reversing toward its own body overruns it until the gaps re-open. Best addressed with the Epic 4 body rendering pass and post-launch feel tuning (how visible the compression reads), alongside any body-reversal handling that a real slither animation introduces.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-snake-body-segment-respacing
 
 ### DW-15: Snakes are never despawned or capped and, being indifferent to the player, are removed ONLY when every one of their segments is shot, so over a run whole 8-segment chains accumulate (one per `SNAKE_SPAWN_INTERVAL_MS`); past `SNAKE_SEGMENT_POOL_PREWARM` (64, ≈8 snakes) the shared segment pool grows lazily (one-time factory allocation per new segment — not a per-frame hot-loop allocation) and on-screen clutter / collision cost climb. Post-launch tuning entangled with Story 2.5's spawn cap/despawn and difficulty ramp.
 
@@ -181,7 +182,8 @@ origin: migrated from legacy ledger (review of spec-2-4-black-hole-hazard.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-4-black-hole-hazard.md`
 location: `BlackHoleSystem` gravity nudge × `SnakeSystem` follow-the-leader constraint
 reason: Adversarial and intent-alignment layers converged. Real but low-impact: a snake compressed enough to clump is usually being absorbed (segments within the hole body are consumed), and a clumped snake is still a lethal body; the effect is a visual/hitbox read degradation. Fixing it cleanly (pull only the head, or bidirectional re-spacing) would require `BlackHoleSystem` to distinguish snake heads from bodies — coupling it to `SnakeSystem` internals the spec forbids — so it is a snake motion-model / feel item entangled with the existing deferred snake wall-grind tuning (Story 2.5) rather than an AC violation.
-status: open
+status: done 2026-07-20
+resolution: resolved by sweep bundle dw-snake-body-segment-respacing
 
 ### DW-22: `BlackHoleSystem` runs late in the tick and mutates enemy positions (gravity) immediately before `PlayerDeathSystem` tests ship↔enemy contact on those mutated positions, so a well can drag an enemy onto the ship for a same-tick, hard-to-avoid death near the hole.
 

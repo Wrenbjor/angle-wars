@@ -193,11 +193,13 @@ export class SnakeSystem extends System {
     }
     // A later run: new snake. Re-derive the base heading from the direction the
     // body trails behind the new head (head minus the next segment). A lone
-    // segment has no body axis — and coincident first two segments (the follow
-    // constraint never pushes them apart, and a wall reversal can fold the head
-    // over its body) have a degenerate axis where atan2(0,0) would return 0 and
-    // point the fragment due-east arbitrarily — so both cases inherit the
-    // parent's base heading instead.
+    // segment has no body axis — and exactly-coincident first two segments have
+    // a degenerate axis where atan2(0,0) would return 0 and point the fragment
+    // due-east arbitrarily. Bidirectional respacing pushes any non-coincident
+    // compressed pair apart, so a degenerate axis now arises only from a truly
+    // coincident (dist === 0) pair — which the follow loop's `dist > 0` guard
+    // leaves unseparated — or a wall fold. Both cases inherit the parent's base
+    // heading instead.
     let headingRad;
     const dx = run.length >= 2 ? run[0].x - run[1].x : 0;
     const dy = run.length >= 2 ? run[0].y - run[1].y : 0;
@@ -278,18 +280,19 @@ export class SnakeSystem extends System {
         snake.headingRad = -snake.headingRad;
       }
 
-      // Follow-the-leader, head→tail: each segment is pulled to exactly the fixed
-      // spacing behind its already-updated leader, only when farther than the
-      // spacing (never pushed closer). A geometric constraint with no dt — frame-
-      // rate independent by construction.
+      // Follow-the-leader, head→tail: snap each segment to exactly the fixed
+      // spacing behind its already-updated leader — bidirectional. Pulls a
+      // stretched gap in AND pushes a compressed gap back out along the current
+      // leader→segment axis. Skip the coincident pair (dist 0 has no axis). A
+      // geometric constraint with no dt — frame-rate independent by construction.
       for (let i = 1; i < segs.length; i++) {
         const leader = segs[i - 1];
         const seg = segs[i];
         const dx = leader.x - seg.x;
         const dy = leader.y - seg.y;
         const dist = Math.hypot(dx, dy);
-        if (dist > SNAKE_SEGMENT_SPACING) {
-          const k = SNAKE_SEGMENT_SPACING / dist;
+        if (dist > 0) {
+          const k = SNAKE_SEGMENT_SPACING / dist; // >1 pushes out, <1 pulls in, 1 no-op
           seg.x = leader.x - dx * k;
           seg.y = leader.y - dy * k;
         }

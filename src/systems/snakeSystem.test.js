@@ -230,20 +230,71 @@ describe('SnakeSystem — follow-the-leader (geometric, dt-free)', () => {
     expect(dist).toBeCloseTo(SNAKE_SEGMENT_SPACING, 6);
   });
 
-  it('does not move a follower already within SPACING of its leader', () => {
+  it('pushes a compressed follower back out to exactly SPACING (AC compressed gap)', () => {
     const system = makeSystem();
     const snake = placeSnake(system, 400, 360, 0, 1, 0); // lone head
     const follower = system.enemyPool.acquire();
-    follower.x = 400; // co-located with the head (dist 0 < SPACING)
+    follower.x = 390; // 10px behind the head, well under SPACING (22)
     follower.y = 360;
     snake.segments.push(follower);
-    const fx = follower.x;
-    const fy = follower.y;
 
     system.fixedUpdate(DT);
-    // The head drifts ~2px away (still < SPACING), so the follower is not pulled.
-    expect(follower.x).toBe(fx);
-    expect(follower.y).toBe(fy);
+    const head = snake.segments[0];
+    // Compressed gap is re-strung: the follower is pushed out to exactly SPACING
+    // along the head→follower axis (bidirectional constraint).
+    const dist = Math.hypot(head.x - follower.x, head.y - follower.y);
+    expect(dist).toBeCloseTo(SNAKE_SEGMENT_SPACING, 6);
+    // Pushed out on the same side (behind the head, −x), never flipped past it.
+    expect(follower.x).toBeLessThan(head.x);
+  });
+
+  it('re-separates a whole chain clumped below SPACING to ~SPACING on every gap (AC chain)', () => {
+    // Squeeze the body far below spacing (as a wall overrun / black-hole pull
+    // would), then run several steps: the bidirectional push restores every
+    // adjacent gap to exactly SPACING.
+    const system = makeSystem();
+    const snake = placeSnake(system, 400, 360, 0, 1, 0); // lone head
+    for (let i = 1; i < 5; i++) {
+      const seg = system.enemyPool.acquire();
+      seg.x = 400 - i * 4; // 4px gaps (<< SPACING) — a bunched clump
+      seg.y = 360;
+      snake.segments.push(seg);
+    }
+    for (let s = 0; s < 30; s++) system.fixedUpdate(DT);
+
+    const segs = snake.segments;
+    for (let i = 1; i < segs.length; i++) {
+      const d = Math.hypot(segs[i - 1].x - segs[i].x, segs[i - 1].y - segs[i].y);
+      expect(d).toBeCloseTo(SNAKE_SEGMENT_SPACING, 4);
+    }
+  });
+
+  it('leaves a coincident pair finite (dist === 0 guard, no NaN)', () => {
+    const system = makeSystem();
+    const snake = placeSnake(system, 400, 360, 0, 1, 0); // lone head
+    const follower = system.enemyPool.acquire();
+    // Place the follower at the head's POST-integration position so that at the
+    // division site (the follow loop runs AFTER the head integrates) dist === 0
+    // exactly. Head starts (400,360), phase 0, heading 0 → integrates to
+    // (400 + SNAKE_HEAD_SPEED * DT_SEC, 360).
+    follower.x = 400 + SNAKE_HEAD_SPEED * DT_SEC;
+    follower.y = 360;
+    snake.segments.push(follower);
+
+    system.fixedUpdate(DT);
+    // The guard skips the coincident pair: no divide-by-zero, coords stay finite
+    // (this genuinely goes NaN if the `dist > 0` guard is removed).
+    expect(Number.isFinite(follower.x)).toBe(true);
+    expect(Number.isFinite(follower.y)).toBe(true);
+
+    // A later tick: head motion opens a non-zero gap, so the pair re-separates
+    // to exactly SPACING — proving the "re-separates on a later tick" claim.
+    system.fixedUpdate(DT);
+    const head = snake.segments[0];
+    expect(Math.hypot(head.x - follower.x, head.y - follower.y)).toBeCloseTo(
+      SNAKE_SEGMENT_SPACING,
+      6
+    );
   });
 
   it('moves as a connected body: every adjacent gap collapses toward SPACING (AC1)', () => {
@@ -265,6 +316,62 @@ describe('SnakeSystem — follow-the-leader (geometric, dt-free)', () => {
       // Each gap is pulled to exactly SPACING (never exceeds it once collapsed).
       expect(d).toBeCloseTo(SNAKE_SEGMENT_SPACING, 4);
     }
+  });
+
+  it('re-strings the body after the head bounces off a wall and overruns it (DW-14)', () => {
+    // Real integrate + wall-reflect + follow path: the head sits just inside the
+    // +x wall heading +x, bounces, and reverses back over its own interior body.
+    // Bidirectional respacing must re-string the compressed body afterward.
+    const system = makeSystem();
+    const snake = placeSnake(system, MAX_X - 1, 360, 0, 4, 0); // head near +x wall
+    for (let s = 0; s < 30; s++) system.fixedUpdate(DT);
+
+    const segs = snake.segments;
+    // (a) Every adjacent gap re-strings to SPACING after the head overruns.
+    for (let i = 1; i < segs.length; i++) {
+      const d = Math.hypot(segs[i - 1].x - segs[i].x, segs[i - 1].y - segs[i].y);
+      expect(d).toBeCloseTo(SNAKE_SEGMENT_SPACING, 4);
+    }
+    // (b) Every segment stays a live pooled instance — still individually lethal.
+    expect(system.enemyPool.activeCount).toBe(4);
+    // (c) No coordinate went NaN through the re-stringing.
+    for (const seg of segs) {
+      expect(Number.isFinite(seg.x)).toBe(true);
+      expect(Number.isFinite(seg.y)).toBe(true);
+    }
+  });
+
+  it('restores gap geometry to SPACING independent of fixed-step size (dt-free)', () => {
+    // The constraint carries no dt: a compressed chain restores every INTER-
+    // SEGMENT gap to SPACING regardless of step size. Absolute positions differ
+    // (the head integrates by dt) but the gaps do not.
+    function seedCompressed() {
+      const system = makeSystem();
+      const snake = placeSnake(system, 400, 360, 0, 1, 0); // lone head
+      for (let i = 1; i < 4; i++) {
+        const seg = system.enemyPool.acquire();
+        seg.x = 400 - i * 4; // 4px gaps (<< SPACING) — bunched clump
+        seg.y = 360;
+        snake.segments.push(seg);
+      }
+      return { system, snake };
+    }
+    function assertGapsAtSpacing(snake) {
+      const segs = snake.segments;
+      for (let i = 1; i < segs.length; i++) {
+        const d = Math.hypot(segs[i - 1].x - segs[i].x, segs[i - 1].y - segs[i].y);
+        expect(d).toBeCloseTo(SNAKE_SEGMENT_SPACING, 6);
+      }
+    }
+
+    const a = seedCompressed();
+    const b = seedCompressed();
+    a.system.fixedUpdate(DT); // one step at the fixed step size
+    b.system.fixedUpdate(40); // one step at a different step size
+
+    // Identical gap geometry in both, despite different dt.
+    assertGapsAtSpacing(a.snake);
+    assertGapsAtSpacing(b.snake);
   });
 });
 
