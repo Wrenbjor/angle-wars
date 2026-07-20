@@ -3,8 +3,10 @@ import {
   applyRadialDeadzone,
   clampToUnitCircle,
   normalizeToUnit,
+  isBombButton,
 } from './inputMath.js';
 import { InputState } from './InputState.js';
+import { MOVE_DEADZONE, AIM_DEADZONE } from '../config/constants.js';
 
 const DZ = 0.25;
 
@@ -88,6 +90,34 @@ describe('normalizeToUnit', () => {
     expect(r.x).toBe(0);
     expect(r.y).toBeCloseTo(1, 9);
     expect(r.mag).toBeCloseTo(1, 9);
+  });
+});
+
+describe('per-channel deadzone split (MOVE vs AIM)', () => {
+  it('keeps AIM larger than MOVE so a probe between them splits', () => {
+    expect(AIM_DEADZONE).toBeGreaterThan(MOVE_DEADZONE);
+
+    // Probe magnitude derived from the constants (not hardcoded), so a re-tune
+    // of either deadzone cannot break this behavioral assertion.
+    const probe = (MOVE_DEADZONE + AIM_DEADZONE) / 2;
+
+    // Right stick @ AIM_DEADZONE → dead (no aim rotation from a brushed stick).
+    expect(applyRadialDeadzone(probe, 0, AIM_DEADZONE)).toEqual({ x: 0, y: 0 });
+    // Left stick @ MOVE_DEADZONE → non-zero (the ship still moves).
+    expect(applyRadialDeadzone(probe, 0, MOVE_DEADZONE).x).toBeGreaterThan(0);
+  });
+});
+
+describe('isBombButton', () => {
+  it('is true for either bumper (indices 4 and 5)', () => {
+    expect(isBombButton(4)).toBe(true);
+    expect(isBombButton(5)).toBe(true);
+  });
+
+  it('is false for face buttons, sticks, and undefined', () => {
+    expect(isBombButton(0)).toBe(false); // A / face
+    expect(isBombButton(10)).toBe(false); // a stick click
+    expect(isBombButton(undefined)).toBe(false);
   });
 });
 

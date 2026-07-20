@@ -47,10 +47,20 @@ export const SHIP_MIN_TURN_SPEED = 6;
 export const SHIP_RADIUS = 16;
 
 // --- Input ------------------------------------------------------------------
-// Radial deadzone for the gamepad left stick: intent magnitudes at or below
-// this are dropped to zero (no drift), and response is rescaled to start at 0
-// at the deadzone edge so there is no jump. The right stick (aim) reuses it.
-export const INPUT_DEADZONE = 0.25;
+// Per-channel radial deadzones for the gamepad sticks: intent magnitudes at or
+// below the channel's deadzone are dropped to zero (no drift), and the response
+// is rescaled to start at 0 at the deadzone edge so there is no jump. Both feed
+// the shared applyRadialDeadzone. The AIM deadzone is deliberately LARGER than
+// the MOVE deadzone: aim rotation from a barely-touched/resting right stick is
+// more visible (it swings the fire vector) than a tiny translation, so a resting
+// or brushed right stick must never rotate the fire direction.
+export const MOVE_DEADZONE = 0.25;
+export const AIM_DEADZONE = 0.3;
+// Gamepad button indices (standard mapping) that trigger a smart bomb: the two
+// shoulder bumpers (LB=4, RB=5). Either fires the bomb, mirroring "either Shift"
+// on the keyboard. Edge-triggered through InputState.queueBomb (one press → one
+// detonation); never polled and re-queued per frame.
+export const GAMEPAD_BOMB_BUTTONS = [4, 5];
 
 // --- Firing / bullets (feel) ------------------------------------------------
 // Continuous auto-fire: while the aim channel is active the FiringSystem spawns

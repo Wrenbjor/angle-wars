@@ -3,6 +3,8 @@
 // Kept isolated from any Phaser types so they can be unit-tested headlessly and
 // reused by both the gamepad and keyboard paths.
 
+import { GAMEPAD_BOMB_BUTTONS } from '../config/constants.js';
+
 /**
  * Apply a radial (circular) deadzone to a 2D stick vector.
  *
@@ -68,4 +70,18 @@ export function normalizeToUnit(x, y) {
     return { x: 0, y: 0, mag: 0 };
   }
   return { x: x / mag, y: y / mag, mag };
+}
+
+/**
+ * Whether a gamepad button index maps to the smart-bomb action (either bumper).
+ *
+ * Pure lookup against the configured GAMEPAD_BOMB_BUTTONS so the sampler's
+ * edge-triggered gamepad listener carries no inline button numbers. A
+ * non-numeric / undefined index (a button with no index) is not a bomb button.
+ *
+ * @param {number} index The pressed gamepad button's index.
+ * @returns {boolean} True only for the configured bumper indices.
+ */
+export function isBombButton(index) {
+  return GAMEPAD_BOMB_BUTTONS.includes(index);
 }
