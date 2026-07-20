@@ -490,6 +490,63 @@ export const GRID_WARP_MAX_DISPLACEMENT = 60;
 // so the visual warp footprint equals the actual gravity footprint (Story 2.4).
 export const GRID_WARP_RADIUS = BLACKHOLE_GRAVITY_RADIUS;
 
+// --- Pooled particle system (Story 4.3) -------------------------------------
+// The signature Geometry Wars "everything sprays sparks" juice (FR12, NFR2): a
+// pool-backed particle system that emits a neon BURST per bullet-killed enemy and
+// a throttled thrust TRAIL behind the moving ship. ParticleSystem (the Phaser-free
+// sim seam) owns a Pool of plain particle objects, advances/expires them each
+// fixed step with zero steady-state allocation, and is bounded by PARTICLE_MAX so
+// "thousands live" is supported by the cap + pool reuse (never unbounded growth).
+// ArenaScene renders every live particle as an additive-blend neon dot glowing
+// under the single Story 4.1 camera Bloom. Every value here is a documented
+// post-launch placeholder (tuned later), mirroring the GRID_* / NEON_BLOOM_*
+// discipline — no inline magic numbers in the system or at the render call site.
+
+// Hard cap on simultaneously-live particles. Emission that would exceed this is
+// skipped, so the pool (and per-frame render cost) is bounded — this is what
+// makes "thousands live" safe for NFR1 rather than an unbounded leak.
+export const PARTICLE_MAX = 2000;
+// Number of particles sprayed per bullet-killed enemy (one burst per kill).
+export const PARTICLE_BURST_COUNT = 14;
+// Burst speed range (px/s): each burst particle gets a uniform random speed in
+// [MIN, MAX] along a uniform random heading, so the spray disperses radially.
+export const PARTICLE_BURST_SPEED_MIN = 60;
+export const PARTICLE_BURST_SPEED_MAX = 280;
+// Burst particle lifetime (ms): it ages by the fixed-step dt and its slot frees
+// once ageMs reaches this (frame-rate-independent).
+export const PARTICLE_BURST_LIFETIME_MS = 620;
+// Burst particle draw radius (px) for the additive neon dot.
+export const PARTICLE_BURST_SIZE = 2.5;
+// Burst particle color (0xRRGGBB): a warm neon that reads as an explosion spark
+// once the camera bloom bleeds it.
+export const PARTICLE_BURST_COLOR = 0xffdd55;
+// Velocity retained after one second of drift (0..1): particle velocity decays by
+// this factor per second (exponential drag, interpolated per fixed step), so a
+// burst flings out fast then slows as it fades. Smaller = quicker settle.
+export const PARTICLE_DRAG_RETAIN_PER_SEC = 0.02;
+// Thrust-intent threshold: the ship leaves a trail only while
+// hypot(moveX, moveY) >= this, so a resting/near-still stick emits nothing.
+export const PARTICLE_THRUST_MIN_INTENT = 0.2;
+// Trail throttle (ms): while thrusting, ONE trail particle is emitted per this
+// much accumulated fixed-step time (frame-rate-independent cadence). Lower =
+// denser trail.
+export const PARTICLE_TRAIL_INTERVAL_MS = 24;
+// Trail particle lifetime (ms): shorter than the burst so the trail is a tight
+// fading ribbon rather than a lingering cloud.
+export const PARTICLE_TRAIL_LIFETIME_MS = 420;
+// Trail particle drift speed (px/s), directed opposite the ship's facing (± the
+// spread below) so the trail streams out behind the ship.
+export const PARTICLE_TRAIL_SPEED = 90;
+// Trail heading spread (radians): each trail particle's heading is jittered by a
+// uniform random angle in [−this, +this] around "opposite the ship facing" so the
+// ribbon has a little natural width.
+export const PARTICLE_TRAIL_SPREAD_RAD = Math.PI / 12; // 15°
+// Trail particle draw radius (px) for the additive neon dot.
+export const PARTICLE_TRAIL_SIZE = 2;
+// Trail particle color (0xRRGGBB): the ship's own neon hue so the trail reads as
+// its thruster wash.
+export const PARTICLE_TRAIL_COLOR = 0x66ccff;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';

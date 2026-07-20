@@ -76,6 +76,8 @@ import {
   packGridUniforms,
 } from './gridField.js';
 import { GridFieldSystem } from '../systems/GridFieldSystem.js';
+import { ParticleSystem } from '../systems/ParticleSystem.js';
+import { particleAlpha } from './particleStyle.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -369,6 +371,26 @@ export class ArenaScene extends Phaser.Scene {
     );
     this.world.addSystem(this.gridFieldSystem);
 
+    // --- Pooled particle system (Story 4.3) ---------------------------------
+    // Registered LAST — after GridFieldSystem — so within every fixed tick each
+    // input it reads is already final: collisionSystem.bulletKillCount/bulletKillX/Y
+    // (this tick's bullet kills only, with recycle-proof kill-time snapshots — the
+    // SAME source the grid ripple reads), the post-move ship position/facing, and
+    // the render-sampled inputState move intent. It owns its own particle Pool and
+    // ONLY mutates that pool (no gameplay effect — a pure read-only observer). A
+    // fresh instance each run (scene.restart) resets particles to none, matching
+    // GridFieldSystem. The render loop draws its active pool as additive neon dots.
+    this.particleSystem = new ParticleSystem(
+      this.collisionSystem,
+      this.ship,
+      this.inputState,
+    );
+    this.world.addSystem(this.particleSystem);
+    // Particles are additive-blend neon dots, cleared and redrawn each render frame
+    // from the active pool (per-particle color + particleAlpha-derived alpha). Zero
+    // per-frame allocation (mirrors the bullet render). Glows under the camera Bloom.
+    this.particleGraphics = this.add.graphics();
+
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
     // frame from the active pool. Epic 4 replaces this with the aesthetic.
     this.seekerGraphics = this.add.graphics();
@@ -434,6 +456,7 @@ export class ArenaScene extends Phaser.Scene {
         this.snakeGraphics,
         this.blackHoleGraphics,
         this.bombShockwaveGraphics,
+        this.particleGraphics,
         this.borderGraphics,
       ],
       Phaser.BlendModes.ADD,
@@ -656,6 +679,18 @@ export class ArenaScene extends Phaser.Scene {
       swg.lineStyle(ARENA_BORDER_THICKNESS, COLOR_BOMB_SHOCKWAVE, t);
       swg.strokeCircle(this.bombSystem.shockwaveX, this.bombSystem.shockwaveY, radius);
     }
+
+    // Redraw active particles from the pool: clear once, then a filled neon dot per
+    // live particle at its own color, size, and age-derived alpha (particleAlpha).
+    // Additive blend + camera bloom make each dot glow. Rendering reads the sim
+    // state; it never advances it. Zero per-frame allocation (mirrors the bullet
+    // render). (Story 4.3)
+    const ptg = this.particleGraphics;
+    ptg.clear();
+    this.particleSystem.pool.forEachActive((p) => {
+      ptg.fillStyle(p.color, particleAlpha(p.ageMs, p.lifeMs));
+      ptg.fillCircle(p.x, p.y, p.size);
+    });
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.
     this._sampleAccumMs += delta;
