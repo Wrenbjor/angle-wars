@@ -1,6 +1,7 @@
 import { System } from '../core/System.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { PLAYER_INVULN_MS } from '../config/constants.js';
+import { resetMultiplier } from '../state/ScoreState.js';
 
 // PlayerDeathSystem — ship↔enemy death, lives, respawn, invulnerability, and the
 // game-over flag (Phaser-free).
@@ -43,12 +44,18 @@ export class PlayerDeathSystem extends System {
    *   (one per archetype) whose active instances are tested against the ship.
    * @param {{lives:number, invulnMs:number, gameOver:boolean}} playerState
    *   Shared player lifecycle state (mutated here).
+   * @param {{multiplier:number, multiplierKills:number}|null} [scoreState=null]
+   *   Optional shared run-economy state. When provided, the multiplier and its
+   *   kill-progress are reset to their start values on every death (both a
+   *   respawning death and the final game-over death) — the RE1 lose-the-streak
+   *   rule (FR8). Optional so callers without a score surface stay unbroken.
    */
-  constructor(ship, enemyPools, playerState) {
+  constructor(ship, enemyPools, playerState, scoreState = null) {
     super();
     this.ship = ship;
     this.enemyPools = enemyPools;
     this.playerState = playerState;
+    this.scoreState = scoreState;
 
     // Reusable scratch: materialized union of active enemies, refilled each tick.
     this._enemies = [];
@@ -118,6 +125,13 @@ export class PlayerDeathSystem extends System {
           // Last life: game-over. Do not respawn or grant invulnerability.
           ps.lives = 0;
           ps.gameOver = true;
+        }
+        // FR8: wipe the run multiplier (and its progress) the instant the player
+        // dies — both a respawning death and the final game-over death. Guarded
+        // so a system built without a score surface still runs the death flow
+        // unchanged. Score itself is untouched: you keep the points, lose the streak.
+        if (this.scoreState) {
+          resetMultiplier(this.scoreState);
         }
         break;
       }

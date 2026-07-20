@@ -254,6 +254,8 @@ export class ArenaScene extends Phaser.Scene {
       this.ship,
       this.deathPools,
       this.playerState,
+      // Story 3.1: the death seam resets the run multiplier on every death.
+      this.scoreState,
     );
     this.world.addSystem(this.playerDeathSystem);
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
@@ -508,7 +510,7 @@ export class ArenaScene extends Phaser.Scene {
     // Read fresh each frame so a kill (score) or a death (lives) shows on the
     // very next frame.
     this.hudText.setText(
-      `SCORE ${this.scoreState.score}\nLIVES ${this.playerState.lives}`,
+      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nLIVES ${this.playerState.lives}`,
     );
 
     const over = this.playerState.gameOver;

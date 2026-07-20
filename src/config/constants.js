@@ -113,8 +113,9 @@ export const GREEN_SQUARE_THREAT_RADIUS = 90;
 // Idle instances prewarmed into the pool at construction so the steady state
 // never allocates (mirrors the Seeker pool prewarm; grows lazily beyond it).
 export const GREEN_SQUARE_POOL_PREWARM = 32;
-// Base score awarded per Green Square kill, carried on each instance and summed
-// unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never fold it in).
+// Base score awarded per Green Square kill, carried on each instance. The
+// ScoringSystem multiplies this base by the run multiplier at the shared per-kill
+// seam; keep this a flat per-type base — never fold the multiplier into it.
 export const GREEN_SQUARE_SCORE = 150;
 
 // --- Pinwheel / Wanderer enemy (feel) ---------------------------------------
@@ -144,8 +145,9 @@ export const PINWHEEL_WANDER_MAX_TURN_RAD = Math.PI / 6; // 30°
 // Idle instances prewarmed into the pool at construction so the steady state
 // never allocates (mirrors the Seeker/Green Square pools; grows lazily beyond it).
 export const PINWHEEL_POOL_PREWARM = 32;
-// Base score awarded per Pinwheel kill, carried on each instance and summed
-// unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never fold it in).
+// Base score awarded per Pinwheel kill, carried on each instance. The
+// ScoringSystem multiplies this base by the run multiplier at the shared per-kill
+// seam; keep this a flat per-type base — never fold the multiplier into it.
 export const PINWHEEL_SCORE = 125;
 
 // --- Snake enemy (feel) -----------------------------------------------------
@@ -187,9 +189,10 @@ export const SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC = 3.0;
 // only on spawn events — mirrors the other archetype pools). Sized for several
 // full snakes at once (SEGMENT_COUNT each).
 export const SNAKE_SEGMENT_POOL_PREWARM = 64;
-// Base score awarded per killed SEGMENT (head or body), carried on each instance
-// and summed unmultiplied by the ScoringSystem (the multiplier is Epic 3 — never
-// fold it in). A whole snake is worth SEGMENT_COUNT × this.
+// Base score awarded per killed SEGMENT (head or body), carried on each instance.
+// The ScoringSystem multiplies this base by the run multiplier at the shared
+// per-kill seam; keep this a flat per-type base — never fold the multiplier in.
+// A whole snake is worth SEGMENT_COUNT × this (× the multiplier in effect).
 export const SNAKE_SEGMENT_SCORE = 75;
 
 // --- Spawn Director (escalation / mix / cap) --------------------------------
@@ -318,7 +321,8 @@ export const BLACKHOLE_POOL_PREWARM = 2;
 // Detonation payout: score credited directly to ScoreState when a hole is
 // destroyed. An event payout (not a per-tick one-hit kill), so it is added to the
 // shared score surface directly, NEVER through the killedEnemies/ScoringSystem
-// seam and NEVER multiplied (the multiplier is Epic 3).
+// seam and so NEVER multiplied by the run multiplier — this hazard credit stays
+// flat by design (the multiplier applies only to enemy-kill awards at the seam).
 export const BLACKHOLE_SCORE = 1000;
 
 // --- Player death / lives (feel) --------------------------------------------
@@ -338,10 +342,25 @@ export const PLAYER_INVULN_BLINK_MS = 120;
 
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
-// base value (carried on each Seeker instance) summed across kills each tick —
-// NEVER multiplied here. The score multiplier is deliberately deferred to
-// Epic 3 / Story 3.1; do not fold a multiplier into this value.
+// base value (carried on each Seeker instance) summed across kills each tick.
+// The ScoringSystem multiplies this base by the current run multiplier (below)
+// at the single per-kill seam; the base value itself stays a flat per-type
+// constant here — do not fold a multiplier into this value.
 export const SEEKER_SCORE = 100;
+
+// Score multiplier (Story 3.1): the RE1 run economy. Every per-kill award at the
+// ScoringSystem seam is base × the current multiplier. The multiplier starts at
+// START, climbs one step for every KILLS_PER_STEP kills without dying, is hard
+// capped at MAX, and is reset to START the instant the player dies. All tuning
+// lives here — no inline magic numbers on the scoring hot path.
+// Initial (and post-death reset) multiplier value.
+export const SCORE_MULTIPLIER_START = 1;
+// Hard cap: the multiplier never exceeds this (RE1 fidelity, 10× ceiling).
+export const SCORE_MULTIPLIER_MAX = 10;
+// Kills required to advance the multiplier by one step (tunable placeholder,
+// tuned post-launch). Progress carries no wasted kills within a step but is
+// frozen once the cap is reached.
+export const SCORE_MULTIPLIER_KILLS_PER_STEP = 5;
 
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;

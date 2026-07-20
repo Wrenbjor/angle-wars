@@ -6,6 +6,7 @@ import { createSeeker } from '../entities/Seeker.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createPlayerState } from '../state/PlayerState.js';
+import { createScoreState } from '../state/ScoreState.js';
 import {
   FIXED_STEP_MS,
   PLAYER_INVULN_MS,
@@ -15,6 +16,7 @@ import {
   GREEN_SQUARE_RADIUS,
   ARENA_WIDTH,
   ARENA_HEIGHT,
+  SCORE_MULTIPLIER_START,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -351,6 +353,97 @@ describe('PlayerDeathSystem — composed with the real EnemySystem mover (Story 
     death.fixedUpdate(DT);
     expect(playerState.lives).toBe(PLAYER_START_LIVES);
     expect(playerState.gameOver).toBe(false);
+  });
+});
+
+describe('PlayerDeathSystem — multiplier reset on death (Story 3.1, FR8)', () => {
+  // A ship, seeker pool, player state, score state, and a death system wired
+  // with the score state (the optional 4th constructor param).
+  function makeSystemWithScore() {
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const playerState = createPlayerState();
+    const scoreState = createScoreState();
+    const system = new PlayerDeathSystem(
+      ship,
+      [enemyPool],
+      playerState,
+      scoreState,
+    );
+    return { ship, enemyPool, playerState, scoreState, system };
+  }
+
+  it('a respawning death resets the multiplier and its progress to start/0', () => {
+    const { ship, enemyPool, playerState, scoreState, system } =
+      makeSystemWithScore();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // overlapping → death
+    // A climbed multiplier with progress toward the next step.
+    scoreState.multiplier = 7;
+    scoreState.multiplierKills = 3;
+    scoreState.score = 4200;
+
+    system.fixedUpdate(DT);
+
+    // Respawning death (lives remain).
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    // Multiplier + progress wiped; score itself untouched (keep points, lose streak).
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.multiplierKills).toBe(0);
+    expect(scoreState.score).toBe(4200);
+  });
+
+  it('the final game-over death also resets the multiplier to start/0', () => {
+    const { ship, enemyPool, playerState, scoreState, system } =
+      makeSystemWithScore();
+    playerState.lives = 1; // last life → game-over
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+    scoreState.multiplier = 10;
+    scoreState.multiplierKills = 2;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(0);
+    expect(playerState.gameOver).toBe(true);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.multiplierKills).toBe(0);
+  });
+
+  it('does not reset the multiplier when no death occurs', () => {
+    const { ship, enemyPool, playerState, scoreState, system } =
+      makeSystemWithScore();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 500, 500); // far away → no contact
+    scoreState.multiplier = 5;
+    scoreState.multiplierKills = 4;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(scoreState.multiplier).toBe(5);
+    expect(scoreState.multiplierKills).toBe(4);
+  });
+
+  it('a system built without a scoreState still runs the death flow unchanged', () => {
+    // No 4th arg → scoreState defaults to null; the death seam must not throw and
+    // must apply the normal death flow (this is makeSystem() from the top of file).
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // overlapping → death
+
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(ship.x).toBe(CENTER_X); // respawned to center
+    expect(ship.y).toBe(CENTER_Y);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
   });
 });
 
