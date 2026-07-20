@@ -6,11 +6,19 @@ import {
   SPAWN_DIRECTOR_MAX_ACTIVE,
 } from '../config/constants.js';
 
-// SpawnDirector — the single escalating spawn authority for the four one-hit
-// combat archetypes (Seeker, Green Square, Pinwheel, Snake). Phaser-free.
+// SpawnDirector — the single escalating spawn authority for its governed
+// spawnables. Phaser-free.
 //
-// The four combat systems no longer self-spawn: each keeps its pool + movement
-// and exposes a public `spawn()`. This director owns WHEN and WHICH:
+// It governs the four one-hit combat archetypes (Seeker, Green Square, Pinwheel,
+// Snake) PLUS a fifth spawnable, the Mirror Reflector (Story 6.3). The reflector is
+// NOT a one-hit archetype — it is immune to gunfire and destroyed only by flying
+// through its center — but it spawns through the SAME director + telegraph and counts
+// toward the global cap like any other. The director is archetype-generic (it only
+// needs each spawnable's `spawn()` + `enemyPool.activeCount`), so adding the reflector
+// required no logic change here, only a fifth entry in the spawnables list.
+//
+// The governed systems no longer self-spawn: each keeps its pool + movement and
+// exposes a public `spawn()`. This director owns WHEN and WHICH:
 //   - a continuous difficulty ramp derived purely from elapsed sim time
 //     (`_elapsedMs` = Σ fixed-step dt, so it is frame-rate-independent). The
 //     spawn interval falls monotonically from BASE to a MIN floor at
@@ -156,8 +164,9 @@ export class SpawnDirector extends System {
   }
 
   /**
-   * Sum of active instances across the four governed pools (a snake counts as its
-   * live segments). No allocation — a running sum over the spawnable list.
+   * Sum of active instances across every governed pool (a snake counts as its live
+   * segments; the reflector counts its live dumbbells). No allocation — a running sum
+   * over the spawnable list.
    * @returns {number}
    * @private
    */
@@ -175,6 +184,13 @@ export class SpawnDirector extends System {
    * Refills the reused `_weights` buffer, then walks a running `rng()*total`
    * subtraction — no per-tick arrays, no sort. A weight of 0 contributes no band,
    * so a 0-weight archetype is never selected. A no-op if every weight is 0.
+   *
+   * Any spawnable exposing a `canSpawn()` method that returns false (e.g. a
+   * per-type-capped archetype like the Mirror Reflector) has its weight zeroed BEFORE
+   * `total` is computed, so it is never selected and its share is redistributed to the
+   * eligible archetypes — a capped archetype must not WASTE the interval (the existing
+   * `total <= 0` guard then no-ops only when EVERY positive-weight archetype is
+   * ineligible). Archetypes without a `canSpawn` method are always eligible.
    * @private
    */
   _pickAndSpawn() {
@@ -184,15 +200,18 @@ export class SpawnDirector extends System {
 
     let total = 0;
     for (let i = 0; i < spawnables.length; i++) {
-      const w = this.weightAt(
-        spawnables[i].baseWeight,
-        spawnables[i].peakWeight,
-        elapsed,
-      );
+      const s = spawnables[i];
+      let w = this.weightAt(s.baseWeight, s.peakWeight, elapsed);
+      // Skip an ineligible (e.g. capped) archetype: zero its band so it is never
+      // picked and its weight flows to the others.
+      const sys = s.system;
+      if (typeof sys.canSpawn === 'function' && !sys.canSpawn()) {
+        w = 0;
+      }
       weights[i] = w;
       total += w;
     }
-    if (total <= 0) return; // no positive-weight archetype — nothing to spawn
+    if (total <= 0) return; // no eligible positive-weight archetype — nothing to spawn
 
     // Story 2.6: forward the ship position as the avoid point when the director
     // holds a ship, else call spawn() with no avoid args (back-compat). The ship

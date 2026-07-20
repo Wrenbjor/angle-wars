@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { buildArenaWorld } from './buildArenaWorld.js';
-import { FIXED_STEP_MS } from '../config/constants.js';
+import {
+  FIXED_STEP_MS,
+  SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
+  SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
+} from '../config/constants.js';
 
 // buildArenaWorld wiring coverage. The scene's create() inlines this exact build
 // but cannot be unit-tested (it needs a live Phaser context); the factory is the
@@ -9,7 +13,8 @@ import { FIXED_STEP_MS } from '../config/constants.js';
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 19-system registration order (spec Design Notes).
+// The canonical 20-system registration order (spec Design Notes; Story 6.3 added
+// MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -18,6 +23,7 @@ const CANONICAL_ORDER = [
   'GreenSquareSystem',
   'PinwheelSystem',
   'SnakeSystem',
+  'MirrorReflectorSystem',
   'SpawnDirector',
   'CollisionSystem',
   'ScoringSystem',
@@ -53,6 +59,7 @@ const RETURN_HANDLES = [
   'greenSquareSystem',
   'pinwheelSystem',
   'snakeSystem',
+  'mirrorReflectorSystem',
   'spawnDirector',
   'collisionSystem',
   'scoringSystem',
@@ -75,7 +82,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 19 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 20 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -116,6 +123,33 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // …and the hole pool is NOT among the four archetype enemyPools (one bullet
     // must not one-shot a multi-hit hole via the collision list).
     expect(ctx.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
+  });
+
+  it('wires the Mirror Reflector (Story 6.3): 5th spawnable, pool absent from enemyPools/deathPools, shared state', () => {
+    const ctx = buildArenaWorld();
+    // Returned as its own handle.
+    expect(ctx.mirrorReflectorSystem).toBeDefined();
+    // The reflector pool is deliberately in NEITHER shared circle-collision list — it
+    // is immune to gunfire (CollisionSystem), bombs (BombSystem clears enemyPools), and
+    // black-hole absorption, and its lethal region is the weights, not a uniform circle.
+    expect(ctx.enemyPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
+    expect(ctx.deathPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
+    // The reflector is the FIFTH governed SpawnDirector spawnable, so it spawns through
+    // the same director + telegraph and counts toward the global cap.
+    const spawnables = ctx.spawnDirector._spawnables;
+    expect(spawnables).toHaveLength(5);
+    expect(spawnables[4].system).toBe(ctx.mirrorReflectorSystem);
+    // …wired with its centralized base/peak mix weights (so the director interpolates
+    // the reflector's share correctly across the difficulty ramp).
+    expect(spawnables[4].baseWeight).toBe(SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT);
+    expect(spawnables[4].peakWeight).toBe(SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT);
+    // ship / bulletPool / playerState / scoreState are the SAME shared instances the
+    // rest of the world uses (a center-destroy credits scoreState.score; a weight-kill
+    // sets playerState.pendingDeath; the reflect reads the shared bullet pool).
+    expect(ctx.mirrorReflectorSystem.ship).toBe(ctx.ship);
+    expect(ctx.mirrorReflectorSystem.bulletPool).toBe(ctx.firingSystem.bulletPool);
+    expect(ctx.mirrorReflectorSystem.playerState).toBe(ctx.playerState);
+    expect(ctx.mirrorReflectorSystem.scoreState).toBe(ctx.scoreState);
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {
@@ -160,6 +194,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.greenSquareSystem._rng).toBe(rng);
     expect(ctx.pinwheelSystem._rng).toBe(rng);
     expect(ctx.snakeSystem._rng).toBe(rng);
+    expect(ctx.mirrorReflectorSystem._rng).toBe(rng);
     expect(ctx.spawnDirector._rng).toBe(rng);
     expect(ctx.blackHoleSystem._rng).toBe(rng);
     expect(ctx.particleSystem.rng).toBe(rng);

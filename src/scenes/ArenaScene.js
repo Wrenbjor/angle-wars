@@ -14,6 +14,10 @@ import {
   COLOR_GREEN_SQUARE,
   COLOR_PINWHEEL,
   COLOR_SNAKE,
+  COLOR_MIRROR_REFLECTOR,
+  REFLECTOR_BAR_HALF_LENGTH,
+  REFLECTOR_BAR_HALF_THICKNESS,
+  REFLECTOR_WEIGHT_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -48,6 +52,7 @@ import {
   telegraphAlpha,
   telegraphScale,
 } from './telegraphCue.js';
+import { reflectorEndpoints } from '../systems/mirrorReflectorMath.js';
 import { blackHoleInstability } from '../entities/BlackHole.js';
 import {
   blackHolePulseColor,
@@ -133,7 +138,7 @@ export class ArenaScene extends Phaser.Scene {
     // in constant FIXED_STEP_MS slices; the spiral guard caps catch-up steps.
     this.fixedTimestep = new FixedTimestep(FIXED_STEP_MS, MAX_SUB_STEPS);
     // Build the entire simulation world — World + ship + input + states + pools
-    // + the 19 systems in canonical registration order, with both load-bearing
+    // + the 20 systems in canonical registration order, with both load-bearing
     // late-binds — via the shared, Phaser-free factory. The scene assigns each
     // returned handle onto this.* (the render loop below reads them) and keeps all
     // Phaser/render setup (graphics, input sampler, audio engine, FixedTimestep)
@@ -156,6 +161,7 @@ export class ArenaScene extends Phaser.Scene {
     this.greenSquareSystem = arena.greenSquareSystem;
     this.pinwheelSystem = arena.pinwheelSystem;
     this.snakeSystem = arena.snakeSystem;
+    this.mirrorReflectorSystem = arena.mirrorReflectorSystem;
     this.spawnDirector = arena.spawnDirector;
     this.collisionSystem = arena.collisionSystem;
     this.scoringSystem = arena.scoringSystem;
@@ -287,6 +293,12 @@ export class ArenaScene extends Phaser.Scene {
     // from each instance's own (growing) radius so the shape tracks the gravity/
     // collision value. Zero per-frame allocation.
     this.blackHoleGraphics = this.add.graphics();
+    // Mirror Reflectors (Story 6.3) are placeholder spinning dumbbells: a stroked bar
+    // line between two filled weight circles, cleared and redrawn each render frame
+    // from the reflector pool. Endpoints come from the pure reflectorEndpoints seam so
+    // the drawn bar/weights track the exact geometry the system's collision tests use.
+    // Zero per-frame allocation aside from the single endpoints object per reflector.
+    this.reflectorGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -323,6 +335,7 @@ export class ArenaScene extends Phaser.Scene {
         this.pinwheelGraphics,
         this.snakeGraphics,
         this.blackHoleGraphics,
+        this.reflectorGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
@@ -783,6 +796,33 @@ export class ArenaScene extends Phaser.Scene {
         blackHolePulseAlpha(ratio, time, baseAlpha, this._reducedMotion),
       );
       bhg.fillCircle(h.x, h.y, h.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
+    });
+
+    // Redraw active mirror reflectors from the reflector pool: clear once, then per
+    // live reflector a stroked bar line between two filled weight circles, drawn in
+    // COLOR_MIRROR_REFLECTOR. The endpoints (and the drawn bar half-length + weight
+    // radius) are scaled by telegraphScale and drawn at telegraphAlpha so a spawning-in
+    // reflector fades + scales in from its telegraphMs (Story 2.6), and the spin reads
+    // directly from each instance's own `angle`. Placeholder shape only (Epic 4 adds the
+    // real chrome-dumbbell aesthetic). Endpoints via the pure reflectorEndpoints seam so
+    // the drawn geometry tracks the values the system's collision tests use.
+    const rfg = this.reflectorGraphics;
+    rfg.clear();
+    this.mirrorReflectorSystem.enemyPool.forEachActive((r) => {
+      const p = spawnTelegraphProgress(r.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      const alpha = telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA);
+      const scale = telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE);
+      const ends = reflectorEndpoints(r.x, r.y, r.angle, REFLECTOR_BAR_HALF_LENGTH * scale);
+      // Bar: a stroked line the reflect proximity band wide (2 × half-thickness).
+      rfg.lineStyle(REFLECTOR_BAR_HALF_THICKNESS * 2 * scale, COLOR_MIRROR_REFLECTOR, alpha);
+      rfg.beginPath();
+      rfg.moveTo(ends.ax, ends.ay);
+      rfg.lineTo(ends.bx, ends.by);
+      rfg.strokePath();
+      // Weights: a filled circle at each endpoint.
+      rfg.fillStyle(COLOR_MIRROR_REFLECTOR, alpha);
+      rfg.fillCircle(ends.ax, ends.ay, REFLECTOR_WEIGHT_RADIUS * scale);
+      rfg.fillCircle(ends.bx, ends.by, REFLECTOR_WEIGHT_RADIUS * scale);
     });
 
     // Redraw the placeholder smart-bomb shockwave: a single stroked ring that

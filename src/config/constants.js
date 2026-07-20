@@ -205,6 +205,67 @@ export const SNAKE_SEGMENT_POOL_PREWARM = 64;
 // A whole snake is worth SEGMENT_COUNT × this (× the multiplier in effect).
 export const SNAKE_SEGMENT_SCORE = 75;
 
+// --- Mirror Reflector (Dumbbell) hazard (feel / geometry / economy) ----------
+// The Mirror Reflector (Story 6.3) is the one hazard that RESISTS firepower. It
+// is rendered as a spinning DUMBBELL: two lethal weights joined by a bar. Like a
+// pooled Pinwheel it DRIFTS at a constant speed and BOUNCES off the inset walls,
+// and additionally SPINS (angle advances every fixed step) — all dt-driven, so
+// motion is frame-rate-independent. It is INDIFFERENT to the player's aim. What
+// makes it distinct:
+//   - It is IMMUNE to gunfire: a player bullet striking the BAR is REFLECTED
+//     (velocity mirrored across the bar's normal, |v| preserved) and stays a live
+//     player shot — the reflector takes no damage. So it is deliberately NOT in the
+//     CollisionSystem / BombSystem / BlackHole / PlayerDeathSystem shared-circle
+//     seams (it has no uniform {x,y,radius} lethal circle — its lethal region is the
+//     two weights). It owns its own bullet/ship tests in MirrorReflectorSystem.
+//   - It is destroyed ONLY by flying the ship through its CENTER point (a flat score
+//     payout, credited directly to scoreState.score like the Black Hole implosion —
+//     never through the ScoringSystem multiplier seam).
+//   - Touching EITHER weight kills the player through the normal death flow (sets
+//     playerState.pendingDeath, the Story 6.2 seam; PlayerDeathSystem consumes it).
+// All values are tunable placeholders (tuned post-launch); no inline magic numbers.
+
+// Drift speed (px/s). Magnitude of the velocity vector, PRESERVED across wall
+// bounces (component negation) — the dumbbell never speeds up or stalls.
+export const REFLECTOR_DRIFT_SPEED = 110;
+// Spin rate (radians per SECOND): angle += this·dtSec every fixed step, so the
+// accumulated rotation over elapsed sim time is tick-size independent (a
+// frame-rate-independent spin). The bar/weights rotate about the center point.
+export const REFLECTOR_SPIN_RATE = 1.8;
+// Bar half-length (px): the distance from the center to EACH weight endpoint (the
+// bar is the segment between the two endpoints, total length 2×this). Invariant:
+// must be > REFLECTOR_CENTER_KILL_RADIUS so the center-kill zone sits inside the
+// bar, disjoint from the weight ends in the common case.
+export const REFLECTOR_BAR_HALF_LENGTH = 48;
+// Bar half-thickness (px): the reflect proximity band. A bullet reflects when its
+// center is within BULLET_RADIUS + this of the bar segment (a thin metal bar).
+export const REFLECTOR_BAR_HALF_THICKNESS = 6;
+// Weight radius (px): the collision radius of EACH lethal end weight. Ship contact
+// with either weight (dist ≤ ship.radius + this) is a weight-kill.
+export const REFLECTOR_WEIGHT_RADIUS = 14;
+// Center-kill radius (px): the ship destroys the reflector by threading its center
+// (dist(ship, center) ≤ this). Kept < REFLECTOR_BAR_HALF_LENGTH so the reward zone
+// sits inside the bar, disjoint from the weights in the common case — a real
+// "thread the needle" window, not an accidental brush.
+export const REFLECTOR_CENTER_KILL_RADIUS = 18;
+// Flat score payout for threading the center. Credited DIRECTLY to scoreState.score
+// (an event payout like the Black Hole safe-implosion) — never through the
+// killedEnemies/ScoringSystem seam, so it is NEVER multiplied by the run multiplier.
+export const REFLECTOR_SCORE = 500;
+// Idle instances prewarmed into the pool at construction so the steady state never
+// allocates (grows lazily beyond it, only on spawn events — mirrors the other pools).
+export const REFLECTOR_POOL_PREWARM = 4;
+// Per-type active cap enforced in spawn(): spawn() is a no-op at/above this. Because
+// the reflector is UNKILLABLE by fire/bombs, without a self-cap it would pile up (the
+// SpawnDirector has only a GLOBAL cap). Bounds the O(reflectors × bullets) reflect scan.
+export const REFLECTOR_MAX_ACTIVE = 3;
+// Documented deferred tunable (Story 6.3): whether a reflected bullet can harm the
+// player. Defaults false — reflected bullets stay the same pooled PLAYER bullets and
+// are harmless to the player by construction (no ship-vs-player-bullet seam exists).
+// Wiring the harm-player branch (a NEW seam) is deferred post-launch; this constant
+// is defined now so the intent is centralized and discoverable.
+export const REFLECTED_BULLET_HARMS_PLAYER = false;
+
 // --- Spawn Director (escalation / mix / cap) --------------------------------
 // The SpawnDirector is the SOLE spawn authority for the four one-hit combat
 // archetypes (Seeker, Green Square, Pinwheel, Snake). It owns a continuous
@@ -244,6 +305,13 @@ export const SPAWN_DIRECTOR_PINWHEEL_BASE_WEIGHT = 1;
 export const SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT = 3;
 export const SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT = 0;
 export const SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT = 2;
+// The Mirror Reflector (Story 6.3) is a fifth governed spawnable. It is NOT a
+// one-hit archetype (immune to fire/bombs), but it spawns through the SAME director
+// + telegraph and counts toward the global cap like any other. Held back early
+// (BASE 0) and present late (PEAK positive) so the mix shifts toward the
+// positioning-and-nerve challenge as a run wears on.
+export const SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT = 0;
+export const SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT = 2;
 
 // --- Enemy spawn telegraph / spawn-point safety (Story 2.6) ------------------
 // Every freshly spawned enemy of every archetype (Seeker, Green Square,
@@ -429,6 +497,10 @@ export const COLOR_SEEKER = 0x3366ff;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
 export const COLOR_PINWHEEL = 0xff66cc;
 export const COLOR_SNAKE = 0xffaa33;
+// Mirror Reflector (Story 6.3): a pale chrome/steel hue that reads as a polished
+// mirror-metal dumbbell once the camera bloom bleeds it — distinct from the pink
+// Pinwheel and the purple Black Hole. Used for both the bar line and the two weights.
+export const COLOR_MIRROR_REFLECTOR = 0xccddff;
 // Placeholder fill for the Black Hole body at rest (instability 0). The grid-warp
 // visual is Epic 4 / Story 4.2; Story 6.2 lerps this toward COLOR_BLACK_HOLE_UNSTABLE
 // and pulses its alpha as the hole nears detonation.

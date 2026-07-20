@@ -7,6 +7,8 @@ import {
   SPAWN_DIRECTOR_PINWHEEL_PEAK_WEIGHT,
   SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
   SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
+  SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
+  SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { SimClockSystem } from '../systems/SimClockSystem.js';
@@ -18,6 +20,7 @@ import { EnemySystem } from '../systems/EnemySystem.js';
 import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
 import { PinwheelSystem } from '../systems/PinwheelSystem.js';
 import { SnakeSystem } from '../systems/SnakeSystem.js';
+import { MirrorReflectorSystem } from '../systems/MirrorReflectorSystem.js';
 import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
@@ -38,8 +41,10 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 19 systems registered in the SAME order, the same
-// enemyPools / deathPools composition, and both load-bearing late-binds
+// state + pools, the SAME 20 systems registered in the SAME order (Story 6.3 added
+// the MirrorReflectorSystem in the enemy section), the same enemyPools / deathPools
+// composition (the reflector pool is deliberately in NEITHER), and both load-bearing
+// late-binds
 // (snakeSystem.collisionSystem and blackHoleSystem.collisionSystem). It imports
 // ZERO Phaser symbols so it runs headlessly in the node vitest env, which is
 // what makes the load-bearing wiring assertable (the scene itself needs a live
@@ -115,6 +120,30 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
   // where a segment was destroyed the prior tick.
   const snakeSystem = new SnakeSystem(_rng);
   world.addSystem(snakeSystem);
+  // The shared run-economy and player-lifecycle states are created HERE (Story 6.3),
+  // before the enemy-section systems that need them. Both are plain-data objects with
+  // no dependencies; nothing reads them until later systems run. The MirrorReflector
+  // needs BOTH (a center-destroy credits scoreState.score; a weight-kill sets
+  // playerState.pendingDeath), so their creation moved up from the Scoring/Black-Hole
+  // sections to keep the one shared instance flowing into every consumer.
+  const scoreState = createScoreState();
+  const playerState = createPlayerState();
+  // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
+  // another enemy pool, and deliberately NOT shared into the CollisionSystem /
+  // BombSystem / BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire,
+  // bombs, and black-hole absorption, and its lethal region is the weights). It runs
+  // after SnakeSystem and BEFORE the SpawnDirector (so it is a spawnable) and BEFORE
+  // CollisionSystem/PlayerDeathSystem (so a weight-kill's pendingDeath is consumed the
+  // SAME tick). It reads the ship + bullet pool for its reflect/ship tests but is
+  // player-indifferent in its MOTION.
+  const mirrorReflectorSystem = new MirrorReflectorSystem(
+    ship,
+    firingSystem.bulletPool,
+    playerState,
+    scoreState,
+    _rng,
+  );
+  world.addSystem(mirrorReflectorSystem);
   // SpawnDirector is the SOLE spawn authority for the four combat archetypes
   // (each no longer self-spawns). It is added AFTER SnakeSystem and BEFORE
   // CollisionSystem so a fresh enemy exists for this tick's collision/death
@@ -141,6 +170,15 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
         system: snakeSystem,
         baseWeight: SPAWN_DIRECTOR_SNAKE_BASE_WEIGHT,
         peakWeight: SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
+      },
+      // Fifth governed spawnable (Story 6.3): the Mirror Reflector. NOT a one-hit
+      // archetype, but it spawns through the same director + telegraph and counts
+      // toward the global cap. Its own REFLECTOR_MAX_ACTIVE self-cap (enforced in its
+      // spawn()) bounds it independently, since it is unkillable by fire.
+      {
+        system: mirrorReflectorSystem,
+        baseWeight: SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
+        peakWeight: SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
       },
     ],
     // rng (run-scoped randomness); pass the ship so the director keeps every
@@ -172,16 +210,16 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
   // --- Scoring ------------------------------------------------------------
   // ScoringSystem runs immediately after CollisionSystem so this tick's kills
   // are already recorded, and before PlayerDeathSystem. It owns no pool; it
-  // credits each killed enemy's own base value into the shared ScoreState.
-  const scoreState = createScoreState();
+  // credits each killed enemy's own base value into the shared ScoreState (created
+  // up in the enemy section, Story 6.3, so the MirrorReflector can share it).
   const scoringSystem = new ScoringSystem(collisionSystem, scoreState);
   world.addSystem(scoringSystem);
 
-  // The shared player lifecycle state is created here (moved above the Black Hole
-  // section, Story 6.2) because BOTH the BlackHoleSystem (a detonation sets
-  // playerState.pendingDeath) and the PlayerDeathSystem (consumes it) share the one
-  // instance. A detonation and a contact death therefore route through the same state.
-  const playerState = createPlayerState();
+  // The shared player lifecycle state (playerState) was likewise created up in the
+  // enemy section (Story 6.3): the MirrorReflectorSystem, the BlackHoleSystem (a
+  // detonation sets playerState.pendingDeath), and the PlayerDeathSystem (consumes it)
+  // all share the one instance, so a reflector weight-kill, a detonation, and a contact
+  // death route through the same state.
 
   // --- Black Hole hazard --------------------------------------------------
   // The Black Hole is a stationary, UNSTABLE ticking bomb (Story 6.2). It runs
@@ -323,6 +361,7 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
     greenSquareSystem,
     pinwheelSystem,
     snakeSystem,
+    mirrorReflectorSystem,
     spawnDirector,
     collisionSystem,
     scoringSystem,

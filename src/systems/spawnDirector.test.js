@@ -231,6 +231,61 @@ describe('SpawnDirector — global active cap (AC2)', () => {
   });
 });
 
+// A fake spawnable exposing a canSpawn() eligibility gate (the Mirror Reflector
+// pattern): the director must zero its weight when canSpawn() is false so a capped
+// archetype is never picked and its share flows to the others.
+function gatedSpawnable(baseWeight, peakWeight, eligible = true, activeCount = 0) {
+  const system = {
+    spawnCalls: 0,
+    _eligible: eligible,
+    canSpawn() {
+      return this._eligible;
+    },
+    spawn() {
+      this.spawnCalls++;
+    },
+    enemyPool: { activeCount },
+  };
+  return { system, baseWeight, peakWeight };
+}
+
+describe('SpawnDirector — canSpawn() eligibility gate (Story 6.3)', () => {
+  it('never selects an ineligible (canSpawn()===false) spawnable and redirects its share to the others', () => {
+    // The gated archetype carries ALL the weight but is ineligible; the only other
+    // archetype has a tiny weight. Across the whole rng range the eligible one is
+    // always picked (the ineligible band is zeroed) — its share was redistributed.
+    for (let r = 0; r < 1; r += 0.05) {
+      const gated = gatedSpawnable(100, 100, false); // huge weight, but ineligible
+      const eligible = fakeSpawnable(1, 1); // tiny weight, always eligible
+      const dir = new SpawnDirector([gated, eligible], () => r);
+      dir._pickAndSpawn();
+      expect(gated.system.spawnCalls).toBe(0); // never picked while ineligible
+      expect(eligible.system.spawnCalls).toBe(1); // took every interval instead
+    }
+  });
+
+  it('no-ops the interval only when the SOLE positive-weight archetype is ineligible', () => {
+    // A single gated archetype that is ineligible → total weight 0 → nothing spawns
+    // (the interval is intentionally consumed but no honest spawn is counted).
+    const gated = gatedSpawnable(5, 5, false);
+    const dir = new SpawnDirector([gated], seqRng([0.0]));
+    dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS);
+    expect(gated.system.spawnCalls).toBe(0);
+    expect(dir.spawnCount).toBe(0); // spawnCount stays honest — no phantom spawn
+  });
+
+  it('behaves unchanged when the gated spawnable IS eligible (canSpawn()===true)', () => {
+    // Same weights, now eligible: rng=0.5 over weights [5,3] → r=0.5*8=4 lands in the
+    // first band [0,5) → the gated one is picked exactly as an ungated archetype would be.
+    const gated = gatedSpawnable(5, 5, true);
+    const other = fakeSpawnable(3, 3);
+    const dir = new SpawnDirector([gated, other], () => 0.5);
+    dir._pickAndSpawn();
+    expect(gated.system.spawnCalls).toBe(1);
+    expect(other.system.spawnCalls).toBe(0);
+  });
+});
+
 describe('SpawnDirector — zero per-tick allocation (NFR1/NFR2)', () => {
   it('reuses the same _weights buffer across many steady-state steps', () => {
     const mix = fourMix();

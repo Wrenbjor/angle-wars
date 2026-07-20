@@ -147,6 +147,45 @@ describe('render-integration — black-hole instability wiring (ArenaScene, Stor
   });
 });
 
+describe('render-integration — mirror-reflector render wiring (ArenaScene, Story 6.3)', () => {
+  // Pins the load-bearing Story 6.3 dumbbell render pass in ArenaScene. This scene is
+  // Phaser-coupled and cannot be imported headlessly, so — like the reduced-motion /
+  // black-hole checks above — these are SOURCE-TEXT assertions. The pure geometry seam
+  // (reflectorEndpoints) carries its own unit coverage; the visible spinning dumbbell is
+  // the disclosed manual boundary, so these assertions guard only that the scene actually
+  // draws it from the pool with the telegraph cue and joins the additive/bloom layer.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('computes each reflector bar via the reflectorEndpoints seam scaled by telegraphScale', () => {
+    // Endpoints come from the pure seam, with the bar half-length scaled by the
+    // telegraph scale so a spawning-in reflector fades + scales in.
+    expect(arenaSrc).toMatch(
+      /reflectorEndpoints\(\s*r\.x\s*,\s*r\.y\s*,\s*r\.angle\s*,\s*REFLECTOR_BAR_HALF_LENGTH\s*\*\s*scale\s*\)/,
+    );
+    // The per-reflector telegraph progress drives both the alpha and the scale.
+    expect(arenaSrc).toMatch(/telegraphAlpha\(\s*p\s*,\s*SPAWN_TELEGRAPH_MIN_ALPHA\s*\)/);
+    expect(arenaSrc).toMatch(/telegraphScale\(\s*p\s*,\s*SPAWN_TELEGRAPH_MIN_SCALE\s*\)/);
+  });
+
+  it('draws the reflector bar + weights in COLOR_MIRROR_REFLECTOR from the reflector pool', () => {
+    // Iterates the reflector pool's active set…
+    expect(arenaSrc).toMatch(
+      /this\.mirrorReflectorSystem\.enemyPool\.forEachActive\(/,
+    );
+    // …stroking the bar line and filling the weights in the reflector color.
+    expect(arenaSrc).toMatch(/lineStyle\([\s\S]*?COLOR_MIRROR_REFLECTOR/);
+    expect(arenaSrc).toMatch(/fillStyle\(\s*COLOR_MIRROR_REFLECTOR\s*,\s*alpha\s*\)/);
+  });
+
+  it('joins the reflector graphics to the additive/bloom neon layer list', () => {
+    // The reflectorGraphics object must be in the applyAdditiveBlend list so the
+    // dumbbell glows under the single camera bloom like every other neon layer.
+    expect(arenaSrc).toMatch(
+      /applyAdditiveBlend\(\s*\[[\s\S]*?this\.reflectorGraphics[\s\S]*?\]/,
+    );
+  });
+});
+
 describe('render-integration — render→sim decoupling (ArenaScene.update)', () => {
   const arenaSrc = readSrc('./ArenaScene.js');
 

@@ -13,12 +13,16 @@ import { PLAYER_START_LIVES } from '../config/constants.js';
 //  - invulnMs     : remaining respawn-invulnerability window (ms; 0 = vulnerable)
 //  - gameOver     : true once the last life is lost (run ended)
 //  - pendingDeath : a one-tick programmatic-death REQUEST. A system that needs to
-//                   cost the player a life without a ship↔enemy contact (Story 6.2:
-//                   a Black Hole detonation) sets this true; PlayerDeathSystem
-//                   consumes it read-and-clear at the top of its tick and applies
-//                   the SAME death flow as a contact death, subject to the SAME
-//                   invuln/game-over guards. The same read-and-clear latch idiom as
-//                   InputState.consumeBomb — never deferred to a later tick.
+//                   cost the player a life without a ship↔enemy circle-contact sets
+//                   this true; PlayerDeathSystem consumes it read-and-clear at the top
+//                   of its tick and applies the SAME death flow as a contact death,
+//                   subject to the SAME invuln/game-over guards. The same read-and-clear
+//                   latch idiom as InputState.consumeBomb — never deferred to a later
+//                   tick. TWO producers today, both routing through this one seam:
+//                   (1) a Black Hole detonation (Story 6.2), and (2) a Mirror Reflector
+//                   WEIGHT-KILL (Story 6.3) — the reflector's lethal region is its two
+//                   weights (not a uniform circle), so it is NOT in the PlayerDeathSystem
+//                   pool list and instead sets pendingDeath when the ship overlaps a weight.
 
 /**
  * Create the player lifecycle state at the start of a run: full lives, not
