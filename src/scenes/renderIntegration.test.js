@@ -107,6 +107,44 @@ describe('render-integration — reduced-motion wiring (ArenaScene, Story 6.1)',
       /this\.settingsStorage\.save\(\{[\s\S]*?reducedMotion:\s*this\._reducedMotion[\s\S]*?\}\)/,
     );
   });
+
+  it('gates the black-hole pulse oscillation on reduced motion (Story 6.2 AC / WCAG 2.3.1)', () => {
+    // The seizure-band alpha flashing must honor reduced motion: this._reducedMotion
+    // is threaded as the 4th arg to blackHolePulseAlpha so the pulse holds steady
+    // (color still escalates). A regression that dropped this would flash red at up
+    // to BLACKHOLE_PULSE_HZ with no opt-out while the suite stayed green.
+    expect(arenaSrc).toMatch(
+      /blackHolePulseAlpha\(\s*ratio\s*,\s*time\s*,\s*baseAlpha\s*,\s*this\._reducedMotion\s*\)/,
+    );
+  });
+});
+
+describe('render-integration — black-hole instability wiring (ArenaScene, Story 6.2)', () => {
+  // Pins the load-bearing Story 6.2 render/audio wiring in ArenaScene. This scene is
+  // Phaser-coupled and cannot be imported headlessly, so — like the reduced-motion /
+  // sim-rate checks above — these are SOURCE-TEXT assertions. The pure helpers
+  // (blackHolePulseColor/Alpha, blackHoleInstability) and the sim level
+  // (maxInstability / AudioDirectorSystem.blackHoleInstability) carry their own unit
+  // coverage; the visible red pulse + audible urgency cue are the disclosed manual
+  // boundary, so these assertions guard only that the scene actually calls them.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('fills each hole with blackHolePulseColor at blackHolePulseAlpha off its instability ratio', () => {
+    // The per-hole ratio comes from blackHoleInstability(h.radius)…
+    expect(arenaSrc).toMatch(/blackHoleInstability\(\s*h\.radius\s*\)/);
+    // …and drives the pulse color + alpha at the current animation time.
+    expect(arenaSrc).toMatch(/blackHolePulseColor\(\s*ratio\s*\)/);
+    expect(arenaSrc).toMatch(/blackHolePulseAlpha\(\s*ratio\s*,\s*time\s*,/);
+  });
+
+  it('maps audioDirector.blackHoleInstability into the audio engine urgency cue, forced to 0 at game-over', () => {
+    // The urgency level is fed to the engine each frame, but gated to 0 on game-over
+    // (maxInstability is only recomputed inside the gameOver-gated world.fixedUpdate,
+    // so an unstable-hole run-end would otherwise freeze the tone droning).
+    expect(arenaSrc).toMatch(
+      /this\.audioEngine\.setBlackHoleUrgency\(\s*this\.playerState\.gameOver\s*\?\s*0\s*:\s*this\.audioDirector\.blackHoleInstability\s*,?\s*\)/,
+    );
+  });
 });
 
 describe('render-integration — render→sim decoupling (ArenaScene.update)', () => {

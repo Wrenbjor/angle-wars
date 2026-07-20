@@ -40,15 +40,23 @@ function fakeSpawnDirector({ spawnCount = 0, elapsedMs = 0 } = {}) {
   };
 }
 
-// Build a system with all five sources wired (each individually overridable).
+// BlackHoleSystem stand-in: only maxInstability is read (the urgency LEVEL).
+function fakeBlackHole(maxInstability = 0) {
+  return { maxInstability };
+}
+
+// Build a system with all five sources wired (each individually overridable). The
+// optional 6th blackHoleSystem source defaults to omitted (so blackHoleInstability
+// reads 0) unless a test passes one.
 function build({
   firing = fakeFiring(0),
   collision = fakeCollision(0),
   bomb = fakeBomb(0),
   death = fakeDeath(0),
   spawn = fakeSpawnDirector(),
+  blackHole,
 } = {}) {
-  return new AudioDirectorSystem(firing, collision, bomb, death, spawn);
+  return new AudioDirectorSystem(firing, collision, bomb, death, spawn, blackHole);
 }
 
 describe('AudioDirectorSystem — fire/kill/spawn counts', () => {
@@ -249,6 +257,38 @@ describe('AudioDirectorSystem — music intensity (a level, not consumed)', () =
     sys.fixedUpdate(DT);
     expect(sys.musicIntensity).toBeCloseTo(spawn.progressAt(spawn.elapsedMs), 9);
     expect(sys.musicIntensity).toBeCloseTo(0.5, 9);
+  });
+});
+
+describe('AudioDirectorSystem — black-hole instability (a level, not consumed) (Story 6.2)', () => {
+  it('reflects blackHoleSystem.maxInstability as a level', () => {
+    const blackHole = fakeBlackHole(0.42);
+    const sys = build({ blackHole });
+    sys.fixedUpdate(DT);
+    expect(sys.blackHoleInstability).toBeCloseTo(0.42, 9);
+  });
+
+  it('is 0 when constructed with no blackHoleSystem source', () => {
+    const sys = build(); // no blackHole passed → optional source absent
+    sys.fixedUpdate(DT);
+    expect(sys.blackHoleInstability).toBe(0);
+  });
+
+  it('tracks the LATEST maxInstability (read live, not a first-tick latch)', () => {
+    const blackHole = fakeBlackHole(0.1);
+    const sys = build({ blackHole });
+    sys.fixedUpdate(DT);
+    expect(sys.blackHoleInstability).toBeCloseTo(0.1, 9);
+    blackHole.maxInstability = 0.8; // the hole grows more unstable
+    expect(sys.blackHoleInstability).toBeCloseTo(0.8, 9);
+  });
+
+  it('is NOT reset by consumeSfxRequests (a level, read every frame)', () => {
+    const blackHole = fakeBlackHole(0.5);
+    const sys = build({ blackHole });
+    sys.fixedUpdate(DT);
+    sys.consumeSfxRequests();
+    expect(sys.blackHoleInstability).toBeCloseTo(0.5, 9);
   });
 });
 

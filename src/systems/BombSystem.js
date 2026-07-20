@@ -113,36 +113,12 @@ export class BombSystem extends System {
     }
 
     // (2) Detonation: consume the latch (reads-and-clears) so the press fires at
-    //     most one detonation. Only detonate with a bomb in hand.
+    //     most one detonation. Only detonate with a bomb in hand. The player path
+    //     runs the shared screen-clear at the SHIP, then spends one bomb.
     const requested = this.inputState.consumeBomb();
     if (requested && ss.bombs > 0) {
-      const enemies = this._enemies;
-      const owners = this._owners;
-      enemies.length = 0;
-      owners.length = 0;
-      const pools = this.enemyPools;
-      for (let p = 0; p < pools.length; p++) {
-        this._currentPool = pools[p];
-        pools[p].forEachActive(this._collectEnemy);
-      }
-
-      // Second pass — safe to mutate the pools now: release each active enemy to
-      // its OWNING pool and append it to the kill report so owner systems (e.g.
-      // SnakeSystem) reconcile through the same seam a bullet kill uses. UNSCORED
-      // by construction — this runs after ScoringSystem, which already ran this
-      // tick over its own (bullet-kill) report.
-      const killed = this.collisionSystem.killedEnemies;
-      for (let i = 0; i < enemies.length; i++) {
-        owners[i].release(enemies[i]);
-        killed.push(enemies[i]);
-      }
-
+      this.detonateAt(this.ship.x, this.ship.y);
       ss.bombs -= 1;
-
-      // Arm the placeholder shockwave at the ship's current position.
-      this.shockwaveMs = BOMB_SHOCKWAVE_MS;
-      this.shockwaveX = this.ship.x;
-      this.shockwaveY = this.ship.y;
     }
 
     // (3) Decay the shockwave countdown (clamped at 0), whether or not a
@@ -151,5 +127,49 @@ export class BombSystem extends System {
       this.shockwaveMs -= dt;
       if (this.shockwaveMs < 0) this.shockwaveMs = 0;
     }
+  }
+
+  /**
+   * The reusable smart-bomb screen clear, originated at (x, y): release EVERY
+   * active enemy across the four archetype pools to its OWNING pool AND append it
+   * to collisionSystem.killedEnemies (the reconciliation seam, identical to a
+   * bullet kill / black-hole absorb), then arm the placeholder shockwave at (x, y).
+   * The clear ignores telegraph state — a decisive detonation clears every
+   * on-screen enemy regardless of spawn-in state.
+   *
+   * This is the exact clear+arm the player-triggered bomb runs, extracted so a
+   * Black Hole detonation (Story 6.2) can trigger the identical screen clear at the
+   * hole's position WITHOUT decrementing `bombs` and WITHOUT consuming the input
+   * latch — those belong to the player path only. Zero allocation (reuses the same
+   * scratch as the player path); mirrors the CollisionSystem two-pass discipline.
+   * @param {number} x Shockwave origin x (px).
+   * @param {number} y Shockwave origin y (px).
+   */
+  detonateAt(x, y) {
+    const enemies = this._enemies;
+    const owners = this._owners;
+    enemies.length = 0;
+    owners.length = 0;
+    const pools = this.enemyPools;
+    for (let p = 0; p < pools.length; p++) {
+      this._currentPool = pools[p];
+      pools[p].forEachActive(this._collectEnemy);
+    }
+
+    // Second pass — safe to mutate the pools now: release each active enemy to
+    // its OWNING pool and append it to the kill report so owner systems (e.g.
+    // SnakeSystem) reconcile through the same seam a bullet kill uses. UNSCORED
+    // by construction — this runs after ScoringSystem, which already ran this
+    // tick over its own (bullet-kill) report.
+    const killed = this.collisionSystem.killedEnemies;
+    for (let i = 0; i < enemies.length; i++) {
+      owners[i].release(enemies[i]);
+      killed.push(enemies[i]);
+    }
+
+    // Arm the placeholder shockwave at the given origin.
+    this.shockwaveMs = BOMB_SHOCKWAVE_MS;
+    this.shockwaveX = x;
+    this.shockwaveY = y;
   }
 }

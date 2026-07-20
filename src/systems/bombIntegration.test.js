@@ -5,7 +5,6 @@ import {
   PLAYER_START_LIVES,
   SCORE_MULTIPLIER_START,
   BLACKHOLE_RADIUS,
-  BLACKHOLE_HP,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -165,8 +164,6 @@ describe('Bomb integration — full tick chain in ArenaScene order', () => {
     hole.x = 150;
     hole.y = 150;
     hole.radius = BLACKHOLE_RADIUS;
-    hole.hp = BLACKHOLE_HP;
-    hole.feed = 0;
     hole.telegraphMs = 0; // active
     // A regular archetype enemy, also clear of the hole's gravity, to prove the
     // bomb DID fire this tick.
@@ -180,9 +177,10 @@ describe('Bomb integration — full tick chain in ArenaScene order', () => {
     expect(enemyPool.activeCount).toBe(0);
     expect(ctx.collisionSystem.killedEnemies).toContain(seeker);
     // …but the Black Hole's pool is untouched — the hole stays lethal through the
-    // detonation.
+    // detonation (Story 6.2: the bomb clears only the four archetype pools, never
+    // the hole; the hole's radius/instability is unchanged by the bomb).
     expect(blackHoleSystem.holePool.activeCount).toBe(1);
-    expect(hole.hp).toBe(BLACKHOLE_HP);
+    expect(hole.radius).toBe(BLACKHOLE_RADIUS);
   });
 
   it('sanity: the composed chain leaves a fresh run at start values with no press', () => {

@@ -481,6 +481,133 @@ describe('PlayerDeathSystem — multiplier reset on death (Story 3.1, FR8)', () 
   });
 });
 
+describe('PlayerDeathSystem — programmatic pendingDeath (Story 6.2)', () => {
+  // A ship, seeker pool, player state, score state, and a death system wired with
+  // the score state (so the multiplier-reset side of the shared death flow is
+  // asserted for the forced path too).
+  function makeSystemWithScore() {
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const playerState = createPlayerState();
+    const scoreState = createScoreState();
+    const system = new PlayerDeathSystem(
+      ship,
+      [enemyPool],
+      playerState,
+      scoreState,
+    );
+    return { ship, enemyPool, playerState, scoreState, system };
+  }
+
+  it('a set pendingDeath (vulnerable) applies the SAME normal death flow and clears the flag', () => {
+    const { ship, playerState, scoreState, system } = makeSystemWithScore();
+    ship.x = 250;
+    ship.y = 175;
+    // A climbed streak to prove the multiplier reset fires on the forced death too.
+    scoreState.multiplier = 7;
+    scoreState.multiplierKills = 3;
+    scoreState.score = 4200;
+    playerState.pendingDeath = true; // a detonation requested a life this tick
+
+    system.fixedUpdate(DT);
+
+    // Normal respawning death: life−1, respawn to center, invuln granted, multiplier
+    // reset, deathSeq bumped — identical to a contact death.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(ship.x).toBe(CENTER_X);
+    expect(ship.y).toBe(CENTER_Y);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.multiplierKills).toBe(0);
+    expect(scoreState.score).toBe(4200); // score untouched
+    expect(system.deathSeq).toBe(1);
+    // The one-tick request is consumed (read-and-clear).
+    expect(playerState.pendingDeath).toBe(false);
+  });
+
+  it('the last-life pendingDeath ends the run at game-over (no respawn, no invuln)', () => {
+    const { ship, playerState, system } = makeSystemWithScore();
+    playerState.lives = 1;
+    ship.x = 300;
+    ship.y = 300;
+    playerState.pendingDeath = true;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(0);
+    expect(playerState.gameOver).toBe(true);
+    expect(playerState.invulnMs).toBe(0);
+    expect(playerState.pendingDeath).toBe(false);
+  });
+
+  it('is SUPPRESSED and the flag CLEARED (not deferred) while invulnerable', () => {
+    const { playerState, system } = makeSystemWithScore();
+    playerState.invulnMs = 500;
+    playerState.pendingDeath = true;
+
+    system.fixedUpdate(DT);
+
+    // No death; the request is dropped this tick (never deferred to a later one).
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.gameOver).toBe(false);
+    expect(playerState.pendingDeath).toBe(false);
+    expect(playerState.invulnMs).toBeCloseTo(500 - DT, 9); // window still counted down
+    expect(system.deathSeq).toBe(0); // no death latched
+
+    // Next tick (still invulnerable) does NOT resurrect the dropped request.
+    system.fixedUpdate(DT);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+  });
+
+  it('is SUPPRESSED and the flag CLEARED after game-over (no negative lives)', () => {
+    const { playerState, system } = makeSystemWithScore();
+    playerState.lives = 0;
+    playerState.gameOver = true;
+    playerState.pendingDeath = true;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(0); // no negative
+    expect(playerState.gameOver).toBe(true);
+    expect(playerState.pendingDeath).toBe(false);
+    expect(system.deathSeq).toBe(0);
+  });
+
+  it('costs exactly ONE life when both pendingDeath and a lethal contact hold this tick', () => {
+    const { ship, enemyPool, playerState, system } = makeSystemWithScore();
+    ship.x = 200;
+    ship.y = 200;
+    playerState.pendingDeath = true;
+    addSeeker(enemyPool, 200, 200); // overlapping the ship too
+
+    system.fixedUpdate(DT);
+
+    // The forced death runs first and returns before the contact scan → one life,
+    // one invuln grant, one deathSeq bump (never one per cause).
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(system.deathSeq).toBe(1);
+    expect(playerState.pendingDeath).toBe(false);
+    // The overlapping enemy is never destroyed by contact.
+    expect(enemyPool.activeCount).toBe(1);
+  });
+
+  it('does nothing when pendingDeath is false and there is no contact', () => {
+    const { ship, enemyPool, playerState, system } = makeSystemWithScore();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 500, 500); // far away
+    // pendingDeath defaults false.
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.pendingDeath).toBe(false);
+    expect(system.deathSeq).toBe(0);
+  });
+});
+
 describe('PlayerDeathSystem death latch (Story 4.2)', () => {
   it('starts at deathSeq 0 with a zeroed death point', () => {
     const { system } = makeSystem();

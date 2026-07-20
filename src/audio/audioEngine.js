@@ -2,6 +2,8 @@ import {
   AUDIO_MUSIC_LAYER_COUNT,
   AUDIO_MUSIC_BASE_FREQ,
   AUDIO_MUSIC_GAIN_SMOOTHING,
+  AUDIO_URGENCY_FREQ,
+  AUDIO_URGENCY_MAX_GAIN,
   AUDIO_SFX_FIRE_FREQ,
   AUDIO_SFX_FIRE_MS,
   AUDIO_SFX_FIRE_GAIN,
@@ -50,6 +52,10 @@ export class AudioEngine {
     this._master = null;
     /** @type {{osc: OscillatorNode, gain: GainNode}[]} */
     this._layers = [];
+    // Story 6.2 Black Hole urgency voice: one continuously-running oscillator whose
+    // gain tracks the hole instability level (setBlackHoleUrgency). Built once, torn
+    // down by dispose(). Null when the engine is a no-op.
+    this._urgency = null;
     this._disposed = false;
 
     // Per-SFX synthesis table (freq Hz, duration ms, peak gain), keyed by type.
@@ -84,6 +90,22 @@ export class AudioEngine {
         gain.connect(this._master);
         osc.start();
         this._layers.push({ osc, gain });
+      }
+
+      // Black Hole urgency voice (Story 6.2): a single continuously-running tone
+      // above the music drone, silent by default; its gain is driven by
+      // setBlackHoleUrgency(level) so a hole nearing detonation sounds a rising
+      // tension cue. Built once alongside the music voices.
+      {
+        const osc = this._ctx.createOscillator();
+        const gain = this._ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = AUDIO_URGENCY_FREQ;
+        gain.gain.value = 0; // silent until an unstable hole raises it
+        osc.connect(gain);
+        gain.connect(this._master);
+        osc.start();
+        this._urgency = { osc, gain };
       }
     } catch {
       // Any node-build failure → fully degrade to a no-op (tear down what exists).
@@ -151,6 +173,31 @@ export class AudioEngine {
   }
 
   /**
+   * Set the Black Hole urgency-cue gain from an instability LEVEL in [0,1] (Story
+   * 6.2): the continuously-running urgency voice's gain glides to
+   * level·AUDIO_URGENCY_MAX_GAIN, so a hole nearing detonation rises in tension and
+   * a defused/absent hole (level 0) falls silent. Smoothed via setTargetAtTime.
+   * No-op when disabled/disposed. This is the audible half of the disclosed
+   * manual-verification boundary.
+   * @param {number} level Instability in [0,1] (clamped).
+   */
+  setBlackHoleUrgency(level) {
+    if (!this._ctx || !this._urgency || this._disposed) return;
+    try {
+      let l = Number.isFinite(level) ? level : 0;
+      if (l < 0) l = 0;
+      else if (l > 1) l = 1;
+      this._urgency.gain.gain.setTargetAtTime(
+        l * AUDIO_URGENCY_MAX_GAIN,
+        this._ctx.currentTime,
+        AUDIO_MUSIC_GAIN_SMOOTHING,
+      );
+    } catch {
+      // Never let a scheduling error break the render loop.
+    }
+  }
+
+  /**
    * Set the master output gain (from audioMix.effectiveVolume — 0 when muted). No-op
    * when disabled/disposed.
    * @param {number} gain Effective master gain in [0,1].
@@ -205,6 +252,24 @@ export class AudioEngine {
       }
     }
     this._layers = [];
+    if (this._urgency) {
+      try {
+        this._urgency.osc.stop();
+      } catch {
+        // already stopped / not started — ignore
+      }
+      try {
+        this._urgency.osc.disconnect();
+      } catch {
+        // ignore
+      }
+      try {
+        this._urgency.gain.disconnect();
+      } catch {
+        // ignore
+      }
+      this._urgency = null;
+    }
     if (this._master) {
       try {
         this._master.disconnect();

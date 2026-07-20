@@ -83,18 +83,36 @@ export class PlayerDeathSystem extends System {
   fixedUpdate(dt) {
     const ps = this.playerState;
 
-    // Run ended — do nothing further (no negative lives, no further respawn).
+    // Story 6.2: consume the one-tick programmatic-death REQUEST read-and-clear at
+    // the very top (the InputState.consumeBomb idiom), BEFORE the guards. Clearing
+    // it here means a detonation during invulnerability or after game-over is both
+    // SUPPRESSED (the guards below return) AND dropped this tick — never deferred to
+    // a later, vulnerable tick.
+    const forced = ps.pendingDeath;
+    ps.pendingDeath = false;
+
+    // Run ended — do nothing further (no negative lives, no further respawn). A
+    // forced death after game-over is suppressed (flag already cleared above).
     if (ps.gameOver) {
       return;
     }
 
     // Invulnerable: count the window down (clamp ≥ 0) and take no lethal contact.
-    // The window ending and the first vulnerable tick are distinct steps.
+    // The window ending and the first vulnerable tick are distinct steps. A forced
+    // death during invulnerability is suppressed (flag already cleared above).
     if (ps.invulnMs > 0) {
       ps.invulnMs -= dt;
       if (ps.invulnMs < 0) {
         ps.invulnMs = 0;
       }
+      return;
+    }
+
+    // Vulnerable + a programmatic death was requested this tick: apply the SAME
+    // death flow as a contact death and return before the contact scan (at most one
+    // death per step). The death point is the ship's current position.
+    if (forced) {
+      this._applyDeath();
       return;
     }
 
@@ -122,37 +140,52 @@ export class PlayerDeathSystem extends System {
       const r = ship.radius + s.radius;
       // Squared compare avoids a sqrt; ≤ so a boundary touch counts.
       if (dx * dx + dy * dy <= r * r) {
-        // Story 4.2 death latch: capture the death point BEFORE the respawn below
-        // teleports the ship to arena center, so the grid's death ripple originates
-        // at the exact lethal-contact position. Fires for both a respawning death
-        // and the final game-over death. Read-only — changes no death behavior.
-        this.deathX = ship.x;
-        this.deathY = ship.y;
-        this.deathSeq += 1;
-        ps.lives -= 1;
-        if (ps.lives > 0) {
-          // Respawn: copy the canonical spawn so arena-center lives in one place.
-          const sp = createPlayerShip();
-          ship.x = sp.x;
-          ship.y = sp.y;
-          ship.vx = 0;
-          ship.vy = 0;
-          ship.angle = sp.angle;
-          ps.invulnMs = PLAYER_INVULN_MS;
-        } else {
-          // Last life: game-over. Do not respawn or grant invulnerability.
-          ps.lives = 0;
-          ps.gameOver = true;
-        }
-        // FR8: wipe the run multiplier (and its progress) the instant the player
-        // dies — both a respawning death and the final game-over death. Guarded
-        // so a system built without a score surface still runs the death flow
-        // unchanged. Score itself is untouched: you keep the points, lose the streak.
-        if (this.scoreState) {
-          resetMultiplier(this.scoreState);
-        }
+        this._applyDeath();
         break;
       }
+    }
+  }
+
+  /**
+   * The shared death-flow body: latch the death point, deduct a life, respawn (or
+   * game-over on the last life), and reset the run multiplier. Reused by BOTH the
+   * ship↔enemy contact path and the Story 6.2 programmatic (`pendingDeath`) path —
+   * the SAME life/respawn/invulnerability/multiplier-reset semantics either way.
+   * Callers guarantee the guards (not game-over, not invulnerable) have already
+   * passed and apply at most one death per tick.
+   * @private
+   */
+  _applyDeath() {
+    const ship = this.ship;
+    const ps = this.playerState;
+    // Story 4.2 death latch: capture the death point BEFORE the respawn below
+    // teleports the ship to arena center, so the grid's death ripple originates
+    // at the exact lethal-contact position. Fires for both a respawning death
+    // and the final game-over death. Read-only — changes no death behavior.
+    this.deathX = ship.x;
+    this.deathY = ship.y;
+    this.deathSeq += 1;
+    ps.lives -= 1;
+    if (ps.lives > 0) {
+      // Respawn: copy the canonical spawn so arena-center lives in one place.
+      const sp = createPlayerShip();
+      ship.x = sp.x;
+      ship.y = sp.y;
+      ship.vx = 0;
+      ship.vy = 0;
+      ship.angle = sp.angle;
+      ps.invulnMs = PLAYER_INVULN_MS;
+    } else {
+      // Last life: game-over. Do not respawn or grant invulnerability.
+      ps.lives = 0;
+      ps.gameOver = true;
+    }
+    // FR8: wipe the run multiplier (and its progress) the instant the player
+    // dies — both a respawning death and the final game-over death. Guarded
+    // so a system built without a score surface still runs the death flow
+    // unchanged. Score itself is untouched: you keep the points, lose the streak.
+    if (this.scoreState) {
+      resetMultiplier(this.scoreState);
     }
   }
 }

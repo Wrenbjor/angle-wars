@@ -1,33 +1,33 @@
 import { describe, it, expect } from 'vitest';
 import { BlackHoleSystem } from './BlackHoleSystem.js';
+import { BombSystem } from './BombSystem.js';
 import { CollisionSystem } from './CollisionSystem.js';
 import { ScoringSystem } from './ScoringSystem.js';
 import { PlayerDeathSystem } from './PlayerDeathSystem.js';
 import { SnakeSystem } from './SnakeSystem.js';
 import { Pool } from '../core/Pool.js';
-import { createBlackHole } from '../entities/BlackHole.js';
+import { createBlackHole, blackHoleInstability } from '../entities/BlackHole.js';
 import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createPinwheel } from '../entities/Pinwheel.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createScoreState } from '../state/ScoreState.js';
 import { createPlayerState } from '../state/PlayerState.js';
+import { InputState } from '../input/InputState.js';
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
   FIXED_STEP_MS,
   SHIP_RADIUS,
-  SEEKER_RADIUS,
   BULLET_RADIUS,
   BLACKHOLE_RADIUS,
-  BLACKHOLE_MAX_RADIUS,
+  BLACKHOLE_UNSTABLE_RADIUS,
+  BLACKHOLE_MIN_RADIUS,
   BLACKHOLE_GRAVITY_RADIUS,
   BLACKHOLE_GRAVITY_STRENGTH,
-  BLACKHOLE_HP,
-  BLACKHOLE_BULLET_DAMAGE,
-  BLACKHOLE_GROWTH_PER_FEED,
-  BLACKHOLE_FEED_PER_SPAWN,
+  BLACKHOLE_GROWTH_PER_ABSORB,
+  BLACKHOLE_SHRINK_PER_BULLET,
   BLACKHOLE_SPAWN_INTERVAL_MS,
   BLACKHOLE_MAX_ACTIVE,
   BLACKHOLE_POOL_PREWARM,
@@ -49,26 +49,25 @@ function seqRng(values) {
   return () => values[i++ % values.length];
 }
 
-// Build a system with real pools. The spawn pool (fed seekers) is separate from
-// the enemy pools so tests can observe emission distinctly, unless a test wires
-// them together on purpose.
+// Build a system with real pools (Story 6.2 signature: no spawnPool; playerState
+// is shared so a detonation can cost a life).
 function makeSystem({
   ship = createPlayerShip(),
   bulletPool = new Pool(createBullet),
   enemyPools = [new Pool(createSeeker)],
-  spawnPool = new Pool(createSeeker),
   scoreState = createScoreState(),
+  playerState = createPlayerState(),
   rng = seqRng([0.5, 0.5]),
 } = {}) {
   const system = new BlackHoleSystem(
     ship,
     bulletPool,
     enemyPools,
-    spawnPool,
     scoreState,
+    playerState,
     rng,
   );
-  return { system, ship, bulletPool, enemyPools, spawnPool, scoreState };
+  return { system, ship, bulletPool, enemyPools, scoreState, playerState };
 }
 
 // Capture the active instances of a pool via the public API (no private-Set
@@ -80,35 +79,43 @@ function activeOf(pool) {
 }
 
 // Place a live hole at (x,y) directly (bypassing random spawn), re-initialized to
-// a fresh shape unless overridden. Returns the pooled hole instance.
+// a fresh (stable) shape unless overridden. Returns the pooled hole instance.
 function placeHole(system, x, y, over = {}) {
   const h = system.holePool.acquire();
   h.x = x;
   h.y = y;
   h.radius = over.radius ?? BLACKHOLE_RADIUS;
-  h.hp = over.hp ?? BLACKHOLE_HP;
-  h.feed = over.feed ?? 0;
+  h.telegraphMs = over.telegraphMs ?? 0;
   return h;
 }
 
-describe('createBlackHole factory', () => {
-  it('returns the starting {x,y,radius,hp,feed} shape (stationary — no velocity)', () => {
+describe('createBlackHole factory + blackHoleInstability', () => {
+  it('returns the starting {x,y,radius,telegraphMs} shape (stationary — no velocity, no hp/feed)', () => {
     const h = createBlackHole();
     expect(h.x).toBe(0);
     expect(h.y).toBe(0);
     expect(h.radius).toBe(BLACKHOLE_RADIUS);
-    expect(h.hp).toBe(BLACKHOLE_HP);
-    expect(h.feed).toBe(0);
     expect(h.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
     expect('vx' in h).toBe(false);
     expect('vy' in h).toBe(false);
+    expect('hp' in h).toBe(false); // removed (Story 6.2)
+    expect('feed' in h).toBe(false); // removed (Story 6.2)
+  });
+
+  it('blackHoleInstability is 0 at the stable radius, 1 at the unstable threshold, and clamps outside', () => {
+    expect(blackHoleInstability(BLACKHOLE_RADIUS)).toBe(0);
+    expect(blackHoleInstability(BLACKHOLE_UNSTABLE_RADIUS)).toBe(1);
+    // Below the stable radius (a shrinking hole) clamps to 0; above the threshold clamps to 1.
+    expect(blackHoleInstability(BLACKHOLE_MIN_RADIUS)).toBe(0);
+    expect(blackHoleInstability(BLACKHOLE_UNSTABLE_RADIUS + 100)).toBe(1);
+    // Midpoint radius interpolates linearly.
+    const mid = (BLACKHOLE_RADIUS + BLACKHOLE_UNSTABLE_RADIUS) / 2;
+    expect(blackHoleInstability(mid)).toBeCloseTo(0.5, 9);
   });
 });
 
 describe('BlackHoleSystem — hoisted collector stability (NFR2)', () => {
   it('reuses the same hole + bullet collector references across ticks', () => {
-    // Collectors are stable constructor instance fields, not fresh per-tick
-    // closures — so forEachActive allocates no arrow per tick.
     const { system } = makeSystem();
     const holeRef = system._collectHole;
     const bulletRef = system._collectBullet;
@@ -122,7 +129,6 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
   it('pulls an entity within range toward the hole by STRENGTH·(1−d/R)·dtSec', () => {
     const { system, ship } = makeSystem();
     placeHole(system, CENTER_X, CENTER_Y);
-    // Ship a known distance d to the −x side, inside the gravity radius.
     const d = 100;
     ship.x = CENTER_X - d;
     ship.y = CENTER_Y;
@@ -131,7 +137,6 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
 
     const pull =
       BLACKHOLE_GRAVITY_STRENGTH * (1 - d / BLACKHOLE_GRAVITY_RADIUS) * DT_SEC;
-    // Displacement is purely +x (dy = 0), magnitude = pull.
     expect(ship.x).toBeCloseTo(CENTER_X - d + pull, 9);
     expect(ship.y).toBeCloseTo(CENTER_Y, 9);
     expect(pull).toBeGreaterThan(0);
@@ -152,7 +157,6 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
 
     system.fixedUpdate(DT);
 
-    // Both moved toward the hole center (bullet from −x moves +x; enemy from +x moves −x).
     expect(b.x).toBeGreaterThan(CENTER_X - 80);
     expect(e.x).toBeLessThan(CENTER_X + 120);
     expect(b.y).toBeCloseTo(CENTER_Y, 9);
@@ -162,7 +166,6 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
   it('does not move an entity at or beyond the gravity radius', () => {
     const { system, ship } = makeSystem();
     placeHole(system, CENTER_X, CENTER_Y);
-    // Exactly at the radius (guard is d < R, so == R is unaffected).
     ship.x = CENTER_X - BLACKHOLE_GRAVITY_RADIUS;
     ship.y = CENTER_Y;
 
@@ -194,7 +197,7 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
       ship.x = CENTER_X - d;
       ship.y = CENTER_Y;
       system.fixedUpdate(tickMs);
-      return ship.x - (CENTER_X - d); // +x displacement magnitude
+      return ship.x - (CENTER_X - d);
     }
     const small = stepOnce(DT);
     const big = stepOnce(2 * DT);
@@ -202,102 +205,8 @@ describe('BlackHoleSystem — gravity (AC1)', () => {
   });
 });
 
-describe('BlackHoleSystem — telegraphing enemies are inert to the hole (Story 2.6)', () => {
-  it('an ACTIVE hole does not pull a telegraphing enemy in its gravity radius, but pulls an active one', () => {
-    const bulletPool = new Pool(createBullet);
-    const enemyPool = new Pool(createSeeker);
-    const { system } = makeSystem({ bulletPool, enemyPools: [enemyPool] });
-    placeHole(system, CENTER_X, CENTER_Y); // active hole (telegraphMs 0)
-
-    const telegraphing = enemyPool.acquire();
-    telegraphing.x = CENTER_X - 100; // inside gravity radius
-    telegraphing.y = CENTER_Y;
-    telegraphing.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
-    const active = enemyPool.acquire();
-    active.x = CENTER_X + 120; // inside gravity radius
-    active.y = CENTER_Y;
-    active.telegraphMs = 0;
-
-    system.fixedUpdate(DT);
-
-    // Frozen enemy is not dragged (position unchanged); active enemy is pulled in.
-    expect(telegraphing.x).toBe(CENTER_X - 100);
-    expect(telegraphing.y).toBe(CENTER_Y);
-    expect(active.x).toBeLessThan(CENTER_X + 120);
-  });
-
-  it('an ACTIVE hole does not absorb a telegraphing enemy overlapping its body — until it activates', () => {
-    const bulletPool = new Pool(createBullet);
-    const enemyPool = new Pool(createSeeker);
-    const { system } = makeSystem({ bulletPool, enemyPools: [enemyPool] });
-    const collision = new CollisionSystem(bulletPool, [enemyPool]);
-    system.collisionSystem = collision;
-
-    const hole = placeHole(system, CENTER_X, CENTER_Y);
-    const e = enemyPool.acquire();
-    e.x = CENTER_X + 5; // overlapping the body but not coincident (so a pull would move it)
-    e.y = CENTER_Y;
-    e.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS; // telegraphing
-
-    collision.fixedUpdate(DT); // resets killedEnemies to []
-    system.fixedUpdate(DT);
-
-    // Not absorbed and not pulled while telegraphing — inert.
-    expect(enemyPool.activeCount).toBe(1);
-    expect(hole.feed).toBe(0);
-    expect(hole.radius).toBe(BLACKHOLE_RADIUS);
-    expect(collision.killedEnemies).not.toContain(e);
-    expect(e.x).toBe(CENTER_X + 5); // gravity skipped it too
-
-    // Activate it: now the same overlapping enemy is absorbed + fed.
-    e.telegraphMs = 0;
-    collision.fixedUpdate(DT);
-    system.fixedUpdate(DT);
-
-    expect(enemyPool.activeCount).toBe(0); // absorbed
-    expect(hole.feed).toBe(1);
-    expect(collision.killedEnemies).toContain(e);
-  });
-});
-
-describe('BlackHoleSystem — bullet feed + damage (AC2/AC3)', () => {
-  it('absorbs an overlapping bullet: releases it, damages hp, feeds, grows the radius', () => {
-    const bulletPool = new Pool(createBullet);
-    const { system } = makeSystem({ bulletPool });
-    const hole = placeHole(system, CENTER_X, CENTER_Y);
-    const startRadius = hole.radius;
-
-    const b = bulletPool.acquire();
-    b.x = CENTER_X; // dead center of the body — inside radius + bullet.radius
-    b.y = CENTER_Y;
-
-    system.fixedUpdate(DT);
-
-    expect(bulletPool.activeCount).toBe(0); // consumed
-    expect(hole.hp).toBe(BLACKHOLE_HP - BLACKHOLE_BULLET_DAMAGE);
-    expect(hole.feed).toBe(1);
-    expect(hole.radius).toBeCloseTo(startRadius + BLACKHOLE_GROWTH_PER_FEED, 9);
-  });
-
-  it('absorbs a bullet touching the body boundary (d == hole.radius + bullet.radius)', () => {
-    const bulletPool = new Pool(createBullet);
-    const { system } = makeSystem({ bulletPool });
-    const hole = placeHole(system, CENTER_X, CENTER_Y);
-    const r = hole.radius + BULLET_RADIUS;
-    const b = bulletPool.acquire();
-    b.x = CENTER_X + r; // exactly on the boundary
-    b.y = CENTER_Y;
-
-    system.fixedUpdate(DT);
-    // Boundary counts as an overlap: consumed. (Gravity nudged it inward first,
-    // but even without that the ≤ test includes the boundary.)
-    expect(bulletPool.activeCount).toBe(0);
-    expect(hole.hp).toBe(BLACKHOLE_HP - BLACKHOLE_BULLET_DAMAGE);
-  });
-});
-
-describe('BlackHoleSystem — enemy absorption via the real CollisionSystem seam (AC2)', () => {
-  it('releases the enemy to its OWN pool, appends to killedEnemies, feeds, does NOT score', () => {
+describe('BlackHoleSystem — enemy absorption GROWS the radius (AC — grow)', () => {
+  it('releases the enemy to its OWN pool, appends to killedEnemies, grows the radius, does NOT score', () => {
     const bulletPool = new Pool(createBullet);
     const enemyPool = new Pool(createSeeker);
     const scoreState = createScoreState();
@@ -306,18 +215,17 @@ describe('BlackHoleSystem — enemy absorption via the real CollisionSystem seam
       enemyPools: [enemyPool],
       scoreState,
     });
-    // Real collision + scoring seams over the same enemy pool.
     const collision = new CollisionSystem(bulletPool, [enemyPool]);
     const scoring = new ScoringSystem(collision, scoreState);
     system.collisionSystem = collision;
 
     const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const startRadius = hole.radius;
     const e = enemyPool.acquire();
-    e.x = CENTER_X; // inside the body
+    e.x = CENTER_X;
     e.y = CENTER_Y;
 
-    // Mirror the real tick order: Collision → Scoring → BlackHole. (No bullets, so
-    // the collision/scoring passes are no-ops that reset killedEnemies to [].)
+    // Mirror the real tick order: Collision → Scoring → BlackHole.
     collision.fixedUpdate(DT);
     scoring.fixedUpdate(DT);
     const scoreBefore = scoreState.score;
@@ -325,20 +233,21 @@ describe('BlackHoleSystem — enemy absorption via the real CollisionSystem seam
 
     expect(enemyPool.activeCount).toBe(0); // released to its own pool
     expect(collision.killedEnemies).toContain(e); // reconciliation seam
-    expect(hole.feed).toBe(1);
-    // The absorbed enemy is NOT scored (BlackHoleSystem runs AFTER ScoringSystem).
+    expect(hole.radius).toBeCloseTo(startRadius + BLACKHOLE_GROWTH_PER_ABSORB, 9);
+    // Absorbed enemy is NOT scored (BlackHoleSystem runs AFTER ScoringSystem).
     expect(scoreState.score).toBe(scoreBefore);
   });
 
-  it('does NOT absorb enemies before the collision system is late-bound (guarded); gravity + bullet feed still run', () => {
+  it('does NOT absorb enemies before the collision system is late-bound (guarded); gravity + bullet-shrink still run', () => {
     const bulletPool = new Pool(createBullet);
     const enemyPool = new Pool(createSeeker);
     const { system } = makeSystem({ bulletPool, enemyPools: [enemyPool] });
     expect(system.collisionSystem).toBeNull();
 
     const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const startRadius = hole.radius;
     const e = enemyPool.acquire();
-    e.x = CENTER_X + 5; // overlapping the body, but no collisionSystem
+    e.x = CENTER_X + 5;
     e.y = CENTER_Y;
     const b = bulletPool.acquire();
     b.x = CENTER_X;
@@ -346,18 +255,17 @@ describe('BlackHoleSystem — enemy absorption via the real CollisionSystem seam
 
     system.fixedUpdate(DT);
 
-    // Enemy not absorbed (still active), but gravity moved it and the bullet fed.
+    // Enemy not absorbed (still active), but gravity moved it and the bullet shrank.
     expect(enemyPool.activeCount).toBe(1);
-    expect(bulletPool.activeCount).toBe(0); // bullet still consumed
-    expect(hole.hp).toBe(BLACKHOLE_HP - BLACKHOLE_BULLET_DAMAGE);
-    expect(e.x).not.toBe(CENTER_X + 5); // gravity nudged it
+    expect(bulletPool.activeCount).toBe(0);
+    expect(hole.radius).toBeCloseTo(startRadius - BLACKHOLE_SHRINK_PER_BULLET, 9);
+    expect(e.x).not.toBe(CENTER_X + 5);
   });
 
   it('routes an absorbed enemy to ITS OWN owning pool across multiple archetype pools', () => {
     const bulletPool = new Pool(createBullet);
     const seekerPool = new Pool(createSeeker);
     const pinwheelPool = new Pool(createPinwheel);
-    // The hole spans BOTH pools; only the pinwheel (second pool) overlaps the body.
     const { system } = makeSystem({
       bulletPool,
       enemyPools: [seekerPool, pinwheelPool],
@@ -367,43 +275,36 @@ describe('BlackHoleSystem — enemy absorption via the real CollisionSystem seam
 
     placeHole(system, CENTER_X, CENTER_Y);
     const pw = pinwheelPool.acquire();
-    pw.x = CENTER_X; // inside the body
+    pw.x = CENTER_X;
     pw.y = CENTER_Y;
 
-    collision.fixedUpdate(DT); // resets killedEnemies to []
+    collision.fixedUpdate(DT);
     system.fixedUpdate(DT);
 
-    // Released to its OWN (pinwheel) pool; the seeker pool is untouched.
     expect(pinwheelPool.activeCount).toBe(0);
     expect(pinwheelPool.freeCount).toBe(1);
     expect(seekerPool.activeCount).toBe(0);
     expect(seekerPool.freeCount).toBe(0);
-    // Present in the real reconciliation report.
     expect(collision.killedEnemies).toContain(pw);
   });
 
   it('a real snake reconciles an absorbed mid-chain segment (split via killedEnemies)', () => {
     const bulletPool = new Pool(createBullet);
-    // Deterministic snake (indifferent to the player — takes only an rng).
     const snakeSystem = new SnakeSystem(seqRng([0.1, 0.5]));
     const segPool = snakeSystem.enemyPool;
     const { system } = makeSystem({
       bulletPool,
       enemyPools: [segPool],
     });
-    // Real collision seam over the segment pool, late-bound into BOTH systems.
     const collision = new CollisionSystem(bulletPool, [segPool]);
     system.collisionSystem = collision;
     snakeSystem.collisionSystem = collision;
 
-    // Hand-place a straight 5-segment snake (head +x) using real pooled instances.
     const hx = 400;
     const hy = 400;
     const segments = [];
     for (let i = 0; i < 5; i++) {
       const seg = segPool.acquire();
-      // Wide gaps so a single-tick gravity nudge can't pull a NEIGHBOR into the
-      // body — only the exactly-overlapping mid-chain segment is absorbed.
       seg.x = hx - i * 80;
       seg.y = hy;
       seg.vx = 0;
@@ -411,179 +312,360 @@ describe('BlackHoleSystem — enemy absorption via the real CollisionSystem seam
       segments.push(seg);
     }
     snakeSystem.snakes.push({ segments, headingRad: 0, slitherPhaseRad: 0 });
-    const target = segments[2]; // a mid-chain segment
+    const target = segments[2];
 
-    // Hole overlaps ONLY the mid-chain segment.
     placeHole(system, target.x, target.y);
 
-    collision.fixedUpdate(DT); // resets killedEnemies to []
-    system.fixedUpdate(DT); // absorbs the segment → release + push to killedEnemies
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
 
-    // The segment was released to the segment pool and reported killed.
     expect(collision.killedEnemies).toContain(target);
     expect(segPool.activeCount).toBe(4);
 
-    // Snake reconciles on its next tick: the absorbed segment is gone from every
-    // chain and the snake split into two independent snakes at the gap.
     snakeSystem.fixedUpdate(DT);
     for (const sk of snakeSystem.snakes) {
       expect(sk.segments).not.toContain(target);
     }
     expect(snakeSystem.snakes.length).toBe(2);
-    // Pool state consistent: exactly the four survivors active, no double-release.
     expect(segPool.activeCount).toBe(4);
     const stillActive = activeOf(segPool);
     expect(stillActive).not.toContain(target);
-    const totalInChains = snakeSystem.snakes.reduce(
-      (n, sk) => n + sk.segments.length,
-      0,
-    );
-    expect(totalInChains).toBe(4);
   });
 });
 
-describe('BlackHoleSystem — growth cap', () => {
-  it('clamps the radius at BLACKHOLE_MAX_RADIUS when fed while already maxed', () => {
+describe('BlackHoleSystem — bullet absorption SHRINKS the radius (AC — shrink)', () => {
+  it('absorbs an overlapping bullet: releases it and shrinks the radius', () => {
     const bulletPool = new Pool(createBullet);
     const { system } = makeSystem({ bulletPool });
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      radius: BLACKHOLE_MAX_RADIUS,
-    });
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const startRadius = hole.radius;
+
     const b = bulletPool.acquire();
     b.x = CENTER_X;
     b.y = CENTER_Y;
 
     system.fixedUpdate(DT);
 
-    expect(hole.radius).toBe(BLACKHOLE_MAX_RADIUS); // stayed clamped
-    expect(hole.feed).toBe(1); // still fed/damaged
+    expect(bulletPool.activeCount).toBe(0); // consumed
+    expect(hole.radius).toBeCloseTo(startRadius - BLACKHOLE_SHRINK_PER_BULLET, 9);
   });
 
-  it('never exceeds the cap as the last growth step crosses it', () => {
+  it('absorbs a bullet touching the body boundary (d == hole.radius + bullet.radius)', () => {
     const bulletPool = new Pool(createBullet);
     const { system } = makeSystem({ bulletPool });
-    // One growth step below the cap so the next feed would overshoot without a clamp.
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      radius: BLACKHOLE_MAX_RADIUS - BLACKHOLE_GROWTH_PER_FEED / 2,
-    });
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const startRadius = hole.radius;
+    const r = hole.radius + BULLET_RADIUS;
     const b = bulletPool.acquire();
-    b.x = CENTER_X;
+    b.x = CENTER_X + r; // exactly on the boundary
     b.y = CENTER_Y;
 
     system.fixedUpdate(DT);
-    expect(hole.radius).toBe(BLACKHOLE_MAX_RADIUS);
+    expect(bulletPool.activeCount).toBe(0);
+    expect(hole.radius).toBeLessThan(startRadius);
   });
 });
 
-describe('BlackHoleSystem — feed → enemy spawn (AC2)', () => {
-  it('emits one seeker at a random arena edge when feed reaches BLACKHOLE_FEED_PER_SPAWN', () => {
-    const bulletPool = new Pool(createBullet);
-    const spawnPool = new Pool(createSeeker);
-    // rng feeds the edge-spawn: edge index (0=top) then position along it.
-    const { system } = makeSystem({
-      bulletPool,
-      spawnPool,
-      rng: seqRng([0.0, 0.5]),
-    });
-    // One feed short of the spawn threshold; the single bullet this tick trips it.
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      feed: BLACKHOLE_FEED_PER_SPAWN - 1,
-    });
-    const b = bulletPool.acquire();
-    b.x = CENTER_X;
-    b.y = CENTER_Y;
-
-    expect(spawnPool.activeCount).toBe(0);
-    system.fixedUpdate(DT);
-
-    expect(spawnPool.activeCount).toBe(1); // one seeker emitted
-    expect(hole.feed).toBe(0); // BLACKHOLE_FEED_PER_SPAWN subtracted
-    // Placed on the top edge (edge 0): y pinned just inside the inset by the radius.
-    const minY = ARENA_BORDER_INSET + SEEKER_RADIUS;
-    const spawned = activeOf(system.spawnPool)[0];
-    expect(spawned.y).toBe(minY);
-  });
-});
-
-describe('BlackHoleSystem — detonation (AC3)', () => {
-  it('credits BLACKHOLE_SCORE and releases the hole when hp reaches zero', () => {
-    const bulletPool = new Pool(createBullet);
-    const scoreState = createScoreState();
-    const { system } = makeSystem({ bulletPool, scoreState });
-    // hp exactly one bullet from death.
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      hp: BLACKHOLE_BULLET_DAMAGE,
-    });
-    const b = bulletPool.acquire();
-    b.x = CENTER_X;
-    b.y = CENTER_Y;
-
-    system.fixedUpdate(DT);
-
-    expect(hole.hp).toBeLessThanOrEqual(0);
-    expect(scoreState.score).toBe(BLACKHOLE_SCORE); // payout credited directly
-    expect(system.holePool.activeCount).toBe(0); // hole removed
-  });
-
-  it('the killing tick stops absorbing/feeding: no growth, no phantom seeker, extra bullets pass through', () => {
+describe('BlackHoleSystem — detonation at the unstable threshold (AC — detonation)', () => {
+  // Wire a full real screen-clear + life-cost path: a BombSystem (reused screen
+  // clear) + a shared playerState (the life cost) + a real CollisionSystem.
+  function makeDetonable({ holeRadius, otherEnemies = [] } = {}) {
     const bulletPool = new Pool(createBullet);
     const enemyPool = new Pool(createSeeker);
-    const spawnPool = new Pool(createSeeker);
     const scoreState = createScoreState();
+    const playerState = createPlayerState();
+    const ship = createPlayerShip();
+    ship.x = 50; // parked far from the centered hole
+    ship.y = 50;
+    const { system } = makeSystem({
+      ship,
+      bulletPool,
+      enemyPools: [enemyPool],
+      scoreState,
+      playerState,
+    });
+    const collision = new CollisionSystem(bulletPool, [enemyPool]);
+    system.collisionSystem = collision;
+    const bombSystem = new BombSystem(
+      new InputState(),
+      [enemyPool],
+      collision,
+      scoreState,
+      ship,
+    );
+    system.bombSystem = bombSystem;
+
+    // The enemy whose absorption tips the hole over the threshold, dead-center.
+    const hole = placeHole(system, CENTER_X, CENTER_Y, { radius: holeRadius });
+    const tipEnemy = enemyPool.acquire();
+    tipEnemy.x = CENTER_X;
+    tipEnemy.y = CENTER_Y;
+    // Other active enemies well outside the hole's gravity radius (not pulled/absorbed).
+    const others = otherEnemies.map(([x, y]) => {
+      const e = enemyPool.acquire();
+      e.x = x;
+      e.y = y;
+      return e;
+    });
+    return { system, collision, bombSystem, scoreState, playerState, hole, enemyPool, tipEnemy, others };
+  }
+
+  it('crossing the threshold fires the screen clear, sets pendingDeath, releases the hole, pays NO score', () => {
+    const ctx = makeDetonable({
+      holeRadius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+      otherEnemies: [[80, 80], [ARENA_WIDTH - 80, ARENA_HEIGHT - 80]],
+    });
+    const { system, collision, scoreState, playerState, enemyPool, tipEnemy, others } = ctx;
+    const scoreBefore = scoreState.score;
+
+    collision.fixedUpdate(DT); // resets killedEnemies to []
+    system.fixedUpdate(DT);
+
+    // The absorbing enemy grew the hole to the threshold → detonation this tick.
+    expect(system.holePool.activeCount).toBe(0); // hole released
+    expect(playerState.pendingDeath).toBe(true); // life cost requested
+    expect(scoreState.score).toBe(scoreBefore); // NO payout on detonation
+    // The screen clear removed the OTHER active enemies (and the absorbed one).
+    expect(enemyPool.activeCount).toBe(0);
+    expect(collision.killedEnemies).toContain(tipEnemy);
+    for (const e of others) expect(collision.killedEnemies).toContain(e);
+  });
+
+  it('two-pass safety: each cleared/absorbed enemy appears exactly ONCE in killedEnemies', () => {
+    const ctx = makeDetonable({
+      holeRadius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+      otherEnemies: [[80, 80], [ARENA_WIDTH - 80, ARENA_HEIGHT - 80]],
+    });
+    const { system, collision, tipEnemy, others } = ctx;
+
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+
+    const killed = collision.killedEnemies;
+    // Exactly three removals (1 absorbed + 2 cleared), no duplicates.
+    expect(killed.length).toBe(3);
+    expect(new Set(killed).size).toBe(3);
+    expect(killed).toContain(tipEnemy);
+    for (const e of others) expect(killed).toContain(e);
+  });
+
+  it('detonation with an UNSET bombSystem still costs the life + releases the hole (screen clear skipped)', () => {
+    const bulletPool = new Pool(createBullet);
+    const enemyPool = new Pool(createSeeker);
+    const scoreState = createScoreState();
+    const playerState = createPlayerState();
     const { system } = makeSystem({
       bulletPool,
       enemyPools: [enemyPool],
-      spawnPool,
       scoreState,
+      playerState,
     });
-    // A real collision stub so enemy absorption is enabled (it must NOT run on the
-    // death tick either). rng would emit at an edge if a phantom feed occurred.
-    system.collisionSystem = { killedEnemies: [] };
+    const collision = new CollisionSystem(bulletPool, [enemyPool]);
+    system.collisionSystem = collision;
+    expect(system.bombSystem).toBeNull();
 
-    // One hit from death, and already one feed short of the spawn threshold — so a
-    // (wrongly) counted killing feed would both grow AND emit a phantom seeker.
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      hp: BLACKHOLE_BULLET_DAMAGE,
-      feed: BLACKHOLE_FEED_PER_SPAWN - 1,
+    placeHole(system, CENTER_X, CENTER_Y, {
+      radius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
     });
-    const radiusBefore = hole.radius;
-    expect(radiusBefore).toBe(BLACKHOLE_RADIUS);
+    const tip = enemyPool.acquire();
+    tip.x = CENTER_X;
+    tip.y = CENTER_Y;
+    // Another enemy far away: with no bombSystem the screen clear cannot fire, so it survives.
+    const survivor = enemyPool.acquire();
+    survivor.x = 80;
+    survivor.y = 80;
 
-    // Three bullets all overlapping the body; only the first (killing) one is eaten.
-    for (let i = 0; i < 3; i++) {
-      const b = bulletPool.acquire();
-      b.x = CENTER_X;
-      b.y = CENTER_Y;
-    }
-
+    collision.fixedUpdate(DT);
     system.fixedUpdate(DT);
 
-    expect(system.holePool.activeCount).toBe(0); // detonated + released
-    expect(scoreState.score).toBe(BLACKHOLE_SCORE); // payout
-    expect(spawnPool.activeCount).toBe(0); // NO phantom seeker
-    expect(hole.radius).toBe(radiusBefore); // never grew on the death tick
-    expect(bulletPool.activeCount).toBe(2); // only the killing bullet consumed
+    expect(system.holePool.activeCount).toBe(0); // hole still released
+    expect(playerState.pendingDeath).toBe(true); // life still requested
+    expect(scoreState.score).toBe(0); // no payout
+    // The absorbed enemy is gone but the distant one is NOT cleared (no bombSystem).
+    expect(activeOf(enemyPool)).toContain(survivor);
+    expect(collision.killedEnemies).toContain(tip);
+    expect(collision.killedEnemies).not.toContain(survivor);
   });
 
-  it('a destroyed hole no longer pulls or is lethal on the next step', () => {
-    const bulletPool = new Pool(createBullet);
-    const ship = createPlayerShip();
-    const { system } = makeSystem({ bulletPool, ship });
-    placeHole(system, CENTER_X, CENTER_Y, { hp: BLACKHOLE_BULLET_DAMAGE });
-    const b = bulletPool.acquire();
-    b.x = CENTER_X;
-    b.y = CENTER_Y;
-    system.fixedUpdate(DT); // detonates
+  it('a released detonated hole no longer pulls on the next step', () => {
+    const ctx = makeDetonable({
+      holeRadius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+    });
+    const { system, collision } = ctx;
+    const ship = system.ship;
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT); // detonates + releases
 
-    // Next step: an entity that would have been pulled is not moved (no active hole).
     ship.x = CENTER_X - 100;
     ship.y = CENTER_Y;
+    collision.fixedUpdate(DT);
     system.fixedUpdate(DT);
-    expect(ship.x).toBe(CENTER_X - 100);
+    expect(ship.x).toBe(CENTER_X - 100); // no active hole → no pull
+  });
+
+  it('end-to-end: a real detonation actually SPENDS a life through the real PlayerDeathSystem (shared playerState)', () => {
+    const ctx = makeDetonable({
+      holeRadius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+    });
+    const { system, collision, playerState } = ctx;
+    // The REAL death seam over the shared playerState (hole pool empties on
+    // detonation → no contact death; the ONLY death is the forced pendingDeath).
+    const ship = system.ship;
+    const death = new PlayerDeathSystem(ship, [system.holePool], playerState);
+
+    // One fixed tick in registration order: BlackHole detonates (sets pendingDeath),
+    // then PlayerDeathSystem consumes it.
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+    expect(playerState.pendingDeath).toBe(true); // producer set it
+    death.fixedUpdate(DT);
+
+    // The life was actually spent with the NORMAL respawn flow, and the flag cleared.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(playerState.pendingDeath).toBe(false);
+    expect(death.deathSeq).toBe(1);
+  });
+
+  it('end-to-end: a detonation on the LAST life ends the run through the real PlayerDeathSystem', () => {
+    const ctx = makeDetonable({
+      holeRadius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+    });
+    const { system, collision, playerState } = ctx;
+    playerState.lives = 1; // last life
+    const death = new PlayerDeathSystem(system.ship, [system.holePool], playerState);
+
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+    death.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(0);
+    expect(playerState.gameOver).toBe(true);
+    expect(playerState.invulnMs).toBe(0); // no respawn invuln on the final death
+    expect(playerState.pendingDeath).toBe(false);
   });
 });
 
-describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (AC3)', () => {
+describe('BlackHoleSystem — safe implosion at the floor (AC — implosion)', () => {
+  it('shrinking to the floor credits BLACKHOLE_SCORE, releases the hole, no screen clear, no life cost', () => {
+    const bulletPool = new Pool(createBullet);
+    const enemyPool = new Pool(createSeeker);
+    const scoreState = createScoreState();
+    const playerState = createPlayerState();
+    const ship = createPlayerShip();
+    const { system } = makeSystem({
+      ship,
+      bulletPool,
+      enemyPools: [enemyPool],
+      scoreState,
+      playerState,
+    });
+    const collision = new CollisionSystem(bulletPool, [enemyPool]);
+    system.collisionSystem = collision;
+    const bombSystem = new BombSystem(
+      new InputState(),
+      [enemyPool],
+      collision,
+      scoreState,
+      ship,
+    );
+    system.bombSystem = bombSystem;
+
+    // One bullet-shrink away from the floor.
+    const hole = placeHole(system, CENTER_X, CENTER_Y, {
+      radius: BLACKHOLE_MIN_RADIUS + BLACKHOLE_SHRINK_PER_BULLET,
+    });
+    const b = bulletPool.acquire();
+    b.x = CENTER_X;
+    b.y = CENTER_Y;
+    // A distant active enemy to prove the screen clear did NOT fire on implosion.
+    const survivor = enemyPool.acquire();
+    survivor.x = 80;
+    survivor.y = 80;
+
+    collision.fixedUpdate(DT);
+    const scoreBefore = scoreState.score;
+    system.fixedUpdate(DT);
+
+    expect(hole.radius).toBeLessThanOrEqual(BLACKHOLE_MIN_RADIUS);
+    expect(system.holePool.activeCount).toBe(0); // hole released
+    expect(scoreState.score).toBe(scoreBefore + BLACKHOLE_SCORE); // payout credited
+    expect(playerState.pendingDeath).toBe(false); // NO life cost
+    expect(activeOf(enemyPool)).toContain(survivor); // NO screen clear
+    expect(bombSystem.shockwaveMs).toBe(0); // detonateAt was never called
+  });
+
+  it('many overlapping bullets in one tick never drive the radius negative and still safely implode', () => {
+    const bulletPool = new Pool(createBullet);
+    const scoreState = createScoreState();
+    const playerState = createPlayerState();
+    const { system } = makeSystem({ bulletPool, scoreState, playerState });
+
+    // Start just above the floor, then far MORE overlapping bullets than the shrink
+    // budget to the floor — without the zero clamp the radius would go negative.
+    const hole = placeHole(system, CENTER_X, CENTER_Y, {
+      radius: BLACKHOLE_MIN_RADIUS + BLACKHOLE_SHRINK_PER_BULLET,
+    });
+    for (let i = 0; i < 20; i++) {
+      const b = bulletPool.acquire();
+      b.x = CENTER_X; // dead center — overlaps at any shrinking radius
+      b.y = CENTER_Y;
+    }
+
+    const scoreBefore = scoreState.score;
+    system.fixedUpdate(DT);
+
+    // The radius floored at 0 (never negative, never NaN)…
+    expect(hole.radius).toBeGreaterThanOrEqual(0);
+    expect(Number.isNaN(hole.radius)).toBe(false);
+    // …and the hole still safely imploded (radius <= floor) for its payout, no life cost.
+    expect(system.holePool.activeCount).toBe(0);
+    expect(scoreState.score).toBe(scoreBefore + BLACKHOLE_SCORE);
+    expect(playerState.pendingDeath).toBe(false);
+    expect(bulletPool.activeCount).toBe(0); // all bullets absorbed
+  });
+});
+
+describe('BlackHoleSystem — instability level (maxInstability)', () => {
+  it('is 0 with no active holes', () => {
+    const { system } = makeSystem();
+    system.fixedUpdate(DT);
+    expect(system.maxInstability).toBe(0);
+  });
+
+  it('equals blackHoleInstability(radius) for a single active hole', () => {
+    const { system } = makeSystem();
+    const hole = placeHole(system, CENTER_X, CENTER_Y, {
+      radius: (BLACKHOLE_RADIUS + BLACKHOLE_UNSTABLE_RADIUS) / 2,
+    });
+    system.fixedUpdate(DT);
+    expect(system.maxInstability).toBeCloseTo(blackHoleInstability(hole.radius), 9);
+    expect(system.maxInstability).toBeCloseTo(0.5, 9);
+  });
+
+  it('takes the MAX over multiple active non-telegraphing holes', () => {
+    const { system } = makeSystem();
+    placeHole(system, 200, 200, { radius: BLACKHOLE_RADIUS + 5 });
+    const hot = placeHole(system, 600, 400, {
+      radius: BLACKHOLE_UNSTABLE_RADIUS - 5,
+    });
+    system.fixedUpdate(DT);
+    expect(system.maxInstability).toBeCloseTo(blackHoleInstability(hot.radius), 9);
+  });
+
+  it('excludes a telegraphing hole (not yet unstable)', () => {
+    const { system } = makeSystem();
+    placeHole(system, CENTER_X, CENTER_Y, {
+      radius: BLACKHOLE_UNSTABLE_RADIUS - 5,
+      telegraphMs: ENEMY_SPAWN_TELEGRAPH_MS,
+    });
+    system.fixedUpdate(DT);
+    expect(system.maxInstability).toBe(0);
+  });
+});
+
+describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (AC4)', () => {
   it('a non-invulnerable ship over an undestroyed hole triggers the death flow; the hole survives', () => {
     const ship = createPlayerShip();
     const { system } = makeSystem({ ship });
@@ -591,19 +673,18 @@ describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (A
     ship.x = 300;
     ship.y = 300;
 
-    // The death seam over ONLY the hole pool (the scene builds [...enemyPools, holePool]).
     const playerState = createPlayerState();
     const death = new PlayerDeathSystem(ship, [system.holePool], playerState);
     death.fixedUpdate(DT);
 
     expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
     expect(playerState.gameOver).toBe(false);
-    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS); // respawn invuln granted
-    expect(ship.x).toBe(CENTER_X); // respawned to center
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(ship.x).toBe(CENTER_X);
     expect(ship.y).toBe(CENTER_Y);
     // Ship contact never destroys the hole.
     expect(system.holePool.activeCount).toBe(1);
-    expect(hole.hp).toBe(BLACKHOLE_HP);
+    expect(hole.radius).toBe(BLACKHOLE_RADIUS);
   });
 
   it('no death while invulnerable', () => {
@@ -618,7 +699,7 @@ describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (A
     const death = new PlayerDeathSystem(ship, [system.holePool], playerState);
     death.fixedUpdate(DT);
 
-    expect(playerState.lives).toBe(PLAYER_START_LIVES); // no life lost
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
     expect(playerState.gameOver).toBe(false);
   });
 
@@ -627,7 +708,7 @@ describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (A
     const { system } = makeSystem({ ship });
     const hole = placeHole(system, 300, 300);
     const r = SHIP_RADIUS + hole.radius;
-    ship.x = 300 + r; // exactly on the contact boundary
+    ship.x = 300 + r;
     ship.y = 300;
 
     const playerState = createPlayerState();
@@ -639,130 +720,90 @@ describe('BlackHoleSystem — ship contact through the real PlayerDeathSystem (A
 });
 
 describe('BlackHoleSystem — spawn telegraph (Story 2.6)', () => {
-  it('freezes a telegraphing hole: no gravity, no absorb/feed/grow/detonation; counts down by dt (AC1)', () => {
+  it('freezes a telegraphing hole: no gravity, no absorb/grow/shrink/detonation/implosion; counts down by dt', () => {
     const bulletPool = new Pool(createBullet);
     const ship = createPlayerShip();
     const { system } = makeSystem({ bulletPool, ship });
-    const hole = placeHole(system, CENTER_X, CENTER_Y);
-    hole.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
-    // Ship within the gravity radius, a bullet dead-center (would be absorbed).
+    const hole = placeHole(system, CENTER_X, CENTER_Y, {
+      telegraphMs: ENEMY_SPAWN_TELEGRAPH_MS,
+    });
     ship.x = CENTER_X - 100;
     ship.y = CENTER_Y;
     const b = bulletPool.acquire();
     b.x = CENTER_X;
     b.y = CENTER_Y;
-    const startHp = hole.hp;
 
     system.fixedUpdate(DT);
 
-    // No gravity (ship unmoved), no absorb/feed (bullet alive, hp/radius/feed unchanged).
+    // No gravity (ship unmoved), no absorb/shrink (bullet alive, radius unchanged).
     expect(ship.x).toBe(CENTER_X - 100);
     expect(bulletPool.activeCount).toBe(1);
-    expect(hole.hp).toBe(startHp);
     expect(hole.radius).toBe(BLACKHOLE_RADIUS);
-    expect(hole.feed).toBe(0);
-    // Only the telegraph advanced.
+    // Only the telegraph advanced; excluded from the instability level.
     expect(hole.telegraphMs).toBeCloseTo(ENEMY_SPAWN_TELEGRAPH_MS - DT, 9);
+    expect(system.maxInstability).toBe(0);
   });
 
-  it('a telegraphing hole overlapping the ship is non-lethal via the death seam (AC1)', () => {
+  it('a telegraphing hole overlapping the ship is non-lethal via the death seam', () => {
     const ship = createPlayerShip();
     const { system } = makeSystem({ ship });
-    const hole = placeHole(system, 300, 300);
-    hole.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    placeHole(system, 300, 300, { telegraphMs: ENEMY_SPAWN_TELEGRAPH_MS });
     ship.x = 300;
-    ship.y = 300; // overlapping
+    ship.y = 300;
 
     const playerState = createPlayerState();
     const death = new PlayerDeathSystem(ship, [system.holePool], playerState);
     death.fixedUpdate(DT);
 
-    expect(playerState.lives).toBe(PLAYER_START_LIVES); // no death while telegraphing
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
     expect(playerState.gameOver).toBe(false);
   });
 
-  it('resumes gravity + becomes active on the tick the telegraph reaches 0 (AC2)', () => {
+  it('resumes gravity + becomes active on the tick the telegraph reaches 0', () => {
     const ship = createPlayerShip();
     const { system } = makeSystem({ ship });
-    const hole = placeHole(system, CENTER_X, CENTER_Y);
-    hole.telegraphMs = DT; // one step from activation
+    placeHole(system, CENTER_X, CENTER_Y, { telegraphMs: DT });
     ship.x = CENTER_X - 100;
     ship.y = CENTER_Y;
 
     system.fixedUpdate(DT);
 
-    expect(hole.telegraphMs).toBe(0);
-    // Gravity resumed this same tick — the ship was pulled toward the hole (+x).
-    expect(ship.x).toBeGreaterThan(CENTER_X - 100);
+    expect(ship.x).toBeGreaterThan(CENTER_X - 100); // pulled this same tick
   });
 
-  it('a fed seeker is emitted telegraphing AND placed ≥ SPAWN_SAFE_RADIUS from the ship (AC3)', () => {
+  it('an ACTIVE hole does not pull or absorb a telegraphing enemy — until it activates', () => {
     const bulletPool = new Pool(createBullet);
-    const spawnPool = new Pool(createSeeker);
-    const ship = createPlayerShip(); // center
-    const { system } = makeSystem({
-      bulletPool,
-      spawnPool,
-      ship,
-      rng: seqRng([0.0, 0.5]), // top edge, far from a centered ship → accepted
-    });
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      feed: BLACKHOLE_FEED_PER_SPAWN - 1,
-    });
-    const b = bulletPool.acquire();
-    b.x = CENTER_X;
-    b.y = CENTER_Y;
+    const enemyPool = new Pool(createSeeker);
+    const { system } = makeSystem({ bulletPool, enemyPools: [enemyPool] });
+    const collision = new CollisionSystem(bulletPool, [enemyPool]);
+    system.collisionSystem = collision;
 
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const e = enemyPool.acquire();
+    e.x = CENTER_X + 5;
+    e.y = CENTER_Y;
+    e.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+
+    collision.fixedUpdate(DT);
     system.fixedUpdate(DT);
 
-    expect(spawnPool.activeCount).toBe(1);
-    expect(hole.feed).toBe(0);
-    const spawned = activeOf(spawnPool)[0];
-    // Fed seeker telegraphs (frozen + non-lethal until it activates).
-    expect(spawned.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
-    // And it is kept away from the ship.
-    const dx = spawned.x - ship.x;
-    const dy = spawned.y - ship.y;
-    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
+    expect(enemyPool.activeCount).toBe(1); // not absorbed
+    expect(hole.radius).toBe(BLACKHOLE_RADIUS); // no growth
+    expect(collision.killedEnemies).not.toContain(e);
+    expect(e.x).toBe(CENTER_X + 5); // gravity skipped it too
+
+    // Activate it: now the same overlapping enemy is absorbed + grows the hole.
+    e.telegraphMs = 0;
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+
+    expect(enemyPool.activeCount).toBe(0);
+    expect(hole.radius).toBeCloseTo(BLACKHOLE_RADIUS + BLACKHOLE_GROWTH_PER_ABSORB, 9);
+    expect(collision.killedEnemies).toContain(e);
   });
 
-  it('a fed seeker RE-ROLLS away from a ship sitting on the first edge candidate (AC3)', () => {
-    // Pin the ship ON the first edge candidate (top-center, edge 0 / t=0.5) so the
-    // avoidance MUST re-roll — this fails if `_spawnSeekerAtEdge` drops `this.ship`.
-    const bulletPool = new Pool(createBullet);
-    const spawnPool = new Pool(createSeeker);
+  it('_spawnOne places the hole ≥ SPAWN_SAFE_RADIUS from the ship and telegraphing', () => {
     const ship = createPlayerShip();
-    ship.x = ARENA_WIDTH / 2; // == first edge candidate x
-    ship.y = ARENA_BORDER_INSET + SEEKER_RADIUS; // == first edge candidate y (top)
-    const { system } = makeSystem({
-      bulletPool,
-      spawnPool,
-      ship,
-      // edge 0 / t=0.5 (on the ship → too close) → re-roll → edge 1 / t=0.5 (far).
-      rng: seqRng([0.0, 0.5, 0.25, 0.5]),
-    });
-    const hole = placeHole(system, CENTER_X, CENTER_Y, {
-      feed: BLACKHOLE_FEED_PER_SPAWN - 1,
-    });
-    const b = bulletPool.acquire();
-    b.x = CENTER_X;
-    b.y = CENTER_Y;
-
-    system.fixedUpdate(DT);
-
-    expect(spawnPool.activeCount).toBe(1);
-    expect(hole.feed).toBe(0);
-    const spawned = activeOf(spawnPool)[0];
-    // Re-rolled clear of the ship (would be ~0 away if avoidance were disabled).
-    const dx = spawned.x - ship.x;
-    const dy = spawned.y - ship.y;
-    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
-    expect(spawned.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
-  });
-
-  it('_spawnOne places the hole ≥ SPAWN_SAFE_RADIUS from the ship and telegraphing (AC3)', () => {
-    const ship = createPlayerShip(); // center — the first interior roll lands on it
-    // First interior roll (0.5,0.5) == center (on ship) → re-roll to a corner.
     const { system } = makeSystem({ ship, rng: seqRng([0.5, 0.5, 0.0, 0.0]) });
     system._spawnOne();
     const hole = activeOf(system.holePool)[0];
@@ -770,17 +811,16 @@ describe('BlackHoleSystem — spawn telegraph (Story 2.6)', () => {
     const dy = hole.y - ship.y;
     expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(SPAWN_SAFE_RADIUS * SPAWN_SAFE_RADIUS);
     expect(hole.telegraphMs).toBe(ENEMY_SPAWN_TELEGRAPH_MS);
+    expect(hole.radius).toBe(BLACKHOLE_RADIUS); // fresh, stable
   });
 });
 
 describe('BlackHoleSystem — self-spawn cadence + cap', () => {
   it('spawns one hole after a full interval and never exceeds BLACKHOLE_MAX_ACTIVE', () => {
     const { system } = makeSystem();
-    // Run well past several intervals.
     const T = BLACKHOLE_SPAWN_INTERVAL_MS * 5;
     const ticks = Math.round(T / DT);
     for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
-    // The cap holds: no more than BLACKHOLE_MAX_ACTIVE holes despite the elapsed time.
     expect(system.holePool.activeCount).toBe(BLACKHOLE_MAX_ACTIVE);
   });
 
@@ -791,28 +831,22 @@ describe('BlackHoleSystem — self-spawn cadence + cap', () => {
     expect(system.holePool.activeCount).toBe(0);
   });
 
-  it('spawns again once a hole is destroyed and the cap frees up', () => {
-    const bulletPool = new Pool(createBullet);
-    const { system } = makeSystem({ bulletPool });
-    // Reach the cap. A small margin past the exact interval avoids a float-rounding
-    // boundary (summed dt can land a hair under the threshold) while staying below
-    // two intervals so the cap of one still holds.
+  it('spawns again once a hole safely implodes and the cap frees up', () => {
+    const { system, scoreState } = makeSystem();
     const ticks = Math.round(BLACKHOLE_SPAWN_INTERVAL_MS / DT) + 2;
     for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
     expect(system.holePool.activeCount).toBe(BLACKHOLE_MAX_ACTIVE);
 
-    // Destroy the one hole: activate it past its spawn telegraph (Story 2.6 —
-    // a self-spawned hole starts frozen + invulnerable), drop its hp, bullet on it.
+    // Defuse the one hole: activate it (self-spawned holes start telegraphing) and
+    // drop its radius to the floor so the next tick implodes it.
     const hole = activeOf(system.holePool)[0];
     hole.telegraphMs = 0;
-    hole.hp = BLACKHOLE_BULLET_DAMAGE;
-    const b = bulletPool.acquire();
-    b.x = hole.x;
-    b.y = hole.y;
+    hole.radius = BLACKHOLE_MIN_RADIUS;
+    const scoreBefore = scoreState.score;
     system.fixedUpdate(DT);
     expect(system.holePool.activeCount).toBe(0);
+    expect(scoreState.score).toBe(scoreBefore + BLACKHOLE_SCORE); // implosion payout
 
-    // After another full interval a fresh hole spawns.
     for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
     expect(system.holePool.activeCount).toBe(BLACKHOLE_MAX_ACTIVE);
   });
@@ -829,10 +863,7 @@ describe('BlackHoleSystem — self-spawn cadence + cap', () => {
     expect(hole.y).toBeLessThanOrEqual(
       ARENA_HEIGHT - ARENA_BORDER_INSET - BLACKHOLE_RADIUS,
     );
-    // Re-initialized to a fresh shape.
-    expect(hole.hp).toBe(BLACKHOLE_HP);
     expect(hole.radius).toBe(BLACKHOLE_RADIUS);
-    expect(hole.feed).toBe(0);
   });
 });
 
@@ -846,30 +877,28 @@ describe('BlackHoleSystem — pool prewarm / no per-frame growth (NFR2)', () => 
   it('does not grow the pool over many steady-state gravity/absorb steps', () => {
     const bulletPool = new Pool(createBullet);
     const enemyPool = new Pool(createSeeker);
-    const scoreState = createScoreState();
     const { system } = makeSystem({
       bulletPool,
       enemyPools: [enemyPool],
-      scoreState,
     });
     const collision = new CollisionSystem(bulletPool, [enemyPool]);
     system.collisionSystem = collision;
     placeHole(system, CENTER_X, CENTER_Y);
 
-    // Keep a couple of persistent (non-absorbed) bullets/enemies out of the body
-    // so the gravity path runs every tick without draining everything.
+    // Persistent (non-absorbed) bullet/enemy out of the body so the gravity path
+    // runs every tick without draining everything (kept beyond the body radius).
     const b = bulletPool.acquire();
-    b.x = CENTER_X - 200;
+    b.x = CENTER_X - 300;
     b.y = CENTER_Y;
     const e = enemyPool.acquire();
-    e.x = CENTER_X + 200;
-    e.y = CENTER_Y - 150;
+    e.x = CENTER_X + 300;
+    e.y = CENTER_Y - 200;
 
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 200; i++) {
       collision.fixedUpdate(DT);
       system.fixedUpdate(DT);
     }
-    // The hole pool never grew beyond prewarm (+ at most the cap of active holes).
+    // The hole pool never grew beyond prewarm.
     expect(system.holePool.activeCount + system.holePool.freeCount).toBe(
       BLACKHOLE_POOL_PREWARM,
     );

@@ -2,7 +2,7 @@ import { System } from '../core/System.js';
 import {
   GRID_MAX_RIPPLES,
   GRID_RIPPLE_DURATION_MS,
-  BLACKHOLE_MAX_RADIUS,
+  BLACKHOLE_UNSTABLE_RADIUS,
 } from '../config/constants.js';
 
 // GridFieldSystem — the Phaser-free simulation seam for the deforming grid field
@@ -26,7 +26,7 @@ import {
 //        - bomb: one at the detonation origin on the shockwave rising edge,
 //        - death: one at the player's death point per deathSeq increment,
 //   3. recomputes the warp from holePool: warp toward the largest-radius alive,
-//      NON-telegraphing hole (strength = clamp(radius/BLACKHOLE_MAX_RADIUS,0,1));
+//      NON-telegraphing hole (strength = clamp(radius/BLACKHOLE_UNSTABLE_RADIUS,0,1));
 //      warp releases (strength 0) when the hole is gone or still telegraphing.
 //
 // Absorb/bomb-cleared enemies do NOT each emit a ripple (an absorb is not an
@@ -149,8 +149,10 @@ export class GridFieldSystem extends System {
       warp.active = true;
       warp.x = hole.x;
       warp.y = hole.y;
-      // Strength scales with the hole's current radius, clamped to [0,1].
-      let s = hole.radius / BLACKHOLE_MAX_RADIUS;
+      // Strength scales with the hole's current radius, clamped to [0,1]. Repointed
+      // (Story 6.2) to BLACKHOLE_UNSTABLE_RADIUS — the largest radius a hole reaches
+      // (semantically the same reference the former BLACKHOLE_MAX_RADIUS named).
+      let s = hole.radius / BLACKHOLE_UNSTABLE_RADIUS;
       if (s < 0) s = 0;
       else if (s > 1) s = 1;
       warp.strength = s;

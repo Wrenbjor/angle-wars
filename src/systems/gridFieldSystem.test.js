@@ -4,7 +4,7 @@ import {
   FIXED_STEP_MS,
   GRID_MAX_RIPPLES,
   GRID_RIPPLE_DURATION_MS,
-  BLACKHOLE_MAX_RADIUS,
+  BLACKHOLE_UNSTABLE_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -293,11 +293,11 @@ describe('GridFieldSystem — warp tracking', () => {
     expect(system.warp.active).toBe(true);
     expect(system.warp.x).toBe(700);
     expect(system.warp.y).toBe(400);
-    expect(system.warp.strength).toBeCloseTo(r / BLACKHOLE_MAX_RADIUS, 9);
+    expect(system.warp.strength).toBeCloseTo(r / BLACKHOLE_UNSTABLE_RADIUS, 9);
   });
 
-  it('clamps strength to 1 for a radius at/above BLACKHOLE_MAX_RADIUS', () => {
-    const pool = fakeHolePool([hole(0, 0, BLACKHOLE_MAX_RADIUS, 0)]);
+  it('clamps strength to 1 for a radius at/above BLACKHOLE_UNSTABLE_RADIUS', () => {
+    const pool = fakeHolePool([hole(0, 0, BLACKHOLE_UNSTABLE_RADIUS, 0)]);
     const system = new GridFieldSystem(
       fakeCollision(),
       fakeBomb(),
@@ -355,7 +355,7 @@ describe('GridFieldSystem — warp tracking', () => {
     system.fixedUpdate(DT);
     expect(system.warp.x).toBe(90);
     expect(system.warp.y).toBe(90);
-    expect(system.warp.strength).toBeCloseTo(60 / BLACKHOLE_MAX_RADIUS, 9);
+    expect(system.warp.strength).toBeCloseTo(60 / BLACKHOLE_UNSTABLE_RADIUS, 9);
   });
 });
 

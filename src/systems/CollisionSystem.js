@@ -85,8 +85,8 @@ export class CollisionSystem extends System {
     // bulletKillCount entries of killedEnemies: bulletKillX[k]/bulletKillY[k] are the
     // position of the k-th bullet kill, captured AT KILL TIME. Snapshots are load-
     // bearing: this system releases a bullet-killed enemy back to its pool this tick,
-    // and a later same-tick system (e.g. BlackHoleSystem._spawnSeekerAtEdge) can
-    // acquire() that very object and overwrite its x/y — so reading the enemy object's
+    // and a later same-tick system (e.g. the SpawnDirector acquiring a fresh enemy)
+    // can acquire() that very object and overwrite its x/y — so reading the enemy object's
     // coords at end-of-tick could yield the recycled spawn position, not the kill
     // point. Snapshotting here makes the grid's explosion origin recycle-proof.
     // Reused arrays — length reset + push, no per-tick allocation.

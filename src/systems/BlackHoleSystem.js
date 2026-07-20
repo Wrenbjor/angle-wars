@@ -1,20 +1,15 @@
 import { System } from '../core/System.js';
 import { Pool } from '../core/Pool.js';
-import { createBlackHole } from '../entities/BlackHole.js';
+import { createBlackHole, blackHoleInstability } from '../entities/BlackHole.js';
+import { pickSafeInteriorPlacement } from './spawnPlacement.js';
 import {
-  pickSafeEdgePlacement,
-  pickSafeInteriorPlacement,
-} from './spawnPlacement.js';
-import {
-  SEEKER_RADIUS,
   BLACKHOLE_RADIUS,
-  BLACKHOLE_MAX_RADIUS,
+  BLACKHOLE_UNSTABLE_RADIUS,
+  BLACKHOLE_MIN_RADIUS,
   BLACKHOLE_GRAVITY_RADIUS,
   BLACKHOLE_GRAVITY_STRENGTH,
-  BLACKHOLE_HP,
-  BLACKHOLE_BULLET_DAMAGE,
-  BLACKHOLE_GROWTH_PER_FEED,
-  BLACKHOLE_FEED_PER_SPAWN,
+  BLACKHOLE_GROWTH_PER_ABSORB,
+  BLACKHOLE_SHRINK_PER_BULLET,
   BLACKHOLE_SPAWN_INTERVAL_MS,
   BLACKHOLE_MAX_ACTIVE,
   BLACKHOLE_POOL_PREWARM,
@@ -24,13 +19,13 @@ import {
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
 } from '../config/constants.js';
 
-// BlackHoleSystem — the Black Hole hazard: gravity + feed/grow/spawn + destruction
-// (Phaser-free).
+// BlackHoleSystem — the Black Hole hazard: gravity + absorb/grow/shrink +
+// instability detonation/implosion (Phaser-free, reworked in Story 6.2).
 //
 // Runs inside world.fixedUpdate(dt) at the constant fixed step, ordered LATE in
 // the tick — AFTER the enemy movers, the bullet integrator, the CollisionSystem,
-// and the ScoringSystem, and BEFORE the PlayerDeathSystem. That ordering is
-// load-bearing:
+// and the ScoringSystem, and BEFORE the BombSystem and PlayerDeathSystem. That
+// ordering is load-bearing:
 //   - Gravity is a POSITION nudge applied after every mover has integrated
 //     x += v·dt, so it accumulates instead of being erased (the movers recompute
 //     velocity each tick — a velocity force would vanish; see the spec Design
@@ -38,25 +33,40 @@ import {
 //   - Running after ScoringSystem means an absorbed enemy appended to
 //     collisionSystem.killedEnemies is REMOVED (reconciled by owner systems like
 //     SnakeSystem on their next tick) but NOT scored — only the player's own
-//     bullet kills and this system's detonation payout add score.
+//     bullet kills add score at the seam.
+//   - Running BEFORE BombSystem lets a detonation late-bind `bombSystem` and reuse
+//     its `detonateAt` screen clear; running BEFORE PlayerDeathSystem lets a
+//     detonation set `playerState.pendingDeath` for the SAME-tick life cost.
+//
+// The hole is an UNSTABLE ticking bomb: `radius` is the SINGLE instability metric.
+// Absorbed enemies GROW it (BLACKHOLE_GROWTH_PER_ABSORB) toward
+// BLACKHOLE_UNSTABLE_RADIUS; absorbed player bullets SHRINK it
+// (BLACKHOLE_SHRINK_PER_BULLET) toward BLACKHOLE_MIN_RADIUS. After a tick's
+// absorptions the hole is evaluated ONCE:
+//   - radius >= BLACKHOLE_UNSTABLE_RADIUS → DETONATION: a smart-bomb screen clear
+//     (bombSystem.detonateAt at the hole) + a player life (playerState.pendingDeath)
+//     + release the hole. NO score payout.
+//   - else radius <= BLACKHOLE_MIN_RADIUS → safe IMPLOSION: credit BLACKHOLE_SCORE
+//     + release the hole. No screen clear, no life cost.
+// Detonation takes precedence if both somehow hold. There is NO passive time-based
+// growth and NO feed-driven seeker emission — the instability clock is the hole's
+// only threat (no double jeopardy).
 //
 // Owns ONE prewarmed hole Pool (public `holePool`) — the single source of
 // active/free truth. The hole is lethal-on-contact via the PlayerDeathSystem pool
 // list (which reads only {x,y,radius}), but is deliberately NOT in the
-// CollisionSystem list: it is multi-hit destructible, so this system owns its own
-// bullet-vs-hole test (consume the bullet + hp -= damage + feed).
+// CollisionSystem list: it owns its own bullet-vs-hole absorption test.
 //
-// `collisionSystem` is late-bound by the scene (the hole pool must exist before
-// the collision system that the death list references). Until it is set, enemy
-// absorption is a guarded no-op; gravity and bullet feed still run.
+// `collisionSystem` and `bombSystem` are late-bound by the scene (the hole pool
+// must exist before the collision system that the death list references; the bomb
+// system is constructed after this one). Until `collisionSystem` is set, enemy
+// absorption is a guarded no-op (gravity + bullet-shrink still run); until
+// `bombSystem` is set, a detonation still costs a life + releases the hole but its
+// screen clear is a guarded no-op.
 //
-// Each fixed step, per active hole: (1) pull the ship + every active bullet +
-// every active enemy toward the body (linear inverse-distance falloff, dt-scaled);
-// (2) absorb overlapping bullets (release + damage + feed) and overlapping enemies
-// (release to owner pool + append to killedEnemies + feed); (3) grow (clamped) and
-// per BLACKHOLE_FEED_PER_SPAWN emit a seeker at a random arena edge; (4) if hp ≤ 0,
-// credit BLACKHOLE_SCORE and mark the hole for release. Then self-spawn at cadence,
-// capped at BLACKHOLE_MAX_ACTIVE, at random interior points.
+// `maxInstability` (public LEVEL, 0..1) is the max blackHoleInstability(radius)
+// over the active non-telegraphing holes — the render red pulse and the audio
+// urgency cue both derive from it (one formula, one source). 0 when no such hole.
 //
 // Zero steady-state allocation: reusable scratch materializes the active sets and
 // records deferred releases (mutating a pool's active set mid-forEachActive is
@@ -64,22 +74,22 @@ import {
 export class BlackHoleSystem extends System {
   /**
    * @param {{x:number,y:number}} ship The player ship (pulled by gravity; read+mutated).
-   * @param {import('../core/Pool.js').Pool} bulletPool Active bullets (pulled + absorbed).
+   * @param {import('../core/Pool.js').Pool} bulletPool Active bullets (pulled + absorbed → shrink).
    * @param {import('../core/Pool.js').Pool[]} enemyPools Every archetype enemy pool
-   *   (their active instances are pulled + absorbed).
-   * @param {import('../core/Pool.js').Pool} spawnPool Target pool for feed-driven
-   *   enemy emission (the shared seeker pool).
-   * @param {{score:number}} scoreState Shared run economy — credited the detonation payout.
+   *   (their active instances are pulled + absorbed → grow).
+   * @param {{score:number}} scoreState Shared run economy — credited the safe-implosion payout.
+   * @param {{pendingDeath:boolean}} playerState Shared player lifecycle — a detonation
+   *   sets `pendingDeath` so PlayerDeathSystem costs the player a life the same tick.
    * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for spawn
    *   placement; injectable so spawn cadence/placement are unit-testable.
    */
-  constructor(ship, bulletPool, enemyPools, spawnPool, scoreState, rng = Math.random) {
+  constructor(ship, bulletPool, enemyPools, scoreState, playerState, rng = Math.random) {
     super();
     this.ship = ship;
     this.bulletPool = bulletPool;
     this.enemyPools = enemyPools;
-    this.spawnPool = spawnPool;
     this.scoreState = scoreState;
+    this.playerState = playerState;
     this._rng = rng;
 
     /** Pool of black holes — the single source of active/free truth (public for
@@ -99,6 +109,15 @@ export class BlackHoleSystem extends System {
     // Late-bound by the scene AFTER the collision system is constructed (the hole
     // pool must exist first). Until set, enemy absorption is a guarded no-op.
     this.collisionSystem = null;
+    // Late-bound by the scene AFTER the BombSystem is constructed (BlackHoleSystem
+    // runs before it). Until set, a detonation's screen clear is a guarded no-op
+    // (the life cost + hole release still apply).
+    this.bombSystem = null;
+
+    // Public instability LEVEL (0..1): max blackHoleInstability over active
+    // non-telegraphing holes, recomputed each tick. Drives the render red pulse and
+    // the audio urgency cue. 0 when there is no such hole.
+    this.maxInstability = 0;
 
     // Spawn-cadence accumulator (ms). Starts at 0 so the first hole spawns after
     // one full interval (ungated — spawning does not depend on any input).
@@ -129,11 +148,23 @@ export class BlackHoleSystem extends System {
     this._releaseEnemies = [];
     this._releaseEnemyOwners = [];
     this._releaseHoles = [];
+    // Holes that crossed a threshold this tick: detonations (screen clear + life)
+    // and implosions (score payout). Both are released; these track the follow-up.
+    this._detonateHoles = [];
+    this._implodeHoles = [];
+    // Hoisted maxInstability collector (skips telegraphing holes) — writes
+    // this.maxInstability in place, no per-tick closure allocation.
+    this._collectMaxInstability = (h) => {
+      if (h.telegraphMs > 0) return; // a telegraphing hole is not yet unstable
+      const inst = blackHoleInstability(h.radius);
+      if (inst > this.maxInstability) this.maxInstability = inst;
+    };
   }
 
   /**
-   * Advance one fixed step: gravity + feed/grow/spawn + detonation per active
-   * hole, then self-spawn at cadence.
+   * Advance one fixed step: gravity + absorb/grow/shrink per active hole, then
+   * evaluate detonation vs implosion, then self-spawn at cadence, then recompute
+   * the instability level.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
@@ -166,23 +197,25 @@ export class BlackHoleSystem extends System {
       const releaseEnemies = this._releaseEnemies;
       const releaseEnemyOwners = this._releaseEnemyOwners;
       const releaseHoles = this._releaseHoles;
+      const detonateHoles = this._detonateHoles;
+      const implodeHoles = this._implodeHoles;
       consumedBullets.clear();
       consumedEnemies.clear();
       releaseBullets.length = 0;
       releaseEnemies.length = 0;
       releaseEnemyOwners.length = 0;
       releaseHoles.length = 0;
+      detonateHoles.length = 0;
+      implodeHoles.length = 0;
 
       for (let hi = 0; hi < holes.length; hi++) {
         const hole = holes[hi];
 
         // Story 2.6 telegraph gate: a spawning-in hole is frozen (no gravity,
-        // absorb, feed, grow, or detonation) and non-lethal until its countdown
-        // reaches 0 — a spawning hole is briefly invulnerable (its own bullet
-        // damage is part of this frozen tick). Decrement by the fixed-step dt
-        // (frame-rate-independent), clamp at 0, and skip the whole behavior while
-        // still telegraphing. On the tick it reaches 0 it falls through and its
-        // gravity/feed resume + it becomes lethal this same tick.
+        // absorb, grow, shrink, detonation, or implosion) and non-lethal until its
+        // countdown reaches 0. Decrement by the fixed-step dt (frame-rate-independent),
+        // clamp at 0, and skip the whole behavior while still telegraphing. On the
+        // tick it reaches 0 it falls through and its gravity/absorb resume this tick.
         if (hole.telegraphMs > 0) {
           hole.telegraphMs -= dt;
           if (hole.telegraphMs > 0) continue; // still telegraphing → frozen
@@ -204,13 +237,9 @@ export class BlackHoleSystem extends System {
           this._pull(hole, e, dtSec);
         }
 
-        // (2a) Absorb overlapping bullets: consume + damage + feed. Deferred
-        //      release (mutating the bullet pool mid-walk is unsafe).
+        // (2a) Absorb overlapping bullets: consume + SHRINK toward the floor.
+        //      Deferred release (mutating the bullet pool mid-walk is unsafe).
         for (let i = 0; i < bullets.length; i++) {
-          // A hole that took its killing blow this tick stops absorbing/feeding
-          // immediately — the remaining overlapping bullets pass through the
-          // vanishing body (they stay active) rather than feeding a corpse.
-          if (hole.hp <= 0) break;
           const b = bullets[i];
           if (consumedBullets.has(b)) continue; // already eaten by an earlier hole
           const dx = hole.x - b.x;
@@ -219,19 +248,21 @@ export class BlackHoleSystem extends System {
           if (dx * dx + dy * dy <= r * r) {
             consumedBullets.add(b);
             releaseBullets.push(b);
-            hole.hp -= BLACKHOLE_BULLET_DAMAGE;
-            // The killing blow consumes + damages but does NOT grow/emit — only a
-            // surviving hole feeds.
-            if (hole.hp > 0) this._feed(hole);
+            // Clamp at a zero floor so several bullets overlapping one hole in a
+            // single tick cannot drive the radius negative before the end-of-tick
+            // implosion check (a negative radius would also distort the same-tick
+            // enemy-absorb overlap test r = hole.radius + e.radius). The
+            // implosion check radius <= BLACKHOLE_MIN_RADIUS still fires at 0.
+            hole.radius = Math.max(0, hole.radius - BLACKHOLE_SHRINK_PER_BULLET);
           }
         }
 
-        // (2b) Absorb overlapping enemies — guarded until collisionSystem is set,
-        //      and only while the hole is still alive (a detonating hole absorbs
-        //      nothing further this tick). Release to the OWNER pool AND append to
-        //      killedEnemies so owner systems (e.g. SnakeSystem) reconcile through
-        //      the same seam a bullet kill uses; NOT scored (runs after Scoring).
-        if (cs && hole.hp > 0) {
+        // (2b) Absorb overlapping enemies — guarded until collisionSystem is set.
+        //      Release to the OWNER pool AND append to killedEnemies so owner
+        //      systems (e.g. SnakeSystem) reconcile through the same seam a bullet
+        //      kill uses; NOT scored (runs after Scoring). Each absorbed enemy
+        //      GROWS the hole toward the unstable threshold.
+        if (cs) {
           for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             // Skip already-eaten enemies AND telegraphing (frozen) ones — a
@@ -244,21 +275,32 @@ export class BlackHoleSystem extends System {
               consumedEnemies.add(e);
               releaseEnemies.push(e);
               releaseEnemyOwners.push(owners[i]);
-              this._feed(hole);
+              hole.radius += BLACKHOLE_GROWTH_PER_ABSORB;
             }
           }
         }
 
-        // (4) Detonation: hp exhausted → payout + deferred release.
-        if (hole.hp <= 0) {
-          this.scoreState.score += BLACKHOLE_SCORE;
+        // (3) Evaluate the hole ONCE after this tick's absorptions. Detonation
+        //     (unstable threshold) takes precedence over implosion (floor) if both
+        //     somehow hold. Either outcome releases the hole; the follow-up (screen
+        //     clear + life, or payout) is deferred to the second pass below so the
+        //     detonation's own enemy releases run AFTER this system's releases.
+        if (hole.radius >= BLACKHOLE_UNSTABLE_RADIUS) {
+          detonateHoles.push(hole);
+          releaseHoles.push(hole);
+        } else if (hole.radius <= BLACKHOLE_MIN_RADIUS) {
+          implodeHoles.push(hole);
           releaseHoles.push(hole);
         }
       }
 
-      // Second pass: safe to mutate the pools now. Release absorbed bullets to the
-      // bullet pool; release absorbed enemies to their OWNING pool and append each
-      // to the collision system's kill report (the reconciliation seam).
+      // Second pass — safe to mutate the pools now. Order is load-bearing:
+      //   (a) release this system's own absorbed bullets/enemies/holes FIRST, so a
+      //       detonation's screen clear (step d) cannot re-collect an already-
+      //       absorbed enemy (it is inactive by then) — each enemy lands in
+      //       killedEnemies exactly once (two-pass detonation safety);
+      //   (b) THEN run each detonation's screen clear + life cost;
+      //   (c) THEN credit each implosion's payout.
       for (let i = 0; i < releaseBullets.length; i++) {
         this.bulletPool.release(releaseBullets[i]);
       }
@@ -269,6 +311,19 @@ export class BlackHoleSystem extends System {
       }
       for (let i = 0; i < releaseHoles.length; i++) {
         this.holePool.release(releaseHoles[i]);
+      }
+      // (b) Detonations: the reused smart-bomb screen clear at the hole's position
+      //     (guarded — a null bombSystem still costs the life + releases the hole),
+      //     plus the SAME-tick life cost through the normal death flow. NO payout.
+      for (let i = 0; i < detonateHoles.length; i++) {
+        const hole = detonateHoles[i];
+        if (this.bombSystem) this.bombSystem.detonateAt(hole.x, hole.y);
+        this.playerState.pendingDeath = true;
+      }
+      // (c) Implosions: the safe-defuse payout credited directly to the shared
+      //     score surface (flat, never multiplied). No screen clear, no life cost.
+      for (let i = 0; i < implodeHoles.length; i++) {
+        this.scoreState.score += BLACKHOLE_SCORE;
       }
     }
 
@@ -281,6 +336,12 @@ export class BlackHoleSystem extends System {
         this._spawnOne();
       }
     }
+
+    // Recompute the instability LEVEL: the max instability over the active,
+    // non-telegraphing holes (a freshly self-spawned hole telegraphs, so it is
+    // excluded). 0 when there is no such hole.
+    this.maxInstability = 0;
+    this.holePool.forEachActive(this._collectMaxInstability);
   }
 
   /**
@@ -303,57 +364,10 @@ export class BlackHoleSystem extends System {
   }
 
   /**
-   * Record one feed: bump the feed counter, grow the radius (clamped at
-   * BLACKHOLE_MAX_RADIUS), and emit one seeker per BLACKHOLE_FEED_PER_SPAWN feeds.
-   * @private
-   */
-  _feed(hole) {
-    hole.feed += 1;
-    if (hole.radius < BLACKHOLE_MAX_RADIUS) {
-      hole.radius = Math.min(
-        BLACKHOLE_MAX_RADIUS,
-        hole.radius + BLACKHOLE_GROWTH_PER_FEED,
-      );
-    }
-    while (hole.feed >= BLACKHOLE_FEED_PER_SPAWN) {
-      hole.feed -= BLACKHOLE_FEED_PER_SPAWN;
-      this._spawnSeekerAtEdge();
-    }
-  }
-
-  /**
-   * Emit one seeker at a random arena edge into the shared spawn pool (NOT next to
-   * the hole — otherwise this hole's own gravity would pull it straight back in).
-   * Placement is the established edge-spawn, re-rolled (bounded) to keep the seeker
-   * ≥ SPAWN_SAFE_RADIUS from the ship (`this.ship`, Story 2.6). The fresh seeker
-   * starts frozen + non-lethal for ENEMY_SPAWN_TELEGRAPH_MS.
-   * @private
-   */
-  _spawnSeekerAtEdge() {
-    const s = this.spawnPool.acquire();
-    const ship = this.ship;
-    const p = pickSafeEdgePlacement(
-      this._rng,
-      SEEKER_RADIUS,
-      ship ? ship.x : undefined,
-      ship ? ship.y : undefined,
-      SPAWN_SAFE_RADIUS,
-      SPAWN_PLACEMENT_MAX_ATTEMPTS,
-    );
-    s.x = p.x;
-    s.y = p.y;
-    // Start at rest; the owning enemy system sets velocity on its next tick.
-    s.vx = 0;
-    s.vy = 0;
-    // Telegraph: frozen + non-lethal until the countdown reaches 0.
-    s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
-  }
-
-  /**
    * Spawn one hole at a random INTERIOR point (inset by its radius so the body sits
-   * fully inside the drawn border), re-initialized to its starting shape. Story
-   * 2.6: the placement re-rolls (bounded) to keep the hole ≥ SPAWN_SAFE_RADIUS from
-   * the ship (`this.ship`), and the fresh hole starts frozen + non-lethal for
+   * fully inside the drawn border), re-initialized to its starting (stable) shape.
+   * Story 2.6: the placement re-rolls (bounded) to keep the hole ≥ SPAWN_SAFE_RADIUS
+   * from the ship (`this.ship`), and the fresh hole starts frozen + non-lethal for
    * ENEMY_SPAWN_TELEGRAPH_MS.
    * @private
    */
@@ -370,10 +384,8 @@ export class BlackHoleSystem extends System {
     );
     h.x = p.x;
     h.y = p.y;
-    // Re-initialize the pooled instance to a fresh hole.
+    // Re-initialize the pooled instance to a fresh, stable hole.
     h.radius = BLACKHOLE_RADIUS;
-    h.hp = BLACKHOLE_HP;
-    h.feed = 0;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     h.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
   }

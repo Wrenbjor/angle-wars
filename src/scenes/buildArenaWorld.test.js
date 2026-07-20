@@ -118,10 +118,31 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
   });
 
-  it('applies both load-bearing late-binds to the same collisionSystem', () => {
+  it('applies both load-bearing collision late-binds to the same collisionSystem', () => {
     const ctx = buildArenaWorld();
     expect(ctx.snakeSystem.collisionSystem).toBe(ctx.collisionSystem);
     expect(ctx.blackHoleSystem.collisionSystem).toBe(ctx.collisionSystem);
+  });
+
+  it('late-binds the bombSystem into the BlackHoleSystem (Story 6.2 detonation screen clear)', () => {
+    const ctx = buildArenaWorld();
+    // The hole detonation reuses bombSystem.detonateAt; the bomb system is
+    // constructed after the black-hole system, so it must be late-bound in.
+    expect(ctx.blackHoleSystem.bombSystem).toBe(ctx.bombSystem);
+  });
+
+  it('shares the one playerState into BOTH the BlackHoleSystem and the PlayerDeathSystem (Story 6.2)', () => {
+    const ctx = buildArenaWorld();
+    // A detonation sets playerState.pendingDeath (BlackHoleSystem) and the death
+    // system consumes it — they must be the SAME instance, and the same one the
+    // factory returns.
+    expect(ctx.blackHoleSystem.playerState).toBe(ctx.playerState);
+    expect(ctx.playerDeathSystem.playerState).toBe(ctx.playerState);
+  });
+
+  it('wires the AudioDirectorSystem with the BlackHoleSystem urgency source (Story 6.2)', () => {
+    const ctx = buildArenaWorld();
+    expect(ctx.audioDirector.blackHoleSystem).toBe(ctx.blackHoleSystem);
   });
 
   it('constructs the collisionSystem over enemyPools (not deathPools)', () => {

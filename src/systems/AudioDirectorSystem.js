@@ -45,6 +45,9 @@ export class AudioDirectorSystem extends System {
    * @param {import('./SpawnDirector.js').SpawnDirector} spawnDirector Source of this
    *   tick's spawn count (spawnCount) — the spawn SFX cue — AND the difficulty ramp
    *   (progressAt(elapsedMs)) that drives musicIntensity.
+   * @param {import('./BlackHoleSystem.js').BlackHoleSystem} [blackHoleSystem] Source
+   *   of the Black Hole instability LEVEL (maxInstability) — the rising-urgency cue
+   *   (Story 6.2). Optional: when absent, blackHoleInstability reads 0.
    */
   constructor(
     firingSystem,
@@ -52,6 +55,7 @@ export class AudioDirectorSystem extends System {
     bombSystem,
     playerDeathSystem,
     spawnDirector,
+    blackHoleSystem = null,
   ) {
     super();
     this.firingSystem = firingSystem;
@@ -59,6 +63,7 @@ export class AudioDirectorSystem extends System {
     this.bombSystem = bombSystem;
     this.playerDeathSystem = playerDeathSystem;
     this.spawnDirector = spawnDirector;
+    this.blackHoleSystem = blackHoleSystem;
 
     // Edge-detection previous-values, SEEDED from the current state so no spurious
     // cue fires on the first tick (mirrors ScreenFeedbackSystem's prev seeding).
@@ -169,5 +174,17 @@ export class AudioDirectorSystem extends System {
    */
   get musicIntensity() {
     return this._musicIntensity;
+  }
+
+  /**
+   * Current Black Hole instability LEVEL in [0,1] — the source BlackHoleSystem's
+   * maxInstability (the max over active non-telegraphing holes). A level, not an
+   * event: read every frame by the render loop (which maps it to the rising-urgency
+   * audio cue), never consumed or reset. 0 when there is no BlackHoleSystem source
+   * or no unstable hole. Mirrors musicIntensity.
+   * @returns {number}
+   */
+  get blackHoleInstability() {
+    return this.blackHoleSystem ? this.blackHoleSystem.maxInstability : 0;
   }
 }

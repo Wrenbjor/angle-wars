@@ -6,8 +6,8 @@ import {
   SCORE_MULTIPLIER_START,
   LIFE_AWARD_SCORE_THRESHOLDS,
   BLACKHOLE_SCORE,
-  BLACKHOLE_BULLET_DAMAGE,
-  BLACKHOLE_RADIUS,
+  BLACKHOLE_MIN_RADIUS,
+  BLACKHOLE_SHRINK_PER_BULLET,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -26,7 +26,7 @@ const T1 = LIFE_AWARD_SCORE_THRESHOLDS[0];
 //       the death check → the player respawns and the run continues (not game over);
 //   (b) a last-life lethal contact with NO threshold crossed still ends the game at
 //       0 lives, exactly as today;
-//   (c) a black-hole detonation whose payout carries the score across a threshold
+//   (c) a black-hole safe IMPLOSION whose payout carries the score across a threshold
 //       awards the life that SAME tick — ExtraLifeSystem runs after BlackHoleSystem,
 //       so the payout is caught with no one-tick lag (the settled-score guarantee).
 // Phaser-free, deterministic (hand-placed instances + a fixed rng).
@@ -139,22 +139,21 @@ describe('Extra-life integration — full tick chain in ArenaScene order', () =>
     expect(scoreState.score).toBe(T1 - 1); // ExtraLife never wrote the score
   });
 
-  it('(c) black-hole payout crosses a threshold → the life is awarded that SAME tick (no one-tick lag)', () => {
+  it('(c) black-hole implosion payout crosses a threshold → the life is awarded that SAME tick (no one-tick lag)', () => {
     const ctx = makeComposed();
     const { ship, bulletPool, blackHoleSystem, scoreState, playerState } = ctx;
     // Ship parked far from the hole so gravity/contact are irrelevant.
     ship.x = 1000;
     ship.y = 600;
 
-    // A live, active hole one absorb away from detonation (hp == one bullet's
-    // damage), placed away from the ship. A bullet parked over its body is absorbed
-    // by BlackHoleSystem this tick → hp → 0 → BLACKHOLE_SCORE payout.
+    // A live, active hole one bullet-shrink away from the safe-implosion floor,
+    // placed away from the ship. A bullet parked over its body is absorbed by
+    // BlackHoleSystem this tick → radius → BLACKHOLE_MIN_RADIUS → safe implosion →
+    // BLACKHOLE_SCORE payout (no blast, no life cost).
     const hole = blackHoleSystem.holePool.acquire();
     hole.x = 200;
     hole.y = 200;
-    hole.radius = BLACKHOLE_RADIUS;
-    hole.hp = BLACKHOLE_BULLET_DAMAGE; // one absorb detonates it
-    hole.feed = 0;
+    hole.radius = BLACKHOLE_MIN_RADIUS + BLACKHOLE_SHRINK_PER_BULLET; // one shrink to the floor
     hole.telegraphMs = 0; // active
     const b = bulletPool.acquire();
     b.x = 200;
@@ -169,11 +168,11 @@ describe('Extra-life integration — full tick chain in ArenaScene order', () =>
 
     runTick(ctx);
 
-    // The hole detonated (payout credited) and the score reached the threshold…
+    // The hole safely imploded (payout credited) and the score reached the threshold…
     expect(blackHoleSystem.holePool.activeCount).toBe(0);
     expect(scoreState.score).toBeGreaterThanOrEqual(T1);
     // …and ExtraLifeSystem — running AFTER BlackHoleSystem — banked the life the
-    // same tick, with no one-tick lag.
+    // same tick, with no one-tick lag. A safe implosion never costs a life.
     expect(playerState.lives).toBe(livesBefore + 1);
     expect(playerState.gameOver).toBe(false);
   });

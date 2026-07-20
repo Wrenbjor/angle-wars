@@ -173,6 +173,76 @@ describe('BombSystem — detonation clears active enemies (unscored)', () => {
   });
 });
 
+describe('BombSystem — detonateAt(x,y) reuse seam (Story 6.2)', () => {
+  it('clears every active enemy + arms the shockwave at (x,y) WITHOUT decrementing bombs or consuming the latch', () => {
+    const seekerPool = new Pool(createSeeker);
+    const greenPool = new Pool(createGreenSquare);
+    const pinwheelPool = new Pool(createPinwheel);
+    const collision = { killedEnemies: [] };
+    const inputState = new InputState();
+    const { system, scoreState } = makeSystem({
+      inputState,
+      enemyPools: [seekerPool, greenPool, pinwheelPool],
+      collisionSystem: collision,
+    });
+    const s = seekerPool.acquire();
+    const g = greenPool.acquire();
+    const p = pinwheelPool.acquire();
+
+    const bombsBefore = scoreState.bombs;
+    // A latched bomb request must survive — detonateAt is the shared clear, NOT the
+    // player press path (the black hole must not steal or spend the player's bomb).
+    inputState.queueBomb();
+
+    system.detonateAt(111, 222);
+
+    // Every active enemy released to its own pool + appended to the reconciliation seam.
+    expect(seekerPool.activeCount).toBe(0);
+    expect(greenPool.activeCount).toBe(0);
+    expect(pinwheelPool.activeCount).toBe(0);
+    expect(collision.killedEnemies).toContain(s);
+    expect(collision.killedEnemies).toContain(g);
+    expect(collision.killedEnemies).toContain(p);
+    expect(collision.killedEnemies.length).toBe(3);
+    // Shockwave armed at the GIVEN origin (not the ship), at full duration (detonateAt
+    // does not run the per-tick decay).
+    expect(system.shockwaveMs).toBe(BOMB_SHOCKWAVE_MS);
+    expect(system.shockwaveX).toBe(111);
+    expect(system.shockwaveY).toBe(222);
+    // No bomb spent, latch NOT consumed.
+    expect(scoreState.bombs).toBe(bombsBefore);
+    expect(inputState.bombQueued).toBe(true);
+  });
+
+  it('the player fixedUpdate path routes through detonateAt then spends exactly one bomb at the ship', () => {
+    const enemyPool = new Pool(createSeeker);
+    const collision = { killedEnemies: [] };
+    const inputState = new InputState();
+    const ship = createPlayerShip();
+    ship.x = 42;
+    ship.y = 84;
+    const { system, scoreState } = makeSystem({
+      inputState,
+      enemyPools: [enemyPool],
+      collisionSystem: collision,
+      ship,
+    });
+    enemyPool.acquire();
+    const bombsBefore = scoreState.bombs;
+
+    inputState.queueBomb();
+    system.fixedUpdate(DT);
+
+    // The shared clear ran (enemy cleared, shockwave at the SHIP)…
+    expect(enemyPool.activeCount).toBe(0);
+    expect(system.shockwaveX).toBe(42);
+    expect(system.shockwaveY).toBe(84);
+    // …and the player path spent exactly one bomb (unlike detonateAt alone).
+    expect(scoreState.bombs).toBe(bombsBefore - 1);
+    expect(inputState.bombQueued).toBe(false); // player press consumes the latch
+  });
+});
+
 describe('BombSystem — no-op cases', () => {
   it('a press with 0 bombs consumes the latch, destroys nothing, fires no shockwave', () => {
     const enemyPool = new Pool(createSeeker);

@@ -278,23 +278,34 @@ export const SPAWN_TELEGRAPH_MIN_ALPHA = 0.15;
 export const SPAWN_TELEGRAPH_MIN_SCALE = 0.4;
 
 // --- Black Hole hazard (feel / economy) -------------------------------------
-// The Black Hole (Epic 2's signature high-risk object) is a stationary, HP-based
-// destructible hazard — NOT a one-hit enemy. Each fixed step it applies an
-// attractive POSITION nudge to every nearby ship/bullet/enemy (linear
-// inverse-distance falloff, dt-scaled, so it survives the movers that integrate
-// x += v·dt and never assign absolute positions), FEEDS on bullets/enemies that
-// reach its body (growing its radius, clamped, and periodically emitting a fresh
-// seeker at the arena edge), takes bullet damage toward destruction, and on death
-// credits a big score payout and is removed. All values are tunable placeholders
-// (tuned post-launch); every cadence/motion value derives from the fixed-step dt
-// so it is frame-rate-independent.
+// The Black Hole (Epic 2's signature high-risk object, reworked in Story 6.2) is
+// a stationary, UNSTABLE ticking bomb — NOT a one-hit enemy and no longer an
+// HP-based destructible. Each fixed step it applies an attractive POSITION nudge
+// to every nearby ship/bullet/enemy (linear inverse-distance falloff, dt-scaled,
+// so it survives the movers that integrate x += v·dt and never assign absolute
+// positions) and ABSORBS the bullets/enemies that reach its body. Absorbed enemies
+// GROW its radius toward an unstable threshold; absorbed player bullets SHRINK it
+// toward a floor. `radius` is the single instability metric: crossing
+// BLACKHOLE_UNSTABLE_RADIUS DETONATES (a smart-bomb screen clear that also costs
+// the player a life), while shrinking to BLACKHOLE_MIN_RADIUS is a safe IMPLOSION
+// that destroys it for its score payout. There is NO passive time-based growth and
+// NO feed-driven seeker emission — the instability clock is the hole's only threat.
+// All values are tunable placeholders (tuned post-launch); every cadence/motion
+// value derives from the fixed-step dt so it is frame-rate-independent.
 
 // Initial collision/gravity-source radius (px) of a freshly spawned hole, also
-// the placeholder circle radius and the interior-spawn inset margin.
+// the placeholder circle radius and the interior-spawn inset margin. This is the
+// instability floor of the escalation curve (blackHoleInstability == 0 here).
 export const BLACKHOLE_RADIUS = 26;
-// Hard cap (px) on the radius as the hole feeds and grows — the body never
-// exceeds this no matter how much it devours (clamped each feed).
-export const BLACKHOLE_MAX_RADIUS = 70;
+// Unstable threshold (px): the radius at/above which the hole DETONATES (screen
+// clear + life cost). It is the largest radius a hole reaches — the instability
+// ceiling (blackHoleInstability == 1 here). Absorbed enemies grow the radius
+// toward this; must be > BLACKHOLE_RADIUS.
+export const BLACKHOLE_UNSTABLE_RADIUS = 70;
+// Safe-implosion floor (px): the radius at/below which sustained player fire has
+// shrunk the hole enough to safely defuse it (score payout + removal, no blast).
+// Must be < BLACKHOLE_RADIUS so a freshly spawned hole is not already imploding.
+export const BLACKHOLE_MIN_RADIUS = 12;
 // Gravity reach (px): entities strictly inside this distance from the hole center
 // are pulled; anything at or beyond it is unaffected.
 export const BLACKHOLE_GRAVITY_RADIUS = 340;
@@ -302,20 +313,14 @@ export const BLACKHOLE_GRAVITY_RADIUS = 340;
 // STRENGTH·(1 − d/GRAVITY_RADIUS)·dtSec, so it is strongest near the core and
 // fades linearly to zero at the radius, and scales with dt (frame-rate-independent).
 export const BLACKHOLE_GRAVITY_STRENGTH = 300;
-// Hit points: total bullet damage required to destroy the hole (multi-hit, the
-// opposite of the one-shot enemies — this is why the hole is NOT in the
-// CollisionSystem pool list; BlackHoleSystem owns its own bullet test).
-export const BLACKHOLE_HP = 40;
-// Damage one absorbed bullet deals to the hole's hp. BLACKHOLE_HP / this ≈ the
-// bullet hits needed to detonate it.
-export const BLACKHOLE_BULLET_DAMAGE = 2;
-// Radius growth (px) per feed (each absorbed bullet or enemy), clamped at
-// BLACKHOLE_MAX_RADIUS.
-export const BLACKHOLE_GROWTH_PER_FEED = 1.5;
-// Feeds required to emit one new seeker: every this-many absorptions the hole
-// spawns a fresh seeker at a random arena EDGE (not the core — otherwise its own
-// gravity would suck the newborn straight back in and re-feed, a runaway loop).
-export const BLACKHOLE_FEED_PER_SPAWN = 4;
+// Radius growth (px) per absorbed enemy — the instability the hole gains each time
+// it devours matter. BLACKHOLE_RADIUS + n·this reaching BLACKHOLE_UNSTABLE_RADIUS
+// is roughly the enemies-to-detonation count if the player ignores it.
+export const BLACKHOLE_GROWTH_PER_ABSORB = 4;
+// Radius shrink (px) per absorbed player bullet — the inverse of feeding. Sustained
+// fire drives the radius down toward BLACKHOLE_MIN_RADIUS for the safe implosion;
+// (BLACKHOLE_RADIUS − BLACKHOLE_MIN_RADIUS) / this ≈ the bullets to defuse a fresh hole.
+export const BLACKHOLE_SHRINK_PER_BULLET = 1;
 // Self-spawn cadence (ms): one hole spawns per this much accumulated fixed-step
 // time (subject to the max-active cap), so spawns are frame-rate-independent.
 // Long — the hole is a rare, signature hazard.
@@ -328,11 +333,13 @@ export const BLACKHOLE_MAX_ACTIVE = 1;
 // never allocates on the gravity/absorb path (grows lazily beyond it, only on
 // spawn events — mirrors the other archetype pools).
 export const BLACKHOLE_POOL_PREWARM = 2;
-// Detonation payout: score credited directly to ScoreState when a hole is
-// destroyed. An event payout (not a per-tick one-hit kill), so it is added to the
-// shared score surface directly, NEVER through the killedEnemies/ScoringSystem
-// seam and so NEVER multiplied by the run multiplier — this hazard credit stays
-// flat by design (the multiplier applies only to enemy-kill awards at the seam).
+// Safe-implosion payout: score credited directly to ScoreState when the player
+// shrinks a hole to BLACKHOLE_MIN_RADIUS and it safely implodes. An event payout
+// (not a per-tick one-hit kill), so it is added to the shared score surface
+// directly, NEVER through the killedEnemies/ScoringSystem seam and so NEVER
+// multiplied by the run multiplier — this hazard credit stays flat by design (the
+// multiplier applies only to enemy-kill awards at the seam). A DETONATION pays
+// nothing: letting the hole blow costs a life, defusing it banks this.
 export const BLACKHOLE_SCORE = 1000;
 
 // --- Player death / lives (feel) --------------------------------------------
@@ -422,9 +429,21 @@ export const COLOR_SEEKER = 0x3366ff;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
 export const COLOR_PINWHEEL = 0xff66cc;
 export const COLOR_SNAKE = 0xffaa33;
-// Placeholder fill for the Black Hole body (the grid-warp visual is Epic 4 /
-// Story 4.2 — this is a plain filled circle only).
+// Placeholder fill for the Black Hole body at rest (instability 0). The grid-warp
+// visual is Epic 4 / Story 4.2; Story 6.2 lerps this toward COLOR_BLACK_HOLE_UNSTABLE
+// and pulses its alpha as the hole nears detonation.
 export const COLOR_BLACK_HOLE = 0x9933ff;
+// Black Hole body fill at full instability (radius == BLACKHOLE_UNSTABLE_RADIUS):
+// an alarming red the resting purple lerps toward as detonation approaches. The
+// escalating red pulse is the render half of the instability telegraph (Story 6.2).
+export const COLOR_BLACK_HOLE_UNSTABLE = 0xff2233;
+// Black Hole instability pulse (view-only, Story 6.2): as instability rises 0→1
+// the body's alpha oscillates faster and deeper. HZ is the pulse rate (cycles per
+// second) at full instability; ALPHA_DEPTH is the peak fractional alpha swing at
+// full instability. Both scale linearly with instability, so a resting hole
+// (instability 0) does not pulse at all. Placeholders (tuned post-launch).
+export const BLACKHOLE_PULSE_HZ = 3.5;
+export const BLACKHOLE_PULSE_ALPHA_DEPTH = 0.35;
 // Placeholder stroke for the smart-bomb expanding shockwave ring (Story 3.2). The
 // real shockwave aesthetic is Epic 4 — this is a plain stroked circle only.
 export const COLOR_BOMB_SHOCKWAVE = 0xffffff;
@@ -663,6 +682,16 @@ export const AUDIO_MUSIC_BASE_FREQ = 55;
 // Music layer-gain smoothing time constant (seconds) for the engine's
 // setTargetAtTime ramp, so intensity changes glide rather than click.
 export const AUDIO_MUSIC_GAIN_SMOOTHING = 0.4;
+
+// Black Hole urgency cue (Story 6.2): a single continuously-running oscillator
+// voice whose gain rises with the hole's instability level (0..1), so a hole
+// nearing detonation sounds a rising tension tone that vanishes when no hole is
+// unstable. FREQ is its pitch (Hz — a tense mid-high tone above the music drone);
+// MAX_GAIN is the peak gain at full instability (kept modest so it sits under the
+// SFX). The engine reuses AUDIO_MUSIC_GAIN_SMOOTHING for its glide. Placeholders
+// (tuned post-launch) — the audible cue is the disclosed manual-verification boundary.
+export const AUDIO_URGENCY_FREQ = 660;
+export const AUDIO_URGENCY_MAX_GAIN = 0.14;
 
 // Per-SFX synthesis: oscillator frequency (Hz), envelope duration (ms), and peak
 // gain (0..1) of each event's short enveloped blip. Fire is a rapid high tick, kill

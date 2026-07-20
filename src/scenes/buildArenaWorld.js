@@ -177,24 +177,31 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
   const scoringSystem = new ScoringSystem(collisionSystem, scoreState);
   world.addSystem(scoringSystem);
 
+  // The shared player lifecycle state is created here (moved above the Black Hole
+  // section, Story 6.2) because BOTH the BlackHoleSystem (a detonation sets
+  // playerState.pendingDeath) and the PlayerDeathSystem (consumes it) share the one
+  // instance. A detonation and a contact death therefore route through the same state.
+  const playerState = createPlayerState();
+
   // --- Black Hole hazard --------------------------------------------------
-  // The Black Hole is a stationary, HP-based destructible. It runs AFTER
-  // ScoringSystem (so absorbed enemies it appends to collisionSystem.killedEnemies
-  // are removed but NOT scored) and BEFORE PlayerDeathSystem (so its holePool
-  // joins the death list below). The spawn target for fed seekers is the shared
-  // Seeker pool.
+  // The Black Hole is a stationary, UNSTABLE ticking bomb (Story 6.2). It runs
+  // AFTER ScoringSystem (so absorbed enemies it appends to collisionSystem.
+  // killedEnemies are removed but NOT scored), BEFORE BombSystem (so a detonation
+  // can late-bind bombSystem and reuse its detonateAt screen clear), and BEFORE
+  // PlayerDeathSystem (so its holePool joins the death list below AND a detonation's
+  // pendingDeath is consumed the same tick). It shares the one playerState.
   const blackHoleSystem = new BlackHoleSystem(
     ship,
     firingSystem.bulletPool,
     enemyPools,
-    enemySystem.enemyPool,
     scoreState,
+    playerState,
     _rng,
   );
   world.addSystem(blackHoleSystem);
   // Late-bind the collision system now that it exists (the hole pool had to be
   // constructed first). Until this is set, enemy absorption is a guarded no-op;
-  // gravity and bullet feed still run.
+  // gravity and bullet-shrink still run.
   blackHoleSystem.collisionSystem = collisionSystem;
 
   // --- Smart bombs (Story 3.2) --------------------------------------------
@@ -210,13 +217,17 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
     ship,
   );
   world.addSystem(bombSystem);
+  // Late-bind the bomb system into the BlackHoleSystem (constructed earlier, so it
+  // runs first). A hole detonation reuses bombSystem.detonateAt for the identical
+  // screen clear. Until this is set a detonation still costs a life + releases the
+  // hole; only its screen clear is a guarded no-op. Mirrors the collisionSystem late-bind.
+  blackHoleSystem.bombSystem = bombSystem;
 
   // --- Player death / lives -----------------------------------------------
   // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
   // bullet this tick is already released and cannot also kill the player. The
   // Black Hole is lethal on contact too, so its holePool is appended to the
   // death list here — but it is deliberately NOT in the CollisionSystem list.
-  const playerState = createPlayerState();
 
   // --- Extra lives (Story 3.3) --------------------------------------------
   // ExtraLifeSystem runs AFTER ScoringSystem + BlackHoleSystem + BombSystem and
@@ -292,6 +303,7 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
     bombSystem,
     playerDeathSystem,
     spawnDirector,
+    blackHoleSystem,
   );
   world.addSystem(audioDirector);
 

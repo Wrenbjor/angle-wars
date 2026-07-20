@@ -14,7 +14,6 @@ import {
   COLOR_GREEN_SQUARE,
   COLOR_PINWHEEL,
   COLOR_SNAKE,
-  COLOR_BLACK_HOLE,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -49,6 +48,11 @@ import {
   telegraphAlpha,
   telegraphScale,
 } from './telegraphCue.js';
+import { blackHoleInstability } from '../entities/BlackHole.js';
+import {
+  blackHolePulseColor,
+  blackHolePulseAlpha,
+} from './blackHoleRender.js';
 import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
 import { PAUSE_TITLE, PAUSE_PROMPT, togglePause } from './pauseControl.js';
 import {
@@ -649,6 +653,16 @@ export class ArenaScene extends Phaser.Scene {
     this.audioEngine.setMusicLayerGains(
       musicLayerGains(this.audioDirector.musicIntensity, this._musicGains),
     );
+    // Story 6.2: map the Black Hole instability LEVEL (max over active holes) into
+    // the engine's rising-urgency cue gain — a hole nearing detonation sounds a
+    // rising tension tone that falls silent when no hole is unstable. A level (read,
+    // never consumed); the audible synthesis is the disclosed manual boundary.
+    // Force 0 at game-over: maxInstability is only recomputed inside world.fixedUpdate,
+    // which is gated off once gameOver, so a run that ends with a hole still unstable
+    // would otherwise freeze the tone droning over the game-over screen.
+    this.audioEngine.setBlackHoleUrgency(
+      this.playerState.gameOver ? 0 : this.audioDirector.blackHoleInstability,
+    );
 
     // Story 4.2: pack the grid system's live ripple + warp state into the shader's
     // uniforms once per render frame (zero allocation — Float32Array/{x,y,z} mutated
@@ -747,14 +761,27 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     // Redraw active black holes from the hole pool: clear once, then a filled
-    // circle per live hole at its current (growing) radius. Placeholder shape only
-    // (Epic 4 / Story 4.2 adds the grid-warp aesthetic). Zero per-frame allocation.
+    // circle per live hole at its current radius. Story 6.2: the fill color lerps
+    // from the resting purple toward the unstable red and its alpha pulses faster +
+    // deeper as the hole's instability (blackHoleInstability(radius)) rises toward
+    // detonation — the escalating red-pulse telegraph. The pulse oscillates around
+    // the telegraph fade-in alpha (so a spawning-in hole still fades + scales in
+    // from its telegraphMs, and a fresh/stable hole at instability 0 does not pulse).
+    // Placeholder shape only (Epic 4 / Story 4.2 adds the grid-warp aesthetic). Zero
+    // per-frame allocation.
     const bhg = this.blackHoleGraphics;
     bhg.clear();
-    // Story 2.6: a spawning-in hole fades + scales in from its telegraphMs.
     this.blackHoleSystem.holePool.forEachActive((h) => {
       const p = spawnTelegraphProgress(h.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
-      bhg.fillStyle(COLOR_BLACK_HOLE, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      const ratio = blackHoleInstability(h.radius);
+      const baseAlpha = telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA);
+      // Reduced motion (Story 6.1 / AC2, WCAG 2.3.1): keep the escalating red COLOR
+      // as the static, readable instability cue, but suppress the TEMPORAL alpha
+      // oscillation (no flashing in the seizure band) by passing this._reducedMotion.
+      bhg.fillStyle(
+        blackHolePulseColor(ratio),
+        blackHolePulseAlpha(ratio, time, baseAlpha, this._reducedMotion),
+      );
       bhg.fillCircle(h.x, h.y, h.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
     });
 
