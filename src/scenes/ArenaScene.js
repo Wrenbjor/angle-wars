@@ -25,6 +25,11 @@ import {
   GAMEOVER_TITLE_FONT,
   GAMEOVER_SCORE_FONT,
   GAMEOVER_PROMPT_FONT,
+  COLOR_PAUSE_OVERLAY,
+  PAUSE_OVERLAY_ALPHA,
+  COLOR_PAUSE_TEXT,
+  PAUSE_TITLE_FONT,
+  PAUSE_PROMPT_FONT,
   SPAWN_DIRECTOR_SEEKER_BASE_WEIGHT,
   SPAWN_DIRECTOR_SEEKER_PEAK_WEIGHT,
   SPAWN_DIRECTOR_GREEN_BASE_WEIGHT,
@@ -72,6 +77,7 @@ import {
   telegraphScale,
 } from './telegraphCue.js';
 import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
+import { PAUSE_TITLE, PAUSE_PROMPT, togglePause } from './pauseControl.js';
 import {
   GRID_FRAGMENT_SRC,
   buildGridUniforms,
@@ -690,6 +696,69 @@ export class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-SPACE', restart);
     this.input.on('pointerdown', restart);
 
+    // --- Pause overlay (Story 5.2) ------------------------------------------
+    // A dimming full-arena rectangle plus a stacked "PAUSED" title and resume
+    // prompt, created hidden and toggled on while this._paused. Built once here;
+    // update() only sets its visibility. Mirrors the game-over overlay above.
+    this._paused = false;
+    this.pauseOverlay = this.add.graphics();
+    this.pauseOverlay.fillStyle(COLOR_PAUSE_OVERLAY, PAUSE_OVERLAY_ALPHA);
+    this.pauseOverlay.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+    this.pauseOverlay.setVisible(false);
+    // Pinned (scrollFactor 0) so a lingering camera shake never jitters the
+    // dimmer/text — readability over juice for non-diegetic UI.
+    this.pauseOverlay.setScrollFactor(0);
+    this.pauseTitle = this.add
+      .text(cx, cy - 30, PAUSE_TITLE, {
+        font: PAUSE_TITLE_FONT,
+        color: COLOR_PAUSE_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setVisible(false);
+    this.pausePrompt = this.add
+      .text(cx, cy + 30, PAUSE_PROMPT, {
+        font: PAUSE_PROMPT_FONT,
+        color: COLOR_PAUSE_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setVisible(false);
+
+    // --- Pause input --------------------------------------------------------
+    // Esc / P toggle pause via the pure togglePause seam. Bound on the scene's
+    // keyboard events (the same boundary pattern as the M / restart handlers) so
+    // the key still fires while paused — the update loop keeps running and only
+    // the sim is gated. Guarded against game-over inside togglePause: a press
+    // while gameOver is a no-op (game-over owns its own freeze + restart flow).
+    const togglePauseInput = (event) => {
+      // Ignore OS key auto-repeat: these keys are bound via scene keyboard
+      // events with no registered Key object, so Phaser does NOT suppress
+      // held-key repeats for us (each repeat has a distinct timestamp and
+      // slips past the duplicate-event bailout). Without this guard, holding
+      // Esc/P would flip _paused every repeat tick. A single tap still toggles
+      // exactly once (the native KeyboardEvent has repeat === false).
+      if (event && event.repeat) return;
+      this._paused = togglePause(this._paused, this.playerState.gameOver);
+      // On the transition INTO pause, settle the render-owned juice so the
+      // PAUSED screen reads cleanly: the top-of-update gate returns before the
+      // flash/shake countdowns decay, so a flash or camera shake in flight at
+      // pause time would otherwise freeze — washing the overlay near-white or
+      // holding a shake offset for the whole pause. Zeroing _flashMs makes the
+      // next unpaused frame set flash alpha 0 naturally; the resume path is
+      // untouched.
+      if (this._paused) {
+        this._flashMs = 0;
+        this._trauma = 0;
+        this.cameras.main.scrollX = 0;
+        this.cameras.main.scrollY = 0;
+      }
+    };
+    this.input.keyboard.on('keydown-ESC', togglePauseInput);
+    this.input.keyboard.on('keydown-P', togglePauseInput);
+
     // Sampling state for a once-per-second sim ticks/sec measurement.
     this._lastSampleTicks = 0;
     this._sampleAccumMs = 0;
@@ -704,6 +773,17 @@ export class ArenaScene extends Phaser.Scene {
    * @param {number} delta Elapsed render time since last frame (ms).
    */
   update(time, delta) {
+    // Story 5.2 pause gate (top of update): mirror the paused flag onto the
+    // overlay, then — while paused — FREEZE the whole sim by returning before
+    // any input sampling or sim/juice/audio advancement. No fixed step runs, no
+    // input is buffered, and the render-owned countdowns do not decay, so the
+    // last drawn frame stays on screen and the run resumes bit-identical. The
+    // key handlers still fire because the update loop keeps running.
+    this.pauseOverlay.setVisible(this._paused);
+    this.pauseTitle.setVisible(this._paused);
+    this.pausePrompt.setVisible(this._paused);
+    if (this._paused) return;
+
     // Sample input (render rate) before advancing the sim so this frame's
     // fixed steps consume the latest move intent.
     this.inputSampler.sample();

@@ -697,6 +697,19 @@ export const GAMEOVER_TITLE_FONT = '48px monospace';
 export const GAMEOVER_SCORE_FONT = '28px monospace';
 export const GAMEOVER_PROMPT_FONT = '20px monospace';
 
+// --- Pause overlay (Story 5.2) ----------------------------------------------
+// Shown while the player has paused a live run: a dimming full-arena rectangle
+// plus a "PAUSED" title and resume prompt. Mirrors the game-over overlay block
+// above. Placeholder styling only (Epic 4 owns the signature aesthetic).
+// Overlay fill color and its alpha (0..1) for the dimming rectangle.
+export const COLOR_PAUSE_OVERLAY = 0x000000;
+export const PAUSE_OVERLAY_ALPHA = 0.55;
+// Text color shared by the pause title and resume prompt.
+export const COLOR_PAUSE_TEXT = '#ffffff';
+// Fonts for the two stacked lines of the pause overlay.
+export const PAUSE_TITLE_FONT = '48px monospace';
+export const PAUSE_PROMPT_FONT = '20px monospace';
+
 // --- Title screen (Story 5.1) -----------------------------------------------
 // The front-door TitleScene shown between Preload and Arena: the neon "ANGLE
 // WARS" hero title, the persisted high score, a start prompt, and the basic
