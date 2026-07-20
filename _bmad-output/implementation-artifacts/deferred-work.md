@@ -172,7 +172,8 @@ origin: migrated from legacy ledger (review of spec-2-4-black-hole-hazard.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-4-black-hole-hazard.md`
 location: `BlackHoleSystem._spawnSeekerAtEdge` (emission cap + re-feed geometry)
 reason: Adversarial layer flagged a re-feed loop and unbounded emission. The loop is real but sub-critical, not a runaway: `BLACKHOLE_FEED_PER_SPAWN`=4 damps it (each re-absorption is only 1 feed, needing 4 to re-emit), `BLACKHOLE_MAX_RADIUS` caps growth, and homing (140 px/s) beats the outer pull (peaks ~300 px/s only near the core, d<~181px) so most emitted seekers escape. The uncapped accumulation is the same no-cap/despawn concern already deferred to Story 2.5 (Escalating Spawn Director) for every archetype; the constants are explicit placeholders "tuned post-launch." Not a defect against this story's literal ACs (it does grow + periodically spawn).
-status: open
+status: done 2026-07-20
+resolution: already resolved: Story 6.2 removed feed-driven seeker emission entirely. BlackHoleSystem.js:52-53 states 'NO feed-driven seeker emission'; grep across src/ confirms no `_spawnSeekerAtEdge` / `FEED_PER_SPAWN` remain. The hole now grows only by absorbing existing enemies and resolves via detonation/implosion, so the uncapped feed-emission and the edge re-feed loop this entry describes no longer exist.
 
 ### DW-21: Gravity is applied as an independent per-entity position nudge to every enemy including individual snake segments, but `SnakeSystem`'s follow-the-leader constraint only pulls a segment toward its leader when farther than the spacing (never pushes apart), so gravity that compresses a chain below `SNAKE_SEGMENT_SPACING` is never re-separated — a snake that passes through a well can stay permanently clumped after leaving it.
 
@@ -196,7 +197,8 @@ origin: migrated from legacy ledger (review of spec-2-4-black-hole-hazard.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-4-black-hole-hazard.md`
 location: `BlackHoleSystem._spawnOne` (interior placement vs ship/respawn point)
 reason: Edge-case and adversarial layers flagged the respawn/spawn overlap. Mirrors the spawn-safety deferrals already logged for the Seeker (1.4), Green Square (2.1), Pinwheel (2.2), and Snake head (2.3) — spawn-safety/placement (avoid the ship's position) plus the pre-active non-lethal telegraph are explicitly owned by Story 2.6 per the epic; the `PLAYER_INVULN_MS` (2000ms) window + player mobility mitigate the respawn case. Deferred to 2.6 rather than duplicating spawn-safety logic here; not a defect against this story's literal ACs, which exclude spawn-safety.
-status: open
+status: done 2026-07-20
+resolution: already resolved: BlackHoleSystem._spawnOne (BlackHoleSystem.js:374-390) now calls pickSafeInteriorPlacement with the ship as avoid point (SPAWN_SAFE_RADIUS) and starts the fresh hole frozen + non-lethal for ENEMY_SPAWN_TELEGRAPH_MS; the telegraph gate (:219-223) plus frozen-enemy gravity inertness (:236) close the spawn-on/near-ship vector. The Story 2.6 spawn-safety work this entry was deferred to has landed and covers the black hole.
 
 ### DW-24: The load-bearing `ArenaScene` wiring — the registration order (BlackHole AFTER Scoring so absorbed enemies are removed-but-not-scored, BEFORE PlayerDeath), the `deathPools = [...enemyPools, holePool]` composition (hole lethal-on-contact but NOT in the `CollisionSystem` one-shot list), and the late-bound `collisionSystem` — plus the AC1 "the gravity position-nudge survives the movers" invariant, have no automated coverage; the unit tests hand-reproduce the tick order and the death list rather than driving the real scene, and no test runs the nudge through a real mover.
 
@@ -257,7 +259,8 @@ origin: migrated from legacy ledger (review of spec-4-4-screen-juice-and-feedbac
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-4-4-screen-juice-and-feedback.md`
 location: `src/scenes/ArenaScene.js` (flash/shake juice) + settings/persistence infrastructure
 reason: Adversarial review layer flagged the missing accessibility controls; the flash color (0xffffff), peak alpha, shake magnitude, and hit-stop are all live juice on the two biggest events. Real product concern, but out of this story's ACs and unbuildable now — there is no settings/persistence infrastructure yet (Epic 5 Story 5.3 owns settings and persisted preferences; the epic context also ties audio mute/volume persistence to that same story). Closing it belongs with that settings work (or a dedicated accessibility story): a persisted juice-intensity / reduced-motion preference read by ArenaScene to scale or disable shake+flash. The acute rapid-flash seizure trigger is largely unreachable in practice (bomb/death flashes are seconds apart, not >3/sec), so this is a settings/accessibility feature, not a live-defect against the current ACs.
-status: open
+status: done 2026-07-20
+resolution: already resolved: Story 6.1 added a persisted reducedMotion setting (SETTINGS_REDUCED_MOTION_DEFAULT constants.js:877; settingsStorage round-trips it; SettingsScene toggle at SettingsScene.js:124-197). ArenaScene reads it and suppresses both juice events: camera shake zeroed at ArenaScene.js:628-631 and the full-screen flash forced to alpha 0 at :645-648 when _reducedMotion. The photosensitivity / motion-sickness escape hatch this entry asks for now exists.
 
 ### DW-31: The new TitleScene offers gamepad-button start, but ArenaScene's game-over screen still binds only Enter/Space/pointer to restart, so a gamepad-only player is stranded at game over.
 
