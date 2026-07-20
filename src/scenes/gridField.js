@@ -174,10 +174,19 @@ export function buildGridUniforms() {
  * place (no allocation). Each active ripple slot packs (x, y, ageSeconds); an
  * inactive slot packs ageSeconds = -1 (the sentinel the shader skips). The warp
  * packs (x, y, strength01); a released warp packs strength 0.
+ *
+ * When `reduceMotion` is true (Story 6.1 / AC2, an accessibility preference read
+ * once at ArenaScene.create()), the packed warp strength is forced to 0 regardless
+ * of the system's warp state, so the black-hole grid bow flattens at render time —
+ * a presentation-only suppression that never touches GridFieldSystem or the sim.
+ * Ripple packing is UNCHANGED: the (globally calmed) ripple is the surviving
+ * readable non-motion cue and is deliberately never suppressed by the toggle.
  * @param {object} uniforms The LIVE shader uniforms (shape from buildGridUniforms).
  * @param {import('../systems/GridFieldSystem.js').GridFieldSystem} gridFieldSystem
+ * @param {boolean} [reduceMotion=false] When true, force the packed warp z (strength)
+ *   to 0 (flatten the black-hole bow); ripple slots are packed normally regardless.
  */
-export function packGridUniforms(uniforms, gridFieldSystem) {
+export function packGridUniforms(uniforms, gridFieldSystem, reduceMotion = false) {
   const arr = uniforms.uRipples.value;
   const ripples = gridFieldSystem.ripples;
   for (let i = 0; i < ripples.length; i++) {
@@ -198,5 +207,7 @@ export function packGridUniforms(uniforms, gridFieldSystem) {
   const w = uniforms.uWarp.value;
   w.x = warp.x;
   w.y = warp.y;
-  w.z = warp.active ? warp.strength : 0;
+  // Reduced motion flattens the warp at the render-consumption layer (force z=0)
+  // without touching the system's warp target, keeping the sim byte-identical.
+  w.z = reduceMotion ? 0 : warp.active ? warp.strength : 0;
 }

@@ -197,6 +197,13 @@ export class ArenaScene extends Phaser.Scene {
     this._muted = settings.muted;
     this._volume = settings.volume;
     this._fullscreen = settings.fullscreen;
+    // Reduced motion (Story 6.1 / WCAG 2.3.1): read ONCE here at create() (never a
+    // live re-read mid-run). When on, the render loop suppresses the grid warp, the
+    // full-screen flash, and the camera shake — a presentation-only change; the sim,
+    // its latches, particles, and audio stay byte-identical. A toggle on the settings
+    // screen (reachable only from the title) therefore takes effect on the next run,
+    // which is every fresh run and every scene.restart().
+    this._reducedMotion = settings.reducedMotion;
     this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
     // Reusable per-frame music-gain buffer so the render-loop mapping allocates
     // nothing (mirrors the zero-per-frame-allocation discipline).
@@ -206,12 +213,13 @@ export class ArenaScene extends Phaser.Scene {
     // after every mute/volume change. Muted ⇒ effective gain 0 (silence) while the
     // sim, latches, and music voices keep running (only master gain is 0).
     const applyAudioSettings = () => {
-      // Include _fullscreen (a read-only passthrough here) so an in-run audio save
-      // never clobbers the fullscreen field the SettingsScene owns.
+      // Include _fullscreen and _reducedMotion (read-only passthroughs here) so an
+      // in-run audio save never clobbers the fields the SettingsScene owns.
       this.settingsStorage.save({
         muted: this._muted,
         volume: this._volume,
         fullscreen: this._fullscreen,
+        reducedMotion: this._reducedMotion,
       });
       this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
     };
@@ -595,10 +603,18 @@ export class ArenaScene extends Phaser.Scene {
     // and write the camera scroll offset from it. At trauma 0 the offset is exactly
     // 0, so the camera returns cleanly to center (no drift). The flash overlay is
     // pinned (setScrollFactor 0) so it covers the view regardless of this shake.
+    // Reduced motion (Story 6.1 / AC2): still consume + decay the trauma latch above
+    // (so the sim state resets identically), but write a ZERO scroll offset so the
+    // view never kicks — a render-consumption-layer suppression only.
     this._shakePhase += delta;
     this._trauma = decayTrauma(this._trauma, delta);
-    this.cameras.main.scrollX = shakeOffsetX(this._trauma, this._shakePhase);
-    this.cameras.main.scrollY = shakeOffsetY(this._trauma, this._shakePhase);
+    if (this._reducedMotion) {
+      this.cameras.main.scrollX = 0;
+      this.cameras.main.scrollY = 0;
+    } else {
+      this.cameras.main.scrollX = shakeOffsetX(this._trauma, this._shakePhase);
+      this.cameras.main.scrollY = shakeOffsetY(this._trauma, this._shakePhase);
+    }
 
     // Flash overlay: decay the flash countdown by real time and set the overlay
     // alpha from it (full at fire, fading to 0). Runs every frame regardless of the
@@ -607,7 +623,12 @@ export class ArenaScene extends Phaser.Scene {
       this._flashMs -= delta;
       if (this._flashMs < 0) this._flashMs = 0;
     }
-    this.flashOverlay.setAlpha(flashAlpha(this._flashMs, SCREEN_FLASH_MS));
+    // Reduced motion (Story 6.1 / AC2): still decay the flash countdown above (so the
+    // latch resets identically), but force the overlay fully transparent so no
+    // full-screen flash ever shows — render-consumption-layer suppression only.
+    this.flashOverlay.setAlpha(
+      this._reducedMotion ? 0 : flashAlpha(this._flashMs, SCREEN_FLASH_MS),
+    );
 
     // Story 4.5: drive audio from the director's latches + intensity. Consume the
     // per-event SFX requests (a reused object — no per-frame allocation), capped per
@@ -633,7 +654,10 @@ export class ArenaScene extends Phaser.Scene {
     // uniforms once per render frame (zero allocation — Float32Array/{x,y,z} mutated
     // in place). All deformation is then computed on the GPU inside the fragment
     // shader; the CPU never deforms the grid.
-    packGridUniforms(this.gridShader.uniforms, this.gridFieldSystem);
+    // Reduced motion (Story 6.1 / AC2): the third arg forces the packed warp z=0 in
+    // the pure seam, flattening the black-hole grid bow without touching the sim;
+    // ripple slots pack normally (the calmed ripple is the surviving readable cue).
+    packGridUniforms(this.gridShader.uniforms, this.gridFieldSystem, this._reducedMotion);
 
     // Sync the placeholder sprite from the ship entity each render frame.
     this.shipSprite.setPosition(this.ship.x, this.ship.y);

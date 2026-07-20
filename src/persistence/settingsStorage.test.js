@@ -5,6 +5,7 @@ import {
   AUDIO_MUTED_DEFAULT,
   AUDIO_MASTER_VOLUME_DEFAULT,
   SETTINGS_FULLSCREEN_DEFAULT,
+  SETTINGS_REDUCED_MOTION_DEFAULT,
 } from '../config/constants.js';
 
 // settingsStorage — the consolidated guarded { muted, volume, fullscreen }
@@ -33,6 +34,7 @@ const DEFAULTS = {
   muted: AUDIO_MUTED_DEFAULT,
   volume: AUDIO_MASTER_VOLUME_DEFAULT,
   fullscreen: SETTINGS_FULLSCREEN_DEFAULT,
+  reducedMotion: SETTINGS_REDUCED_MOTION_DEFAULT,
 };
 
 describe('createSettingsStorage — load() defaults', () => {
@@ -64,17 +66,23 @@ describe('createSettingsStorage — load() defaults', () => {
 });
 
 describe('createSettingsStorage — load() valid + coercion', () => {
-  it('parses a valid stored {muted, volume, fullscreen}', () => {
+  it('parses a valid stored {muted, volume, fullscreen, reducedMotion}', () => {
     const port = createSettingsStorage(
       makeFakeStorage({
         [SETTINGS_STORAGE_KEY]: JSON.stringify({
           muted: true,
           volume: 0.3,
           fullscreen: true,
+          reducedMotion: true,
         }),
       }),
     );
-    expect(port.load()).toEqual({ muted: true, volume: 0.3, fullscreen: true });
+    expect(port.load()).toEqual({
+      muted: true,
+      volume: 0.3,
+      fullscreen: true,
+      reducedMotion: true,
+    });
   });
 
   it('clamps an out-of-range stored volume into [0,1]', () => {
@@ -83,27 +91,57 @@ describe('createSettingsStorage — load() valid + coercion', () => {
         [SETTINGS_STORAGE_KEY]: JSON.stringify({ muted: false, volume: 5, fullscreen: false }),
       }),
     );
-    expect(hi.load()).toEqual({ muted: false, volume: 1, fullscreen: false });
+    expect(hi.load()).toEqual({
+      muted: false,
+      volume: 1,
+      fullscreen: false,
+      reducedMotion: false,
+    });
 
     const lo = createSettingsStorage(
       makeFakeStorage({
         [SETTINGS_STORAGE_KEY]: JSON.stringify({ muted: false, volume: -2, fullscreen: false }),
       }),
     );
-    expect(lo.load()).toEqual({ muted: false, volume: 0, fullscreen: false });
+    expect(lo.load()).toEqual({
+      muted: false,
+      volume: 0,
+      fullscreen: false,
+      reducedMotion: false,
+    });
   });
 
-  it('falls back to defaults for wrong-typed fields (non-boolean muted / non-number volume / non-boolean fullscreen)', () => {
+  it('falls back to defaults for wrong-typed fields (non-boolean muted / non-number volume / non-boolean fullscreen / non-boolean reducedMotion)', () => {
     const port = createSettingsStorage(
       makeFakeStorage({
         [SETTINGS_STORAGE_KEY]: JSON.stringify({
           muted: 'yes',
           volume: 'loud',
           fullscreen: 'on',
+          reducedMotion: 'yes',
         }),
       }),
     );
     expect(port.load()).toEqual(DEFAULTS);
+  });
+
+  it('coerces a non-boolean reducedMotion to the default while keeping valid siblings', () => {
+    const port = createSettingsStorage(
+      makeFakeStorage({
+        [SETTINGS_STORAGE_KEY]: JSON.stringify({
+          muted: true,
+          volume: 0.5,
+          fullscreen: true,
+          reducedMotion: 'yes',
+        }),
+      }),
+    );
+    expect(port.load()).toEqual({
+      muted: true,
+      volume: 0.5,
+      fullscreen: true,
+      reducedMotion: SETTINGS_REDUCED_MOTION_DEFAULT,
+    });
   });
 });
 
@@ -126,6 +164,7 @@ describe('createSettingsStorage — legacy {muted, volume} payload', () => {
       muted: true,
       volume: 0.25,
       fullscreen: SETTINGS_FULLSCREEN_DEFAULT,
+      reducedMotion: SETTINGS_REDUCED_MOTION_DEFAULT,
     });
   });
 
@@ -139,7 +178,12 @@ describe('createSettingsStorage — legacy {muted, volume} payload', () => {
         'angleWars.audioSettings': JSON.stringify({ muted: true, volume: 0.4 }),
       }),
     );
-    expect(port.load()).toEqual({ muted: true, volume: 0.4, fullscreen: false });
+    expect(port.load()).toEqual({
+      muted: true,
+      volume: 0.4,
+      fullscreen: false,
+      reducedMotion: false,
+    });
   });
 });
 
@@ -147,18 +191,40 @@ describe('createSettingsStorage — save() round-trip + write form', () => {
   it('writes the whole object as JSON under the key and reads it back', () => {
     const storage = makeFakeStorage();
     const port = createSettingsStorage(storage);
-    port.save({ muted: true, volume: 0.25, fullscreen: true });
+    port.save({ muted: true, volume: 0.25, fullscreen: true, reducedMotion: true });
     expect(storage._map.get(SETTINGS_STORAGE_KEY)).toBe(
-      JSON.stringify({ muted: true, volume: 0.25, fullscreen: true }),
+      JSON.stringify({
+        muted: true,
+        volume: 0.25,
+        fullscreen: true,
+        reducedMotion: true,
+      }),
     );
-    expect(port.load()).toEqual({ muted: true, volume: 0.25, fullscreen: true });
+    expect(port.load()).toEqual({
+      muted: true,
+      volume: 0.25,
+      fullscreen: true,
+      reducedMotion: true,
+    });
+  });
+
+  it('round-trips reducedMotion:true through save → load', () => {
+    const storage = makeFakeStorage();
+    const port = createSettingsStorage(storage);
+    port.save({ muted: false, volume: 0.6, fullscreen: false, reducedMotion: true });
+    expect(port.load().reducedMotion).toBe(true);
   });
 
   it('clamps the volume it writes and coerces booleans', () => {
     const storage = makeFakeStorage();
     const port = createSettingsStorage(storage);
-    port.save({ muted: 1, volume: 9, fullscreen: 0 });
-    expect(port.load()).toEqual({ muted: true, volume: 1, fullscreen: false });
+    port.save({ muted: 1, volume: 9, fullscreen: 0, reducedMotion: 1 });
+    expect(port.load()).toEqual({
+      muted: true,
+      volume: 1,
+      fullscreen: false,
+      reducedMotion: true,
+    });
   });
 });
 

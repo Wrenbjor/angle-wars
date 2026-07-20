@@ -65,6 +65,50 @@ describe('render-integration — sim-rate sampler wiring (ArenaScene)', () => {
   });
 });
 
+describe('render-integration — reduced-motion wiring (ArenaScene, Story 6.1)', () => {
+  // Pins all four load-bearing reduced-motion wirings in ArenaScene. This scene is
+  // Phaser-coupled and cannot be imported headlessly, so — like the sim-rate/decoupling
+  // checks above — these are SOURCE-TEXT assertions. A regression that dropped any of
+  // these would silently disable the accessibility feature (AC2) or silently reset the
+  // user's saved preference to false, while the rest of the suite stayed green.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('passes this._reducedMotion as the third arg to packGridUniforms (warp flatten)', () => {
+    expect(arenaSrc).toMatch(
+      /packGridUniforms\(\s*this\.gridShader\.uniforms\s*,\s*this\.gridFieldSystem\s*,\s*this\._reducedMotion\s*\)/,
+    );
+  });
+
+  it('zeroes the camera scroll under reduced motion, keeping the shake offsets on the else path', () => {
+    // The reduced-motion branch forces scrollX/scrollY to 0 (no camera kick).
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*this\._reducedMotion\s*\)\s*\{[\s\S]*?this\.cameras\.main\.scrollX\s*=\s*0\s*;[\s\S]*?this\.cameras\.main\.scrollY\s*=\s*0\s*;[\s\S]*?\}/,
+    );
+    // The non-reduced path must still write the computed shake offsets — so a
+    // regression that dropped the else branch (killing the shake entirely) fails.
+    expect(arenaSrc).toMatch(
+      /this\.cameras\.main\.scrollX\s*=\s*shakeOffsetX\(/,
+    );
+    expect(arenaSrc).toMatch(
+      /this\.cameras\.main\.scrollY\s*=\s*shakeOffsetY\(/,
+    );
+  });
+
+  it('gates the flash-overlay alpha on reduced motion (flash forced off)', () => {
+    expect(arenaSrc).toMatch(
+      /this\.flashOverlay\.setAlpha\(\s*[\s\S]*?this\._reducedMotion\s*\?\s*0\s*:/,
+    );
+  });
+
+  it('carries reducedMotion through the in-run applyAudioSettings save (no clobber)', () => {
+    // The in-run M / - / + save must include reducedMotion: as a read-only passthrough,
+    // or an audio change would clobber the persisted preference back to false.
+    expect(arenaSrc).toMatch(
+      /this\.settingsStorage\.save\(\{[\s\S]*?reducedMotion:\s*this\._reducedMotion[\s\S]*?\}\)/,
+    );
+  });
+});
+
 describe('render-integration — render→sim decoupling (ArenaScene.update)', () => {
   const arenaSrc = readSrc('./ArenaScene.js');
 

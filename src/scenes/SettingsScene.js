@@ -56,6 +56,12 @@ export class SettingsScene extends Phaser.Scene {
     const loaded = this._settings.load();
     this._muted = loaded.muted;
     this._volume = loaded.volume;
+    // Reduced motion (Story 6.1): a plain persisted preference (unlike fullscreen,
+    // which is seeded from the live display state). Read straight from the port; a
+    // legacy payload without the field loads it defaulted off. Its effect (grid warp
+    // / flash / shake suppression) is applied by ArenaScene at run start — this scene
+    // only owns the toggle + label + persistence.
+    this._reducedMotion = loaded.reducedMotion;
     // Seed fullscreen from the LIVE display state (the scale manager is the source
     // of truth, matching the enterfullscreen/leavefullscreen reconcilers below), NOT
     // the persisted preference. Fullscreen is deliberately never auto-restored at
@@ -91,22 +97,32 @@ export class SettingsScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     // --- Setting lines (from the Phaser-free formatters) --------------------
+    // Re-spaced for the 4th (Reduced Motion) line so no line overlaps the next or
+    // the hint (Story 6.1): volume cy-60, mute cy-20, fullscreen cy+20, reduced
+    // motion cy+60, hint cy+130.
     this.volumeText = this.add
-      .text(cx, cy - 40, formatVolume(this._volume), {
+      .text(cx, cy - 60, formatVolume(this._volume), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
       })
       .setOrigin(0.5);
     this.muteText = this.add
-      .text(cx, cy + 10, formatToggle('MUTE', this._muted), {
+      .text(cx, cy - 20, formatToggle('MUTE', this._muted), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
       })
       .setOrigin(0.5);
     this.fullscreenText = this.add
-      .text(cx, cy + 60, formatToggle('FULLSCREEN', this._fullscreen), {
+      .text(cx, cy + 20, formatToggle('FULLSCREEN', this._fullscreen), {
+        font: SETTINGS_ITEM_FONT,
+        color: COLOR_SETTINGS_ITEM,
+        align: 'center',
+      })
+      .setOrigin(0.5);
+    this.reducedMotionText = this.add
+      .text(cx, cy + 60, formatToggle('REDUCED MOTION', this._reducedMotion), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
@@ -168,6 +184,20 @@ export class SettingsScene extends Phaser.Scene {
       if (event && event.repeat) return;
       this.scale.toggleFullscreen();
     });
+    // Reduced motion (Story 6.1): flip the flag, refresh the label, and persist the
+    // WHOLE object. Same event.repeat guard as the other keys (no registered Key
+    // object, so Phaser does not suppress OS auto-repeat). A pure preference toggle:
+    // there is no live effect to apply here — ArenaScene reads it once at run start,
+    // so the change takes effect on the next run (settings are reachable only from
+    // the title).
+    this.input.keyboard.on('keydown-R', (event) => {
+      if (event && event.repeat) return;
+      this._reducedMotion = !this._reducedMotion;
+      this.reducedMotionText.setText(
+        formatToggle('REDUCED MOTION', this._reducedMotion),
+      );
+      this._persist();
+    });
     // Reconcile _fullscreen with the REAL display state from the scale manager, then
     // refresh the label and persist. Fires on both key-driven and native transitions.
     const syncFullscreen = (on) => {
@@ -206,15 +236,16 @@ export class SettingsScene extends Phaser.Scene {
   }
 
   /**
-   * Persist the whole { muted, volume, fullscreen } object through the guarded port
-   * (best-effort; never throws). Writing all three each time keeps a save from
-   * clobbering another field. @private
+   * Persist the whole { muted, volume, fullscreen, reducedMotion } object through the
+   * guarded port (best-effort; never throws). Writing all fields each time keeps a
+   * save from clobbering another field. @private
    */
   _persist() {
     this._settings.save({
       muted: this._muted,
       volume: this._volume,
       fullscreen: this._fullscreen,
+      reducedMotion: this._reducedMotion,
     });
   }
 }

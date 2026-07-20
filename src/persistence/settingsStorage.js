@@ -3,6 +3,7 @@ import {
   AUDIO_MUTED_DEFAULT,
   AUDIO_MASTER_VOLUME_DEFAULT,
   SETTINGS_FULLSCREEN_DEFAULT,
+  SETTINGS_REDUCED_MOTION_DEFAULT,
 } from '../config/constants.js';
 import { clampVolume } from '../audio/audioMix.js';
 
@@ -45,7 +46,7 @@ function defaultLocalStorage() {
 /**
  * The default settings — used on a missing key, corrupt data, or a blocked/absent
  * store. Rebuilt per call so the returned object is never shared/mutated.
- * @returns {{muted: boolean, volume: number, fullscreen: boolean}}
+ * @returns {{muted: boolean, volume: number, fullscreen: boolean, reducedMotion: boolean}}
  * @private
  */
 function defaults() {
@@ -53,6 +54,7 @@ function defaults() {
     muted: AUDIO_MUTED_DEFAULT,
     volume: AUDIO_MASTER_VOLUME_DEFAULT,
     fullscreen: SETTINGS_FULLSCREEN_DEFAULT,
+    reducedMotion: SETTINGS_REDUCED_MOTION_DEFAULT,
   };
 }
 
@@ -64,24 +66,25 @@ function defaults() {
  *   `localStorage` global via `defaultLocalStorage()`, whose acquisition is itself
  *   guarded so even a SecurityError on reading the property degrades to `null`
  *   (never throws). Injectable so tests can pass a fake, a throwing stub, or `null`.
- * @returns {{ load: () => {muted:boolean, volume:number, fullscreen:boolean},
- *             save: (settings:{muted:boolean, volume:number, fullscreen:boolean}) => void }}
- *   The guarded port: `load()` returns the persisted `{muted, volume, fullscreen}`
- *   (defaults per field on any missing/corrupt/out-of-range/failing read, volume
- *   clamped to [0,1], and a legacy `{muted,volume}` payload accepted with fullscreen
- *   defaulted); `save({muted, volume, fullscreen})` best-effort writes the whole
- *   object as JSON, ignoring any failure.
+ * @returns {{ load: () => {muted:boolean, volume:number, fullscreen:boolean, reducedMotion:boolean},
+ *             save: (settings:{muted:boolean, volume:number, fullscreen:boolean, reducedMotion:boolean}) => void }}
+ *   The guarded port: `load()` returns the persisted `{muted, volume, fullscreen,
+ *   reducedMotion}` (defaults per field on any missing/corrupt/out-of-range/failing
+ *   read, volume clamped to [0,1], and a legacy `{muted,volume}` payload accepted with
+ *   fullscreen + reducedMotion defaulted); `save({muted, volume, fullscreen,
+ *   reducedMotion})` best-effort writes the whole object as JSON, ignoring any failure.
  */
 export function createSettingsStorage(storage = defaultLocalStorage()) {
   return {
     /**
      * Read the persisted settings.
-     * @returns {{muted: boolean, volume: number, fullscreen: boolean}} The stored
-     *   settings: `muted`/`fullscreen` coerced to their defaults unless they are real
-     *   booleans, and `volume` clamped to [0,1] (default unless it is a finite
-     *   number). Returns the defaults for a missing key, empty/corrupt/non-JSON value,
-     *   absent store, or any throw. A legacy `{muted,volume}` payload loads with
-     *   `fullscreen` defaulted (the key value is reused, so old data still parses).
+     * @returns {{muted: boolean, volume: number, fullscreen: boolean, reducedMotion: boolean}}
+     *   The stored settings: `muted`/`fullscreen`/`reducedMotion` coerced to their
+     *   defaults unless they are real booleans, and `volume` clamped to [0,1] (default
+     *   unless it is a finite number). Returns the defaults for a missing key,
+     *   empty/corrupt/non-JSON value, absent store, or any throw. A legacy
+     *   `{muted,volume}` payload loads with `fullscreen` + `reducedMotion` defaulted
+     *   (the key value is reused, so old data still parses).
      */
     load() {
       try {
@@ -106,7 +109,13 @@ export function createSettingsStorage(storage = defaultLocalStorage()) {
           typeof parsed.fullscreen === 'boolean'
             ? parsed.fullscreen
             : SETTINGS_FULLSCREEN_DEFAULT;
-        return { muted, volume, fullscreen };
+        // reducedMotion: only a real boolean counts (a legacy payload has no such
+        // field, and any non-boolean is coerced to the default off).
+        const reducedMotion =
+          typeof parsed.reducedMotion === 'boolean'
+            ? parsed.reducedMotion
+            : SETTINGS_REDUCED_MOTION_DEFAULT;
+        return { muted, volume, fullscreen, reducedMotion };
       } catch {
         // Blocked/throwing store or corrupt (non-JSON) value → defaults.
         return defaults();
@@ -117,7 +126,7 @@ export function createSettingsStorage(storage = defaultLocalStorage()) {
      * Best-effort persist the whole settings object as JSON. Any failure (absent
      * store, quota, security throw) is swallowed — persistence never breaks the run.
      * Writing the WHOLE object each time means no writer clobbers another's field.
-     * @param {{muted: boolean, volume: number, fullscreen: boolean}} settings
+     * @param {{muted: boolean, volume: number, fullscreen: boolean, reducedMotion: boolean}} settings
      */
     save(settings) {
       try {
@@ -128,6 +137,7 @@ export function createSettingsStorage(storage = defaultLocalStorage()) {
             muted: !!settings.muted,
             volume: clampVolume(settings.volume),
             fullscreen: !!settings.fullscreen,
+            reducedMotion: !!settings.reducedMotion,
           }),
         );
       } catch {

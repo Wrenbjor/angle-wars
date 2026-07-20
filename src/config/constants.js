@@ -484,11 +484,16 @@ export const GRID_MAX_RIPPLES = 16;
 // slot frees) once its age reaches this. Counted in sim time (frame-rate-independent).
 export const GRID_RIPPLE_DURATION_MS = 900;
 // Ripple ring expansion speed (px/sec): the radial wavefront radius = age·this, so
-// the ring races outward from the origin over the ripple's life.
-export const GRID_RIPPLE_SPEED = 480;
+// the ring races outward from the origin over the ripple's life. Retuned markedly
+// lower (Story 6.1 / AC1) so the kill-ripple's reach is subtler yet still readable —
+// strictly positive, never disabled.
+export const GRID_RIPPLE_SPEED = 300;
 // Ripple displacement amplitude (px): the peak sideways push a ripple applies to
 // the sampled grid coordinate, scaled by an age envelope (fades to 0 at expiry).
-export const GRID_RIPPLE_AMPLITUDE = 14;
+// Retuned markedly lower (Story 6.1 / AC1) so the kill-ripple reads as a calm,
+// subtle deformation instead of a distractingly loud warp — strictly positive
+// (still readable feedback), never zeroed.
+export const GRID_RIPPLE_AMPLITUDE = 6;
 // Ripple wavelength (px): the spatial period of the radial sine wave — smaller =
 // tighter concentric rings.
 export const GRID_RIPPLE_WAVELENGTH = 60;
@@ -762,3 +767,10 @@ export const SETTINGS_HINT_FONT = '18px monospace';
 // forbid entering fullscreen without a user gesture, so this preference is
 // applied on the toggle keypress only — never auto-restored at page load.
 export const SETTINGS_FULLSCREEN_DEFAULT = false;
+// Whether a fresh player (no stored setting) starts with reduced motion on
+// (Story 6.1 / WCAG 2.3.1). Persisted as a superset field of the consolidated
+// { muted, volume, fullscreen, reducedMotion } settings object under the SAME
+// SETTINGS_STORAGE_KEY (defaulted false so legacy payloads still load). When on,
+// ArenaScene suppresses the grid warp, full-screen flash, and camera shake at
+// render time; it is read once at ArenaScene.create() (never live re-read mid-run).
+export const SETTINGS_REDUCED_MOTION_DEFAULT = false;

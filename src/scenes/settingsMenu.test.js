@@ -60,4 +60,8 @@ describe('settings content constants', () => {
     expect(typeof SETTINGS_HINT).toBe('string');
     expect(SETTINGS_HINT.length).toBeGreaterThan(0);
   });
+  it('SETTINGS_HINT names the Reduced Motion toggle key (Story 6.1)', () => {
+    expect(SETTINGS_HINT).toContain('Reduced Motion');
+    expect(SETTINGS_HINT).toContain('R');
+  });
 });

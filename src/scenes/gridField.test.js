@@ -245,3 +245,56 @@ describe('packGridUniforms — warp packing', () => {
     expect(uniforms.uWarp.value).toBe(w); // same reference
   });
 });
+
+describe('packGridUniforms — reduced motion (Story 6.1 / AC2)', () => {
+  it('forces warp z=0 for an active warp when reduceMotion=true, while ripple slots pack normally', () => {
+    const uniforms = buildGridUniforms();
+    const ripples = makeRipples();
+    ripples[0] = { active: true, x: 12, y: 34, ageMs: 500 };
+    const system = fakeGridSystem(ripples, {
+      active: true,
+      x: 640,
+      y: 360,
+      strength: 0.75,
+    });
+
+    packGridUniforms(uniforms, system, true);
+
+    // Warp suppressed: z forced to 0 regardless of the active warp state. x/y still
+    // reflect the system (only strength is gated).
+    expect(uniforms.uWarp.value.z).toBe(0);
+    expect(uniforms.uWarp.value.x).toBe(640);
+    expect(uniforms.uWarp.value.y).toBe(360);
+    // Ripple packing is UNCHANGED — the calmed ripple is never suppressed.
+    const arr = uniforms.uRipples.value;
+    expect(arr[0]).toBeCloseTo(12, 5);
+    expect(arr[1]).toBeCloseTo(34, 5);
+    expect(arr[2]).toBeCloseTo(0.5, 6);
+  });
+
+  it('leaves the active warp z unchanged when reduceMotion is omitted (default false)', () => {
+    const uniforms = buildGridUniforms();
+    const system = fakeGridSystem(makeRipples(), {
+      active: true,
+      x: 640,
+      y: 360,
+      strength: 0.75,
+    });
+
+    packGridUniforms(uniforms, system);
+    expect(uniforms.uWarp.value.z).toBe(0.75);
+  });
+
+  it('leaves the active warp z unchanged when reduceMotion=false is passed explicitly', () => {
+    const uniforms = buildGridUniforms();
+    const system = fakeGridSystem(makeRipples(), {
+      active: true,
+      x: 5,
+      y: 6,
+      strength: 0.4,
+    });
+
+    packGridUniforms(uniforms, system, false);
+    expect(uniforms.uWarp.value.z).toBeCloseTo(0.4, 6);
+  });
+});

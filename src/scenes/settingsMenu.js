@@ -10,7 +10,7 @@ export const SETTINGS_TITLE = 'SETTINGS';
 
 /** The key-hint line naming every settings control. */
 export const SETTINGS_HINT =
-  'Volume: - / +    Mute: M    Fullscreen: F    Back: Esc / Enter';
+  'Volume: - / +    Mute: M    Fullscreen: F    Reduced Motion: R    Back: Esc / Enter';
 
 /**
  * Format a master volume (0..1) into its settings-screen display line as a whole
