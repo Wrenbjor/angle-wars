@@ -23,7 +23,8 @@ origin: migrated from legacy ledger (review of spec-1-2-player-ship-and-twin-sti
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-2-player-ship-and-twin-stick-movement.md`
 location: `PlayerInputSampler.sample()`
 reason: Three independent review layers (adversarial/blind-hunter, verification-gap, intent-alignment) converged on the same gap. `PlayerInputSampler` is referenced only by its own definition and the ArenaScene import/instantiation; no `*.test.js` constructs or calls it. All movement/input tests seed `InputState` directly via `setMove`, bypassing the sampler entirely — so a sign inversion (inverted controls), a swapped up/down axis, or a broken pad-idle fall-through (a connected-but-idle pad calling `setMove(0,0)` and suppressing WASD) would ship green. The spec deliberately designated the sampler as the thin Phaser boundary not headlessly tested; closing this adds scene/input mocking infrastructure beyond the story's captured intent (orchestrator-owned, mirrors the Story 1.1 render-integration deferral above).
-status: open
+status: done 2026-07-20
+resolution: already resolved: PlayerInputSampler.test.js now drives the move path headlessly with fake keys/pad objects: pad-wins-over-keyboard priority asserted at PlayerInputSampler.test.js:101-113, keyboard-branch axis (left key -> moveX<0) and KBM<->GAMEPAD hot-swap at :131-156 and :264-277. The 'no automated coverage' gap the entry describes is closed.
 
 ### DW-4: `PlayerInputSampler.sampleAim()` — the aim-acquisition path (gamepad **right**-stick deadzone priority, the mouse `worldX/worldY − ship` fallback, and the new pointer-engagement gate) — has no automated coverage; consider driving `sampleAim` with a fake pad + fake `scene.input.activePointer` (or extracting the pure ship-relative subtraction / device-priority decision) to assert right-stick-vs-mouse priority, the correct subtraction order and world-space coords, and the engagement gate.
 
@@ -31,7 +32,8 @@ origin: migrated from legacy ledger (review of spec-1-3-twin-stick-firing.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-1-3-twin-stick-firing.md`
 location: `PlayerInputSampler.sampleAim()`
 reason: Two independent review layers (verification-gap, intent-alignment) converged on the same gap, and this is the surface the story's **primary** AC literally names ("gamepad right stick, or mouse position"). A symbol/import search across `src/**/*.test.js` for `PlayerInputSampler`/`sampleAim`/`rightStick`/`worldX`/`activePointer` returns no matches; every `firingSystem.test.js` case seeds aim via `input.setAim(...)` directly, bypassing the sampler. So a wrong stick (left vs right), an inverted `ship − pointer` subtraction, a screen-vs-world coordinate mistake, or a broken engagement gate would flip/break the primary aim AC while shipping green. Same deliberately-thin Phaser boundary as the Story 1.1 render-integration and Story 1.2 movement-sampler deferrals above; closing it needs scene/input mocking infrastructure beyond this story's captured intent (orchestrator-owned).
-status: open
+status: done 2026-07-20
+resolution: already resolved: PlayerInputSampler.test.js drives sampleAim with a fake pad + fake activePointer: right-stick-vs-mouse priority (centered stick does NOT snap to stale mouse) at :115-129; subtraction order + world-space coords ((worldX-ship.x, worldY-ship.y) normalized) directly asserted at :146-155; disconnect->clearAim at :158-172/:217-244. Gap closed.
 
 ### DW-5: The `ArenaScene` enemy wiring/render surface — the system-registration order (SimClock → PlayerMovement → Firing → Enemy → Collision), the pool references passed to `CollisionSystem` (`firingSystem.bulletPool`, `enemySystem.enemyPool`), the real firing-pipeline-bullet → spawned-seeker destruction path (AC-2 end to end), and the seeker render loop — has no automated coverage; consider a headless `buildWorld()`/wiring helper that asserts system order and the collision pools' identity, plus (as with the bullet render) a manual/extracted-draw-helper check for the render loop.
 
@@ -79,7 +81,8 @@ origin: migrated from legacy ledger (review of spec-2-1-green-square-enemy.md), 
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-1-green-square-enemy.md`
 location: `GreenSquareSystem._spawnOne`
 reason: Adversarial layer flagged instant-death-on-spawn; the mechanism is identical to and shared with the Blue Seeker (Story 1.4), so it is not newly introduced by this story, and the epic assigns "avoids spawning directly on the ship's current position" plus the pre-active non-lethal telegraph window to Story 2.6. Deferred to that story rather than patched here to avoid duplicating spawn-safety logic that 2.6 will centralize across all archetypes.
-status: open
+status: done 2026-07-20
+resolution: already resolved: Story 2.6 wired ship-avoidance + non-lethal telegraph: GreenSquareSystem.js:165-172 calls pickSafeEdgePlacement (spawnPlacement.js:48-95) with the ship as avoid point, sets telegraphMs at :181, gates behavior at :106-110, and PlayerDeathSystem.js:116-119 skips any enemy with telegraphMs>0. Instant-death-on-spawn no longer reachable.
 
 ### DW-11: The `ArenaScene` pinwheel wiring/render surface — the load-bearing `world.addSystem(pinwheelSystem)` registration (so pinwheels ever spawn/move in-game), the composition of `pinwheelSystem.enemyPool` into the shared `enemyPools` array passed to both `CollisionSystem` and `PlayerDeathSystem` (so pinwheels are killable/scored and lethal, FR6), and the pinwheel diamond render pass — has no automated coverage; consider the same headless `buildWorld()`/wiring harness proposed for Stories 1.4–2.1, extended to assert pinwheels route through world-tick, collision, death, and render.
 
@@ -103,7 +106,8 @@ origin: migrated from legacy ledger (review of spec-2-2-pinwheel-wanderer-enemy.
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-2-pinwheel-wanderer-enemy.md`
 location: `PinwheelSystem._spawnOne`
 reason: Adversarial and edge-case layers flagged instant-death-on-spawn; the mechanism is identical to and shared with the Seeker (1.4) and Green Square (2.1), so it is not newly introduced here, and the epic assigns "avoids spawning directly on the ship's current position" plus the telegraph to Story 2.6. Deferred to that story rather than patched here to avoid duplicating spawn-safety logic 2.6 will centralize across all archetypes (mirrors the identical Story 2.1 deferral).
-status: open
+status: done 2026-07-20
+resolution: already resolved: PinwheelSystem.js:153-160 calls pickSafeEdgePlacement with ship avoidance, telegraphMs set at :173, gated at :92-96, non-lethal via PlayerDeathSystem.js:116-119. Story 2.6 closed the spawn-safety gap this entry was deferred to it for.
 
 ### DW-14: The snake body momentarily compresses when the head reverses off a wall — the follow-the-leader constraint only pulls a segment inward when it is farther than `SNAKE_SEGMENT_SPACING` (never pushes it out), so as the reversed head passes back over its trailing segments they bunch below the spacing for a few ticks before re-stringing along the new heading. A transient feel/visual artifact of the committed slither+wall-bounce+follow motion model; collision stays correct (every segment remains individually lethal/killable), and the real body aesthetic is Epic 4.
 
@@ -119,7 +123,8 @@ origin: migrated from legacy ledger (review of spec-2-3-snake-enemy.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-3-snake-enemy.md`
 location: `SnakeSystem` (no cap/despawn)
 reason: Adversarial layer flagged unbounded accumulation; the mechanism is identical to the Seeker/Green-Square/Pinwheel accumulation already logged for Stories 2.1–2.2, and the epic assigns spawn cadence/mix/cap and per-run reset to Story 2.5 (Escalating Spawn Director). The lazy-growth-past-prewarm allocation is by-design pooling (steady-state recycling within prewarm is the actual NFR2 requirement and is tested, including a 500-step no-growth test); the accumulation cap belongs to 2.5, not this story's literal ACs.
-status: open
+status: done 2026-07-20
+resolution: already resolved: Story 2.5 SpawnDirector added a global active-instance cap (SpawnDirector.js:153 'if (_totalActive() >= SPAWN_DIRECTOR_MAX_ACTIVE) continue'), and _totalActive() counts snake segments individually (SpawnDirector.js:164-171); SPAWN_DIRECTOR_MAX_ACTIVE=60 (constants.js:232). Total swarm (snakes included) is now bounded, resolving this entry's sole concern (unbounded snake accumulation).
 
 ### DW-16: When a snake's base heading is parallel to the wall it contacts (±π/2 at an x-wall, 0/π at a y-wall), the base-heading reflection is an identity (`π − π/2 == π/2`), yet the ±`SNAKE_SLITHER_AMPLITUDE_RAD` slither component can still drive the head into that wall — the head then grinds along the border (clamped each tick) until it reaches a corner or the slither redirects it, instead of cleanly bouncing. A feel item: reflecting the actual crossing-velocity component (eff heading) rather than the base heading would fix it, but that is a motion-model change best tuned with Story 2.5.
 
@@ -151,7 +156,8 @@ origin: migrated from legacy ledger (review of spec-2-3-snake-enemy.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-3-snake-enemy.md`
 location: `SnakeSystem._spawnOne` (in-border head placement on spawn)
 reason: Adversarial and edge-case layers flagged instant-death-on-spawn; the mechanism is identical to and shared with the Seeker (1.4), Green Square (2.1), and Pinwheel (2.2) spawners already deferred to Story 2.6, and is distinct from the snake's existing off-border-spawn-tail entry (which explicitly notes the border-clamped ship cannot be hit by the OUTWARD body segments — the head is the in-border collider this covers). Deferred to Story 2.6 rather than patched here to avoid duplicating spawn-safety logic 2.6 will centralize across all archetypes (mirrors the identical Story 2.1/2.2 deferrals); not a defect against this story's literal ACs, which explicitly exclude spawn-safety.
-status: open
+status: done 2026-07-20
+resolution: already resolved: SnakeSystem._spawnOne now re-rolls head placement to avoid the ship (SnakeSystem.js:318-325 via pickSafeEdgePlacement) and the whole chain is non-lethal during the head's telegraph window (gated :243-249; PlayerDeathSystem.js:116-119). The in-border-head instant-death vector this entry covers is closed by Story 2.6.
 
 ### DW-20: The Black Hole's feed-driven enemy emission has no per-tick or pool cap, and `BLACKHOLE_GRAVITY_RADIUS` (340) exceeds the min hole-to-edge distance (a hole may sit ~50px from an edge; center-to-short-edge is ~322px), so a seeker emitted at a random arena edge can land back inside the well's gravity field — the "edge-spawn avoids re-feed" claim in the spec Design Notes / `_spawnSeekerAtEdge` comment is only partly true.
 
