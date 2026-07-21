@@ -30,6 +30,24 @@ regardless of how fast frames render, demonstrating the render/sim decoupling.
 | `npm run build`   | Produce a static production bundle in `dist/`.           |
 | `npm run preview` | Serve the built `dist/` bundle locally.                  |
 | `npm test`        | Run the Vitest unit tests headlessly (`Pool`, `FixedTimestep`, `World`). |
+| `npm run cap:sync`| Copy the built `dist/` into the native (Capacitor) projects + update native deps. |
+| `npm run cap:copy`| Copy the built `dist/` into the native projects (assets only, no dep update). |
+
+## Mobile (Capacitor)
+
+The game is wrapped as native iOS/Android apps with
+[Capacitor](https://capacitorjs.com/). The native shells load the same
+production `dist/` bundle — there is no separate mobile codebase. After a build,
+sync the bundle into the native projects:
+
+```bash
+npm run build      # produce dist/
+npm run cap:sync   # copy dist/ into android/ and ios/
+```
+
+Full toolchain prerequisites (Android SDK + JDK 17; macOS + Xcode + CocoaPods for
+iOS), the open/build/run flow, and the manual end-to-end device acceptance
+checklist live in [`docs/mobile-build.md`](docs/mobile-build.md).
 
 ## Project layout
 

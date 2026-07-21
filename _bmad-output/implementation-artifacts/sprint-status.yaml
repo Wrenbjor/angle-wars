@@ -88,7 +88,7 @@ development_status:
   epic-7: backlog
   7-1-touch-twin-stick-controls: done
   7-2-responsive-mobile-layout-orientation-and-safe-areas: done
-  7-3-capacitor-native-shell-and-device-build: backlog
+  7-3-capacitor-native-shell-and-device-build: done
   7-4-mobile-performance-profile: backlog
   7-5-native-lifecycle-and-feel-integration: backlog
   7-6-store-release-scaffolding: backlog
