@@ -32,6 +32,10 @@ This document provides the complete epic and story breakdown for Angle Wars, dec
 - **FR17** — Accessibility/feel: grid kill-ripple toned down by default; a persisted Reduced-Motion setting scales down or disables grid warp, the full-screen flash, and camera shake (WCAG 2.3.1).
 - **FR18** — Black-hole instability (revises FR13): absorbing matter grows the hole toward an unstable threshold; reaching it detonates as a lethal, screen-clearing blast that costs the player a life; sustained fire shrinks it to a safe destruction; a rising red pulse + audio urgency track its approach to instability.
 - **FR19** — Mirror Reflector ("dumbbell") hazard: a spinning two-weight bar that drifts the arena and reflects player bullets off its bar; immune to gunfire, destroyed only by flying the ship through its center; the weights are lethal on contact.
+- **FR20** — Touch twin-stick control: on-screen floating dual thumbsticks (left half = move, right half = aim, holding aim auto-fires) plus an on-screen smart-bomb button, feeding the same move/aim/bomb intent seam as gamepad and keyboard/mouse, and hot-swapping with them.
+- **FR21** — Mobile layout: landscape orientation lock; the WebGL canvas fits varied phone aspect ratios while preserving the arena's playable aspect; HUD and touch controls respect device safe-area insets (notches, rounded corners, home indicator) and never occlude critical play space.
+- **FR22** — Native mobile shell: the static web build is packaged as an installable iOS and Android app via Capacitor, running the full game inside the native WebView.
+- **FR23** — Native lifecycle & feel: the game auto-pauses when the app is backgrounded or loses focus; the Android hardware back button is handled; short haptic pulses fire on key feel events (death, bomb, extra life) where supported; the display is kept awake during an active run.
 
 ### NonFunctional Requirements
 
@@ -43,6 +47,8 @@ This document provides the complete epic and story breakdown for Angle Wars, dec
 - **NFR6** — Static web build; fast first load; no server.
 - **NFR7** — Cross-browser desktop; responsive canvas scaling preserving arena aspect.
 - **NFR8** — Clean, extensible entity/system architecture (ready for v2 powers/progression).
+- **NFR9** — Mobile performance profile: sustain the mobile framerate target on a mid-range phone GPU inside a WebView by scaling particle caps, bloom cost, and grid resolution down from desktop defaults through the existing centralized quality/feel constants.
+- **NFR10** — Store-ready packaging: app icons, splash screens, orientation/permission manifests, and iOS + Android signing/build configuration sufficient to submit to the Apple App Store and Google Play.
 
 ### Additional Requirements
 
@@ -80,8 +86,14 @@ This document provides the complete epic and story breakdown for Angle Wars, dec
 | NFR4 | 4.1 |
 | NFR5 | 4.2 |
 | NFR6 | 5.5 |
-| NFR7 | 1.1, 5.5 |
+| NFR7 | 1.1, 5.5, 7.2 |
 | NFR8 | 1.1 (foundation), all entity stories |
+| FR20 | 7.1 |
+| FR21 | 7.2 |
+| FR22 | 7.3 |
+| FR23 | 7.5 |
+| NFR9 | 7.4 |
+| NFR10 | 7.6 |
 
 ## Epic List
 
@@ -91,6 +103,7 @@ This document provides the complete epic and story breakdown for Angle Wars, dec
 4. **Epic 4 — Signature Aesthetic & Juice:** Neon bloom, the deforming grid, the pooled particle system, screen feel, and audio.
 5. **Epic 5 — Game Shell, Flow & Release:** Title, pause, full game-flow state machine, input polish, and performance-hardened web build.
 6. **Epic 6 — Feel & Signature Hazards (Post-Launch Tweaks):** Discovered-through-play refinements — calmer visual feedback with reduced-motion accessibility, the black hole re-cast as an unstable ticking bomb, and the mirror-reflector "dumbbell" hazard.
+7. **Epic 7 — Mobile (Capacitor Shell & Touch Play):** Take the finished web build to phones — on-screen twin-stick touch controls, a safe-area-aware landscape layout, a Capacitor native shell around the static bundle, a mobile performance profile, native lifecycle/haptics, and store-submission scaffolding. IAP/ads deferred to a later epic.
 
 ---
 
@@ -702,3 +715,143 @@ So that some threats demand positioning and nerve instead of firepower.
 **And** contact with either weight kills the player (FR6)
 
 > The reflect is a segment-vs-point collision plus a velocity mirror per bullet per tick — genuinely new collision code, modeled on the PinwheelSystem drift/pool pattern. Reflected bullets remain player-owned; whether they can harm the player is left as a tunable feel constant (default: harmless to the player) for post-launch play.
+
+---
+
+## Epic 7: Mobile (Capacitor Shell & Touch Play)
+
+**Goal:** Make the finished web game a real, installable mobile app without rewriting the game. Wrap the existing static Vite build in a **Capacitor** native shell (Ionic's modern wrapper — best plugin ecosystem, actively maintained, generates the Xcode/Android Studio projects), add **on-screen twin-stick touch controls** that plug into the existing Phaser-free input seam, make the layout respect phone screens (landscape lock, safe-area insets, thumb reach), give it a **mobile performance profile** so the bloom/grid/particle stack holds framerate on a phone GPU inside a WebView, wire **native lifecycle** (auto-pause on background, hardware back, haptics, keep-awake), and lay down **store-submission scaffolding** (icons, splash, signing). Spine-first *within mobile*: the touch feel is the highest-risk, most game-defining piece, so it is proven **first in the browser** before anything is wrapped natively. In-app purchases and ads are the reason Capacitor was chosen (its plugin ecosystem), but they are **explicitly out of scope for this epic** — this epic delivers the installable, store-submittable shell they later bolt onto.
+
+### Story 7.1: Touch Twin-Stick Controls
+
+As a player on a phone,
+I want on-screen dual thumbsticks that move and aim independently,
+So that the twin-stick core survives without a controller.
+
+**Acceptance Criteria:**
+
+**Given** a touch device (or touch input)
+**When** I press and hold anywhere on the left half of the screen
+**Then** a floating virtual movement stick appears at my thumb and its deflection sets the ship's move intent (FR20), clamped to the unit circle like the analog stick
+
+**Given** the right half of the screen
+**When** I press and hold there
+**Then** a floating virtual aim stick appears, its direction sets the aim, and while it is held the ship auto-fires in that direction (FR2, FR20) independent of movement (FR1)
+
+**Given** the touch control path
+**When** it samples input each render frame
+**Then** it writes normalized move/aim into the existing `InputState` seam (`src/input/InputState.js`) via a new `INPUT_METHOD.TOUCH` branch in `resolveActiveMethod` (`src/input/inputMethod.js`) and a touch sampling path, with **no changes** to the movement, firing, or bomb systems (NFR8)
+
+**Given** an on-screen smart-bomb button
+**When** the player taps it
+**Then** a bomb is latched through the existing `queueBomb`/`consumeBomb` seam exactly once per tap, regardless of how long the button is held (FR9)
+
+**Given** the player switches between touch and another device (gamepad/keyboard/mouse)
+**When** touch activity begins or ends
+**Then** the active-input-method resolution hot-swaps to/from touch without a restart, with no cross-device aim bleed (FR16-style, mirrors the existing sticky-method logic)
+
+### Story 7.2: Responsive Mobile Layout, Orientation & Safe Areas
+
+As a player on a phone,
+I want the game to fill my screen correctly and keep controls off the notch,
+So that it looks and plays right on any handset.
+
+**Acceptance Criteria:**
+
+**Given** the app runs on a handset
+**When** it starts
+**Then** it locks to landscape and the WebGL canvas scales to the device's aspect ratio while preserving the arena's playable aspect (NFR7)
+
+**Given** a device with a notch, rounded corners, or a home indicator
+**When** the HUD and touch controls lay out
+**Then** they respect the safe-area insets (`env(safe-area-inset-*)`) so nothing critical is clipped or pushed under the hardware (FR21)
+
+**Given** the on-screen thumbsticks and bomb button
+**When** they are placed
+**Then** they sit within comfortable thumb reach and do not occlude the ship, score, lives, multiplier, or bomb HUD during play (FR21)
+
+### Story 7.3: Capacitor Native Shell and Device Build
+
+As a developer,
+I want the static web build wrapped as an installable iOS and Android app,
+So that Angle Wars runs as a real mobile app.
+
+**Acceptance Criteria:**
+
+**Given** the existing production Vite build (Story 5.5)
+**When** Capacitor is added and configured
+**Then** `capacitor.config` points `webDir` at the production build output (`dist`), sets an app id and display name, and `npx cap sync` copies the built bundle into the native projects (FR22)
+
+**Given** Capacitor is configured
+**When** the native platforms are added
+**Then** iOS (Xcode) and Android (Android Studio) projects are generated and build cleanly
+
+**Given** a real device or emulator
+**When** the app is launched from the native project
+**Then** the full game runs end to end (title → play → game over → restart) inside the native WebView with touch controls (Story 7.1) active
+
+### Story 7.4: Mobile Performance Profile
+
+As a player on a mid-range phone,
+I want a smooth framerate even with bloom, grid warp, and particles,
+So that the game feels good, not choppy.
+
+**Acceptance Criteria:**
+
+**Given** the game detects it is running on a mobile device / inside the Capacitor WebView
+**When** it initializes
+**Then** it applies a mobile quality profile that scales particle caps, bloom cost, and grid resolution down from desktop defaults via the existing centralized quality/feel constants — no per-frame allocation introduced (NFR2, NFR9)
+
+**Given** a peak-load late game (max enemies, particles, bombs, bloom, grid warp) on a mid-range phone GPU inside the WebView
+**When** measured
+**Then** it holds the mobile framerate target without sustained hitching (NFR9, NFR1)
+
+**Given** the Reduced-Motion and quality settings (Stories 6.1 / 5.3)
+**When** the player adjusts them on mobile
+**Then** they compose with the mobile profile and persist across sessions (localStorage)
+
+### Story 7.5: Native Lifecycle and Feel Integration
+
+As a player on a phone,
+I want the game to behave like a native app — pausing when I leave, buzzing on impact, and not sleeping mid-run,
+So that it feels at home on the device.
+
+**Acceptance Criteria:**
+
+**Given** a run in progress
+**When** the app is backgrounded or loses focus (Capacitor `App` state / `visibilitychange`)
+**Then** the game auto-pauses via the existing pause system (Story 5.2) so the player never dies while away, and resumes cleanly on return (FR23, FR15)
+
+**Given** an Android device
+**When** the player presses the hardware back button
+**Then** it maps to pause/resume or a safe exit-confirm rather than abruptly closing the app (FR23)
+
+**Given** key feel events (player death, bomb detonation, extra life)
+**When** they fire on a device that supports it
+**Then** a short haptic pulse plays via Capacitor Haptics, suppressed when Reduced Motion / the relevant feel setting is off (FR23, respects Story 6.1)
+
+**Given** an active run
+**When** the player is mid-play
+**Then** the display is kept awake (no auto-lock) during play and the keep-awake is released outside of play (FR23)
+
+### Story 7.6: Store Release Scaffolding
+
+As a developer,
+I want icons, splash screens, and signing configured for both stores,
+So that Angle Wars can actually be submitted.
+
+**Acceptance Criteria:**
+
+**Given** the native projects
+**When** release assets are generated
+**Then** app icons and splash screens exist across the required iOS and Android densities/sizes (NFR10)
+
+**Given** the platform manifests
+**When** they are configured
+**Then** orientation, display name, bundle/app id, and required permissions are set correctly for Apple App Store and Google Play submission (NFR10)
+
+**Given** a release build
+**When** it is produced
+**Then** iOS and Android signing/build configuration is documented and yields a store-uploadable artifact (NFR10)
+
+> **IAP and ads are explicitly out of scope for this epic.** Capacitor was chosen precisely because its plugin ecosystem makes native in-app purchases and ads straightforward to add later — this shell is built to accept them, but the monetization stories are deferred to a dedicated later epic. Epic 7 delivers the installable, store-submittable native shell and faithful touch play, nothing more. The touch-control story (7.1) is deliberately sequenced first and browser-testable so the twin-stick *feel* is proven before any native wrapping cost is incurred.

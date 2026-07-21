@@ -28,12 +28,13 @@ This is v1. It is deliberately **pure** — no collectible geoms, no game-mode m
 - ❌ Multiple game modes (Waves, Pacifism, King, Sequence, Deadline) — RE1 is single-mode.
 - ❌ **Special powers / abilities** and **level progression / unlocks** — these are Wren's v2.
 - ❌ Online multiplayer, leaderboards-as-a-service, accounts. (Local high score only.)
-- ❌ Native/console builds. Web (WebGL) only for v1.
+- ❌ Console builds. (Web WebGL is the v1 target; a **mobile** native shell via Capacitor is added post-v1 as Epic 7 — see §11.)
+- ❌ In-app purchases and ads. (Capacitor's plugin ecosystem is chosen with these in mind, but the monetization stories are deferred to a later epic beyond the Epic 7 shell.)
 
 ## 3. Target Player & Platform
 
 - **Player:** Arcade-score-chasers and Geometry Wars fans; anyone who wants a tight 3-minute "one more run" session.
-- **Platform:** Desktop web browsers with WebGL. Primary input **gamepad (twin-stick)**; **keyboard + mouse** fully supported as fallback.
+- **Platform:** Desktop web browsers with WebGL. Primary input **gamepad (twin-stick)**; **keyboard + mouse** fully supported as fallback. **Mobile** (iOS/Android) is added post-v1 via a Capacitor native shell with on-screen touch twin-stick controls — see Epic 7 in §11.
 
 ## 4. Design Pillars
 
@@ -112,6 +113,11 @@ Faithful behaviors are the acceptance criteria; exact tuning constants are set d
 3. **Epic 3 — Score, Multiplier, Bombs & Lives:** the RE1 economy (incl. multiplier-reset-on-death).
 4. **Epic 4 — Signature Aesthetic & Juice:** bloom, deforming grid, particles, screen feel, audio.
 5. **Epic 5 — Game Shell, Flow & Release:** title, pause, settings, input polish, performance hardening, web build.
+
+**Post-v1 epics** (layered on the finished, shipped core):
+
+6. **Epic 6 — Feel & Signature Hazards:** discovered-through-play tuning — calmer grid feedback + reduced-motion accessibility, the black hole re-cast as an unstable ticking bomb, and the mirror-reflector "dumbbell" hazard.
+7. **Epic 7 — Mobile (Capacitor Shell & Touch Play):** wrap the static web build as an installable iOS/Android app via **Capacitor** — on-screen touch twin-stick controls into the existing input seam, safe-area-aware landscape layout, a mobile performance profile, native lifecycle (auto-pause, haptics, keep-awake), and store-submission scaffolding. IAP/ads deferred to a later epic.
 
 Full story breakdown with acceptance criteria: see `epics.md`.
 
