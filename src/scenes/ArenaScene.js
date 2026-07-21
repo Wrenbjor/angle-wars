@@ -52,6 +52,7 @@ import {
   telegraphAlpha,
   telegraphScale,
 } from './telegraphCue.js';
+import { drawTouchOverlay, TOUCH_OVERLAY_STYLE } from './touchOverlay.js';
 import { reflectorEndpoints } from '../systems/mirrorReflectorMath.js';
 import { blackHoleInstability } from '../entities/BlackHole.js';
 import {
@@ -183,6 +184,18 @@ export class ArenaScene extends Phaser.Scene {
     // the grid/border layers and before the enemy layers below. Each is cleared
     // and redrawn each render frame from its owning system's pool (Epic 4 replaces
     // these placeholders with the real aesthetic).
+    // Touch twin-stick (Story 7.1): ensure the game-global touch-pointer pool can
+    // track two floating sticks + a concurrent bomb tap. addPointer is CUMULATIVE and
+    // the pool is game-global (survives scene.restart), so create() re-running on each
+    // game-over→restart would otherwise pile pointers up (3→5→7→…→capped 10 with warns).
+    // Raise idempotently: only add the shortfall to reach a fixed target of 3 touch
+    // pointers (manager.pointersTotal counts touch pointers; the mouse is separate), a
+    // no-op once satisfied.
+    const TOUCH_POINTER_TARGET = 3;
+    const touchPointerShortfall = TOUCH_POINTER_TARGET - this.input.manager.pointersTotal;
+    if (touchPointerShortfall > 0) {
+      this.input.addPointer(touchPointerShortfall);
+    }
     this.inputSampler = new PlayerInputSampler(this, this.inputState, this.ship);
     this.bulletGraphics = this.add.graphics();
     this.bombShockwaveGraphics = this.add.graphics();
@@ -343,6 +356,18 @@ export class ArenaScene extends Phaser.Scene {
       Phaser.BlendModes.ADD,
     );
     addNeonBloom(this.cameras.main);
+
+    // --- Touch controls overlay (Story 7.1) ---------------------------------
+    // The floating move/aim sticks + smart-bomb button, drawn each active render
+    // frame from the sampler's Phaser-free snapshot (base ring + thumb knob per
+    // active stick, plus the bomb button). Created AFTER every gameplay layer so the
+    // controls read on top of the action, but BEFORE the flash/HUD/overlays so those
+    // stay above it. Left in NORMAL blend (a UI element, not a neon gameplay layer)
+    // and drawn in ARENA-LOGICAL / world space (default scroll factor), so during a
+    // camera shake a stationary finger's drawn knob drifts a few px with the world;
+    // shake-robust screen-space anchoring (setScrollFactor(0) + placement) is Story
+    // 7.2's concern. Cleared when no touch is active / on pause, so nothing lingers.
+    this.touchOverlayGraphics = this.add.graphics();
 
     // --- Screen juice: flash overlay + render-owned countdowns (Story 4.4) ---
     // A full-view white rectangle, pinned with setScrollFactor(0) so it always
@@ -580,7 +605,16 @@ export class ArenaScene extends Phaser.Scene {
     this.pauseOverlay.setVisible(this._paused);
     this.pauseTitle.setVisible(this._paused);
     this.pausePrompt.setVisible(this._paused);
-    if (this._paused) return;
+    if (this._paused) {
+      // Story 7.1: clear the touch overlay while paused so no stick/knob lingers
+      // frozen over the PAUSED screen, and drop all held touch state — the sampler's
+      // touch listeners are frozen while paused, so a finger lifted during the pause
+      // would never reconcile and would strand a stick (ship drifting on resume) or a
+      // bomb latched at the pause edge (detonating on resume). resetTouch reconciles it.
+      this.touchOverlayGraphics.clear();
+      this.inputSampler.resetTouch();
+      return;
+    }
 
     // Sample input (render rate) before advancing the sim so this frame's
     // fixed steps consume the latest move intent.
@@ -851,6 +885,21 @@ export class ArenaScene extends Phaser.Scene {
       ptg.fillStyle(p.color, particleAlpha(p.ageMs, p.lifeMs));
       ptg.fillCircle(p.x, p.y, p.size);
     });
+
+    // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is
+    // the driving input, else clear it. Runs at render rate after sample() (which
+    // updated the touch model this frame). The draw helper self-clears, so a
+    // released stick leaves no stale graphic; the else-clear covers the frame touch
+    // ends and every non-touch frame (gamepad/kbm player never sees the overlay).
+    if (this.inputSampler.isTouchActive()) {
+      drawTouchOverlay(
+        this.touchOverlayGraphics,
+        this.inputSampler.touchSnapshot(),
+        TOUCH_OVERLAY_STYLE,
+      );
+    } else {
+      this.touchOverlayGraphics.clear();
+    }
 
     // Sample sim ticks/sec roughly once per second so the readout is steady.
     // DEV-only: gated so a production build eliminates the sampling from the

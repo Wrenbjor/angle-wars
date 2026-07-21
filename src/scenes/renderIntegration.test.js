@@ -205,3 +205,49 @@ describe('render-integration — render→sim decoupling (ArenaScene.update)', (
     );
   });
 });
+
+describe('render-integration — touch twin-stick wiring (ArenaScene, Story 7.1)', () => {
+  // Pins the load-bearing Story 7.1 touch glue in ArenaScene. This scene is
+  // Phaser-coupled and cannot be imported headlessly, so — like the reduced-motion /
+  // black-hole / mirror-reflector checks above — these are SOURCE-TEXT assertions.
+  // The touch model, sampler, and overlay helper carry their own unit coverage
+  // (touchControls / PlayerInputSampler / touchOverlay tests); these guard only the
+  // three scene-boundary wirings those units cannot reach: the idempotent multi-touch
+  // pointer-pool raise, the pause-edge touch reconciliation, and the render-frame
+  // overlay draw/clear gate.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('raises the game-global touch-pointer pool idempotently to a fixed target of 3', () => {
+    // addPointer is cumulative and the pool survives scene.restart, so create()
+    // re-running on each game-over→restart must add only the shortfall (never an
+    // unconditional addPointer(N) that would pile up to Phaser's cap of 10).
+    expect(arenaSrc).toMatch(/const\s+TOUCH_POINTER_TARGET\s*=\s*3;/);
+    expect(arenaSrc).toMatch(
+      /const\s+touchPointerShortfall\s*=\s*TOUCH_POINTER_TARGET\s*-\s*this\.input\.manager\.pointersTotal;/,
+    );
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*touchPointerShortfall\s*>\s*0\s*\)\s*\{\s*this\.input\.addPointer\(\s*touchPointerShortfall\s*\);\s*\}/,
+    );
+  });
+
+  it('reconciles held touch state on the pause edge (clear overlay + resetTouch, then return)', () => {
+    // The sampler's touch listeners are frozen while paused, so a finger lifted
+    // during a pause would otherwise strand a stick (ship drifts on resume) or a
+    // bomb latched at the pause edge (detonates on resume). The pause early-return
+    // must clear the overlay and call resetTouch() before bailing.
+    expect(arenaSrc).toMatch(
+      /this\.touchOverlayGraphics\.clear\(\);\s*this\.inputSampler\.resetTouch\(\);\s*return;/,
+    );
+  });
+
+  it('gates the render-frame overlay draw on isTouchActive(), clearing it otherwise', () => {
+    // Draw only while touch is the driving input; the else-branch clear covers the
+    // frame touch ends and every non-touch frame, so a gamepad/kbm player never sees
+    // a lingering overlay.
+    expect(arenaSrc).toMatch(/if\s*\(\s*this\.inputSampler\.isTouchActive\(\)\s*\)\s*\{/);
+    expect(arenaSrc).toMatch(
+      /drawTouchOverlay\(\s*this\.touchOverlayGraphics,\s*this\.inputSampler\.touchSnapshot\(\),\s*TOUCH_OVERLAY_STYLE,?\s*\)/,
+    );
+    expect(arenaSrc).toMatch(/\}\s*else\s*\{\s*this\.touchOverlayGraphics\.clear\(\);\s*\}/);
+  });
+});

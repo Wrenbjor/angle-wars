@@ -62,6 +62,46 @@ export const AIM_DEADZONE = 0.3;
 // detonation); never polled and re-queued per frame.
 export const GAMEPAD_BOMB_BUTTONS = [4, 5];
 
+// --- Touch twin-stick controls (Story 7.1) ----------------------------------
+// The touch input method (INPUT_METHOD.TOUCH): a left-half floating move stick, a
+// right-half floating aim stick (held → auto-fire), and one on-screen smart-bomb
+// button. All geometry is in ARENA logical space (pointer.worldX/worldY), split at
+// ARENA_WIDTH / 2, so the FIT+CENTER camera maps a screen touch to the right half.
+// Device-specific placement / thumb reach / safe areas are explicitly Story 7.2 —
+// these are fixed logical-coordinate placeholders (tuned later), no magic numbers
+// in the touch model or the overlay draw helper.
+
+// Floating-stick reach (px, logical): the deflection distance that maps to full
+// (magnitude 1) move intent. deflection / this feeds InputState.setMove, which
+// clamps to the unit circle; the aim stick normalizes its deflection to a unit
+// direction so this value does not affect aim, only move gain and the drawn ring.
+export const TOUCH_STICK_MAX_RADIUS = 120;
+// Origin deadzone (px, logical): a deflection at or within this of the stick base
+// produces no move intent and registers no aim direction, so a resting/jittering
+// thumb neither drifts the ship nor rotates the fire vector (mirrors the gamepad
+// radial deadzone intent, expressed in pixels of thumb travel).
+export const TOUCH_STICK_DEADZONE = 10;
+// Smart-bomb button geometry (center + radius, px, logical). A pointerdown whose
+// point is within `radius` of (x, y) latches exactly one bomb (no stick spawned),
+// regardless of how long it is held. Placed bottom-center — a neutral zone the
+// bomb-first classification claims before the left/right half split. Tuned later.
+export const TOUCH_BOMB_BUTTON = {
+  x: ARENA_WIDTH / 2,
+  y: ARENA_HEIGHT - 84,
+  radius: 60,
+};
+// Touch overlay draw style (view-only placeholder; Epic 4 / Story 7.2 own the real
+// aesthetic). The base ring is drawn at each active stick's base at MAX_RADIUS; the
+// thumb knob follows the current touch point at KNOB_RADIUS. Colors are 0xRRGGBB and
+// alpha is 0..1. PRESSED_ALPHA brightens the bomb button while a finger holds it.
+export const TOUCH_OVERLAY_KNOB_RADIUS = 40;
+export const TOUCH_OVERLAY_LINE_WIDTH = 3;
+export const TOUCH_OVERLAY_ALPHA = 0.35;
+export const TOUCH_OVERLAY_BOMB_PRESSED_ALPHA = 0.6;
+export const COLOR_TOUCH_STICK_BASE = 0x66ccff;
+export const COLOR_TOUCH_STICK_KNOB = 0xffffff;
+export const COLOR_TOUCH_BOMB = 0xff66cc;
+
 // --- Firing / bullets (feel) ------------------------------------------------
 // Continuous auto-fire: while the aim channel is active the FiringSystem spawns
 // one bullet every FIRE_INTERVAL_MS of accumulated fixed-step time, so the

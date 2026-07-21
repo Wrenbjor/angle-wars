@@ -5,6 +5,7 @@ import {
   mappingWarning,
 } from './inputMath.js';
 import { INPUT_METHOD, resolveActiveMethod } from './inputMethod.js';
+import { TouchControls } from './touchControls.js';
 import {
   MOVE_DEADZONE,
   AIM_DEADZONE,
@@ -96,6 +97,65 @@ export class PlayerInputSampler {
         this.input.queueBomb();
       }
     });
+
+    // Touch twin-stick (Story 7.1): the Phaser-free floating-stick + bomb model.
+    // The sampler is the SOLE Phaser boundary, so ALL touch pointer events are
+    // routed into the model here, in arena logical space (pointer.worldX/worldY —
+    // the FIT+CENTER camera maps a screen touch there, matching the ship's space).
+    // Each listener is guarded two ways, mirroring the gamepad bomb listener above:
+    //  - the Story 5.2 pause freeze (this.scene._paused): while paused, update()
+    //    returns before sample(), so buffering touch here would let it apply on
+    //    resume — freeze it at the source for parity with the frozen keyboard.
+    //  - a TOUCH-only gate (pointer.wasTouch): a mouse pointer (wasTouch === false)
+    //    must NOT feed the touch model, and — symmetrically — a thumb must never
+    //    read as the mouse (see isKbmActive). Phaser's pinned 3.90 exposes the
+    //    touch/mouse discriminator as `pointer.wasTouch` (+ `wasCanceled`), NOT a
+    //    DOM-style `pointerType`; this is the surface the intent's block-if requires.
+    this.touch = new TouchControls();
+    scene.input.on('pointerdown', (pointer) => {
+      if (this.scene._paused || !pointer.wasTouch) return;
+      this.touch.onPointerDown(pointer.id, pointer.worldX, pointer.worldY);
+    });
+    scene.input.on('pointermove', (pointer) => {
+      if (this.scene._paused || !pointer.wasTouch) return;
+      this.touch.onPointerMove(pointer.id, pointer.worldX, pointer.worldY);
+    });
+    const onTouchUp = (pointer) => {
+      if (this.scene._paused || !pointer.wasTouch) return;
+      this.touch.onPointerUp(pointer.id);
+    };
+    // pointerupoutside fires when a finger lifts outside the game canvas — without
+    // it a stick released off-canvas would stay stuck active (ship drifting on).
+    scene.input.on('pointerup', onTouchUp);
+    scene.input.on('pointerupoutside', onTouchUp);
+  }
+
+  /**
+   * Whether touch is driving this frame (any stick held or a finger on the bomb
+   * button). ArenaScene reads this to decide whether to draw or clear the overlay.
+   * @returns {boolean}
+   */
+  isTouchActive() {
+    return this.touch.isActive();
+  }
+
+  /**
+   * The touch overlay render snapshot (a persistent object — read it immediately).
+   * ArenaScene feeds it to the drawTouchOverlay helper each active frame.
+   * @returns {ReturnType<TouchControls['snapshot']>}
+   */
+  touchSnapshot() {
+    return this.touch.snapshot();
+  }
+
+  /**
+   * Drop all held touch state (both sticks + the bomb latch). ArenaScene calls this
+   * when entering pause: the touch pointer listeners are frozen while paused, so a
+   * finger lifted during the pause would never reconcile and would strand a stick
+   * (drifting on resume) or a bomb latched at the pause edge (detonating on resume).
+   */
+  resetTouch() {
+    this.touch.reset();
   }
 
   /**
@@ -162,9 +222,11 @@ export class PlayerInputSampler {
 
     const gamepadActive = this.isGamepadActive(pad);
     const kbmActive = this.isKbmActive();
+    const touchActive = this.touch.isActive();
     this.activeMethod = resolveActiveMethod(this.activeMethod, {
       gamepadActive,
       kbmActive,
+      touchActive,
     });
 
     this.sampleMove(pad);
@@ -211,11 +273,19 @@ export class PlayerInputSampler {
       k.bomb.isDown;
 
     const p = this.scene.input.activePointer;
+    // A thumb must never register as the mouse (no cross-device aim bleed): gate
+    // the pointer-move and pointer-down signals on this pointer NOT being a touch.
+    // Phaser 3.90 exposes the discriminator as `pointer.wasTouch` (true = the last
+    // event was a touch), not a DOM `pointerType`; a mouse pointer has wasTouch ===
+    // false and an unseeded test pointer leaves it undefined — both read as "mouse"
+    // (!wasTouch), so the keyboard/mouse behavior is unchanged. The stored moveTime
+    // still advances every frame (touch or mouse) so the change-detection stays honest.
+    const isMousePointer = !p.wasTouch;
     const pointerMoved =
-      p.moveTime > 0 && p.moveTime !== this._lastPointerMoveTime;
+      p.moveTime > 0 && p.moveTime !== this._lastPointerMoveTime && isMousePointer;
     this._lastPointerMoveTime = p.moveTime;
 
-    return keyDown || pointerMoved || p.isDown;
+    return keyDown || pointerMoved || (p.isDown && isMousePointer);
   }
 
   /**
@@ -229,6 +299,14 @@ export class PlayerInputSampler {
     if (Phaser.Input.Keyboard.JustDown(this.keys.bomb)) {
       this.input.queueBomb();
     }
+    // Touch smart-bomb: read-and-clear the model's one-tap latch and route it
+    // through the same queueBomb seam (one tap → one detonation), at parity with
+    // the keyboard/gamepad edge latch. Consumed every frame regardless of the
+    // active method (like the gamepad bomb listener), since tapping the button also
+    // makes touchActive true and flips the method to TOUCH this same frame.
+    if (this.touch.consumeBomb()) {
+      this.input.queueBomb();
+    }
   }
 
   /**
@@ -240,6 +318,15 @@ export class PlayerInputSampler {
    * @param {Phaser.Input.Gamepad.Gamepad|null} pad
    */
   sampleMove(pad) {
+    if (this.activeMethod === INPUT_METHOD.TOUCH) {
+      // Touch: the floating move stick's deflection / MAX_RADIUS. setMove clamps to
+      // the unit circle (a diagonal is never faster than a cardinal). A released
+      // stick yields (0,0), so lifting all fingers rests the ship even while the
+      // method stays sticky-TOUCH.
+      const m = this.touch.moveVector();
+      this.input.setMove(m.x, m.y);
+      return;
+    }
     if (this.activeMethod === INPUT_METHOD.GAMEPAD && pad) {
       const ls = pad.leftStick;
       const { x, y } = applyRadialDeadzone(ls.x, ls.y, MOVE_DEADZONE);
@@ -273,6 +360,18 @@ export class PlayerInputSampler {
    * @param {Phaser.Input.Gamepad.Gamepad|null} pad
    */
   sampleAim(pad) {
+    if (this.activeMethod === INPUT_METHOD.TOUCH) {
+      // Touch: the aim stick's retained unit direction drives auto-fire while held;
+      // it is inactive before the first deflection and after release (firing stops).
+      // setAim normalizes again and treats a zero vector as no aim.
+      const a = this.touch.aimVector();
+      if (a.active) {
+        this.input.setAim(a.x, a.y);
+      } else {
+        this.input.clearAim();
+      }
+      return;
+    }
     if (this.activeMethod === INPUT_METHOD.GAMEPAD) {
       // Gamepad disconnected mid-play but the method is still sticky-GAMEPAD:
       // clear aim (firing stops) rather than falling through to the mouse and

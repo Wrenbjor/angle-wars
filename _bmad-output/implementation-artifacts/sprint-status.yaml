@@ -86,7 +86,7 @@ development_status:
 
   # Epic 7 — Mobile (Capacitor Shell & Touch Play)
   epic-7: backlog
-  7-1-touch-twin-stick-controls: backlog
+  7-1-touch-twin-stick-controls: done
   7-2-responsive-mobile-layout-orientation-and-safe-areas: backlog
   7-3-capacitor-native-shell-and-device-build: backlog
   7-4-mobile-performance-profile: backlog

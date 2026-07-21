@@ -24,7 +24,12 @@ vi.mock('phaser', () => ({
 const { PlayerInputSampler } = await import('./PlayerInputSampler.js');
 const { InputState } = await import('./InputState.js');
 const { INPUT_METHOD } = await import('./inputMethod.js');
-const { MOVE_DEADZONE, AIM_DEADZONE } = await import('../config/constants.js');
+const { MOVE_DEADZONE, AIM_DEADZONE, ARENA_WIDTH, TOUCH_STICK_MAX_RADIUS, TOUCH_BOMB_BUTTON } =
+  await import('../config/constants.js');
+
+// A left-half / right-half touch x (owns the move / aim stick respectively).
+const TOUCH_LEFT_X = 200;
+const TOUCH_RIGHT_X = ARENA_WIDTH - 200;
 
 /**
  * A fake gamepad. Sticks default to centered; buttons default to none pressed;
@@ -55,9 +60,13 @@ function makePad({ ls = { x: 0, y: 0 }, rs = { x: 0, y: 0 }, buttons = [], conne
  * `pads` array for multi-slot scenarios; `setPad`/`setPads` mutate the list.
  */
 function makeHarness({ pad = null, pads, ship = { x: 100, y: 100 }, pointerMoveTime = 0 } = {}) {
-  const pointer = { moveTime: pointerMoveTime, downTime: 0, isDown: false, worldX: 0, worldY: 0 };
+  // The active (mouse) pointer defaults to wasTouch:false — a mouse, so the existing
+  // kbm behavior is byte-identical (the isKbmActive touch-gate reads !wasTouch).
+  const pointer = { moveTime: pointerMoveTime, downTime: 0, isDown: false, worldX: 0, worldY: 0, wasTouch: false, id: 1 };
   const slot = { pads: pads ?? (pad ? [pad] : []) };
   const downListeners = [];
+  // Touch pointer listeners the sampler registers via scene.input.on(...).
+  const pointerListeners = {};
   let keys;
 
   const gamepad = {
@@ -83,6 +92,10 @@ function makeHarness({ pad = null, pads, ship = { x: 100, y: 100 }, pointerMoveT
         },
       },
       gamepad,
+      // The scene input plugin's pointer-event bus (Story 7.1 touch listeners).
+      on: (evt, fn) => {
+        (pointerListeners[evt] ??= []).push(fn);
+      },
     },
   };
 
@@ -110,6 +123,13 @@ function makeHarness({ pad = null, pads, ship = { x: 100, y: 100 }, pointerMoveT
     fireGamepadDown: (index, downPad) =>
       downListeners.forEach((fn) =>
         fn(downPad ?? slot.pads.find((p) => p && p.connected) ?? slot.pads[0], { index }),
+      ),
+    // Fire a touch pointer event (Story 7.1). Defaults to a touch pointer
+    // (wasTouch:true); pass wasTouch:false to model a mouse event the touch
+    // listeners must ignore.
+    firePointer: (evt, { id = 2, x = 0, y = 0, wasTouch = true } = {}) =>
+      (pointerListeners[evt] ?? []).forEach((fn) =>
+        fn({ id, worldX: x, worldY: y, wasTouch }),
       ),
   };
 }
@@ -410,5 +430,203 @@ describe('PlayerInputSampler non-standard mapping diagnostic (DW-33)', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe('PlayerInputSampler touch twin-stick (Story 7.1)', () => {
+  const R = TOUCH_STICK_MAX_RADIUS;
+
+  it('acquires TOUCH and drives move from the left-half floating stick', () => {
+    const h = makeHarness(); // no pad, no mouse activity
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.KBM); // baseline
+
+    h.firePointer('pointerdown', { id: 2, x: TOUCH_LEFT_X, y: 400 });
+    h.firePointer('pointermove', { id: 2, x: TOUCH_LEFT_X + R, y: 400 }); // full +x
+
+    h.sampler.sample();
+
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.TOUCH);
+    expect(h.input.moveX).toBeCloseTo(1, 6); // clamped to the unit circle
+    expect(h.input.moveY).toBeCloseTo(0, 6);
+  });
+
+  it('clamps a full-diagonal move deflection to the unit circle (a diagonal is not faster than a cardinal)', () => {
+    // Deflect a full radius on BOTH axes → raw intent (1,1), magnitude √2. The TOUCH
+    // branch must route through InputState.setMove, whose unit-circle clamp brings the
+    // magnitude back to 1 (≈0.707 per axis). A regression bypassing setMove would leave
+    // magnitude √2 and this fails.
+    const h = makeHarness();
+    h.firePointer('pointerdown', { id: 2, x: TOUCH_LEFT_X, y: 400 });
+    h.firePointer('pointermove', { id: 2, x: TOUCH_LEFT_X + R, y: 400 + R });
+
+    h.sampler.sample();
+
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.TOUCH);
+    expect(Math.hypot(h.input.moveX, h.input.moveY)).toBeCloseTo(1, 6);
+    expect(h.input.moveX).toBeCloseTo(Math.SQRT1_2, 6); // ≈0.707
+    expect(h.input.moveY).toBeCloseTo(Math.SQRT1_2, 6);
+  });
+
+  it('drives aim + auto-fire from the right-half floating stick', () => {
+    const h = makeHarness();
+
+    h.firePointer('pointerdown', { id: 3, x: TOUCH_RIGHT_X, y: 300 });
+    h.firePointer('pointermove', { id: 3, x: TOUCH_RIGHT_X, y: 240 }); // deflect up
+
+    h.sampler.sample();
+
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.TOUCH);
+    expect(h.input.aimActive).toBe(true);
+    expect(h.input.aimX).toBeCloseTo(0, 6);
+    expect(h.input.aimY).toBeCloseTo(-1, 6);
+  });
+
+  it('two thumbs move and aim independently (move + aim channels both driven)', () => {
+    const h = makeHarness();
+
+    h.firePointer('pointerdown', { id: 2, x: TOUCH_LEFT_X, y: 400 });
+    h.firePointer('pointerdown', { id: 3, x: TOUCH_RIGHT_X, y: 300 });
+    h.firePointer('pointermove', { id: 2, x: TOUCH_LEFT_X + R, y: 400 });
+    h.firePointer('pointermove', { id: 3, x: TOUCH_RIGHT_X, y: 240 });
+
+    h.sampler.sample();
+
+    expect(h.input.moveX).toBeCloseTo(1, 6);
+    expect(h.input.aimActive).toBe(true);
+    expect(h.input.aimY).toBeCloseTo(-1, 6);
+  });
+
+  it('a bomb-button tap latches exactly one bomb through queueBomb (held: no re-latch)', () => {
+    const h = makeHarness();
+
+    h.firePointer('pointerdown', { id: 9, x: TOUCH_BOMB_BUTTON.x, y: TOUCH_BOMB_BUTTON.y });
+    h.sampler.sample(); // sampleBomb routes the touch latch → queueBomb
+    expect(h.input.consumeBomb()).toBe(true);
+
+    // Finger still down, no new down edge → no re-latch on the next frame.
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(false);
+
+    // A tap spawns no stick: no move, no aim.
+    expect(h.input.moveX).toBe(0);
+    expect(h.input.aimActive).toBe(false);
+  });
+
+  it('lifting all fingers rests the ship (move 0, aim cleared) while staying sticky-TOUCH', () => {
+    const h = makeHarness();
+
+    h.firePointer('pointerdown', { id: 2, x: TOUCH_LEFT_X, y: 400 });
+    h.firePointer('pointermove', { id: 2, x: TOUCH_LEFT_X + R, y: 400 });
+    h.firePointer('pointerdown', { id: 3, x: TOUCH_RIGHT_X, y: 300 });
+    h.firePointer('pointermove', { id: 3, x: TOUCH_RIGHT_X, y: 240 });
+    h.sampler.sample();
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.TOUCH);
+
+    // All fingers lifted (one via pointerupoutside — a release off-canvas).
+    h.firePointer('pointerup', { id: 2 });
+    h.firePointer('pointerupoutside', { id: 3 });
+    h.sampler.sample();
+
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.TOUCH); // sticky (zero devices active)
+    expect(h.input.moveX).toBe(0);
+    expect(h.input.moveY).toBe(0);
+    expect(h.input.aimActive).toBe(false);
+    expect(h.sampler.isTouchActive()).toBe(false);
+  });
+
+  it('hot-swaps TOUCH → KBM on a real mouse move, with no leftover touch aim', () => {
+    const h = makeHarness({ ship: { x: 100, y: 100 } });
+
+    // Establish TOUCH with an aimed stick.
+    h.firePointer('pointerdown', { id: 3, x: TOUCH_RIGHT_X, y: 300 });
+    h.firePointer('pointermove', { id: 3, x: TOUCH_RIGHT_X, y: 240 });
+    h.sampler.sample();
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.TOUCH);
+
+    // Lift the thumb, then a genuine mouse move (activePointer is a mouse).
+    h.firePointer('pointerup', { id: 3 });
+    h.pointer.moveTime = 1000; // wasTouch stays false (mouse)
+    h.pointer.worldX = 100;
+    h.pointer.worldY = 200;
+
+    h.sampler.sample();
+
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.KBM);
+    expect(h.input.aimActive).toBe(true); // mouse re-acquired aim
+    expect(h.input.aimX).toBeCloseTo(0, 6);
+    expect(h.input.aimY).toBeCloseTo(1, 6); // ship(100,100) → cursor(100,200)
+  });
+
+  it('a thumb never registers as the mouse: a touch-typed activePointer move does not flip a resting GAMEPAD to KBM', () => {
+    // isKbmActive must gate its pointer-move/down signals on !wasTouch. Model a
+    // touch that also became the activePointer (wasTouch:true) with a fresh moveTime
+    // and a held press: neither may count as kbm activity, so a resting GAMEPAD
+    // (sticks centered → gamepadActive false) stays sticky-GAMEPAD rather than being
+    // hijacked to KBM by the thumb.
+    const h = makeHarness({ pad: makePad({ ls: { x: 0, y: 0 }, rs: { x: 0, y: 0 } }) });
+    h.sampler.activeMethod = INPUT_METHOD.GAMEPAD;
+    h.pointer.wasTouch = true; // the active pointer's last event was a touch
+    h.pointer.moveTime = 500; // a fresh move…
+    h.pointer.isDown = true; // …and held down
+
+    h.sampler.sample();
+
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.GAMEPAD); // no false KBM flip
+  });
+
+  it('resetTouch drops a held stick so it does not strand (drifting move) after a pause', () => {
+    const h = makeHarness();
+    h.firePointer('pointerdown', { id: 2, x: TOUCH_LEFT_X, y: 400 });
+    h.firePointer('pointermove', { id: 2, x: TOUCH_LEFT_X + R, y: 400 });
+    h.sampler.sample();
+    expect(h.input.moveX).toBeCloseTo(1, 6); // stick driving the ship
+
+    // Entering pause reconciles held touch state (the listeners freeze, so a finger
+    // lifted during pause would otherwise never release the stick).
+    h.sampler.resetTouch();
+    expect(h.sampler.isTouchActive()).toBe(false);
+
+    // On resume, the next sample rests the ship (sticky-TOUCH, no held stick).
+    h.sampler.sample();
+    expect(h.input.moveX).toBe(0);
+    expect(h.input.moveY).toBe(0);
+  });
+
+  it('respects the pause freeze: a bomb tap while paused latches nothing', () => {
+    const h = makeHarness();
+
+    h.setPaused(true);
+    h.firePointer('pointerdown', { id: 9, x: TOUCH_BOMB_BUTTON.x, y: TOUCH_BOMB_BUTTON.y });
+    h.setPaused(false);
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(false); // nothing latched while paused
+
+    // Unpaused, the same tap latches normally (parity with the gamepad bomb freeze).
+    h.firePointer('pointerdown', { id: 9, x: TOUCH_BOMB_BUTTON.x, y: TOUCH_BOMB_BUTTON.y });
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(true);
+  });
+
+  it('ignores mouse pointer events (wasTouch:false) so a click never spawns a touch stick', () => {
+    const h = makeHarness();
+
+    // A mouse-typed pointerdown/move in the left half must NOT feed the touch model.
+    h.firePointer('pointerdown', { id: 1, x: TOUCH_LEFT_X, y: 400, wasTouch: false });
+    h.firePointer('pointermove', { id: 1, x: TOUCH_LEFT_X + R, y: 400, wasTouch: false });
+
+    expect(h.sampler.isTouchActive()).toBe(false);
+    h.sampler.sample();
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.KBM); // never became TOUCH
+  });
+
+  it('exposes the touch render snapshot for the overlay', () => {
+    const h = makeHarness();
+    h.firePointer('pointerdown', { id: 2, x: TOUCH_LEFT_X, y: 400 });
+    h.firePointer('pointermove', { id: 2, x: TOUCH_LEFT_X + 30, y: 410 });
+
+    const snap = h.sampler.touchSnapshot();
+    expect(snap.move.active).toBe(true);
+    expect(snap.move.baseX).toBe(TOUCH_LEFT_X);
+    expect(snap.move.curX).toBe(TOUCH_LEFT_X + 30);
   });
 });
