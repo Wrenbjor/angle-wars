@@ -251,6 +251,46 @@ describe('TouchControls — reset (pause reconciliation)', () => {
   });
 });
 
+describe('TouchControls — setBombButton (Story 7.2 safe-area shift)', () => {
+  it('row: moving the bomb rect shifts BOTH the hit region and the snapshot together', () => {
+    const t = new TouchControls();
+    const nx = TOUCH_BOMB_BUTTON.x;
+    const ny = TOUCH_BOMB_BUTTON.y - 21; // raised by a bottom home-indicator inset
+    t.setBombButton(nx, ny, TOUCH_BOMB_BUTTON.radius);
+
+    // A tap at the NEW center latches a bomb…
+    t.onPointerDown(9, nx, ny);
+    expect(t.consumeBomb()).toBe(true);
+    // …and the snapshot reflects the new center + radius.
+    const s = t.snapshot();
+    expect(s.bomb.x).toBe(nx);
+    expect(s.bomb.y).toBe(ny);
+    expect(s.bomb.radius).toBe(TOUCH_BOMB_BUTTON.radius);
+  });
+
+  it('a tap at the PRE-shift center no longer latches once the rect moves off it', () => {
+    const t = new TouchControls();
+    // Shift the button far enough that the old center is outside the new radius.
+    t.setBombButton(
+      TOUCH_BOMB_BUTTON.x,
+      TOUCH_BOMB_BUTTON.y - (TOUCH_BOMB_BUTTON.radius + 20),
+      TOUCH_BOMB_BUTTON.radius,
+    );
+    // Tap at the ORIGINAL center: no longer inside the moved hit region → no latch.
+    t.onPointerDown(9, TOUCH_BOMB_BUTTON.x, TOUCH_BOMB_BUTTON.y);
+    expect(t.consumeBomb()).toBe(false);
+  });
+
+  it('defaults the radius to the current value when omitted', () => {
+    const t = new TouchControls();
+    t.setBombButton(300, 300); // radius omitted → keeps TOUCH_BOMB_BUTTON.radius
+    expect(t.snapshot().bomb.radius).toBe(TOUCH_BOMB_BUTTON.radius);
+    // The hit region is centered on the new point at the retained radius.
+    t.onPointerDown(9, 300, 300 + TOUCH_BOMB_BUTTON.radius - 1); // just inside
+    expect(t.consumeBomb()).toBe(true);
+  });
+});
+
 describe('TouchControls — snapshot', () => {
   it('reports each active stick base + current point and the bomb rect', () => {
     const t = new TouchControls();

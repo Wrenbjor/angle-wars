@@ -65,11 +65,14 @@ export const GAMEPAD_BOMB_BUTTONS = [4, 5];
 // --- Touch twin-stick controls (Story 7.1) ----------------------------------
 // The touch input method (INPUT_METHOD.TOUCH): a left-half floating move stick, a
 // right-half floating aim stick (held → auto-fire), and one on-screen smart-bomb
-// button. All geometry is in ARENA logical space (pointer.worldX/worldY), split at
-// ARENA_WIDTH / 2, so the FIT+CENTER camera maps a screen touch to the right half.
-// Device-specific placement / thumb reach / safe areas are explicitly Story 7.2 —
-// these are fixed logical-coordinate placeholders (tuned later), no magic numbers
-// in the touch model or the overlay draw helper.
+// button. All geometry is in base-resolution / screen space (pointer.x/y — the
+// 1280×720 logical unit space without camera-shake scroll, see Story 7.2), split at
+// ARENA_WIDTH / 2, so a screen touch classifies into the correct half shake-stably.
+// Device-specific placement / thumb reach / safe areas landed in Story 7.2: these
+// base values are inset-adjusted at RUNTIME (the smart-bomb button via setBombButton
+// off the mobileLayout safe-area seam; the sticks float to the thumb inherently), so
+// they are live-adjusted rather than "tuned later" — no magic numbers in the touch
+// model or the overlay draw helper.
 
 // Floating-stick reach (px, logical): the deflection distance that maps to full
 // (magnitude 1) move intent. deflection / this feeds InputState.setMove, which
@@ -842,6 +845,10 @@ export const DEBUG_FONT = '14px monospace';
 // tunable in one place.
 export const COLOR_HUD_TEXT = '#e6f2ff';
 export const HUD_FONT = '20px monospace';
+// Edge margin (px, logical) between the arena border inset and the HUD / DEV debug
+// readout text. Centralized (Story 7.2) so the mobile-layout seam is the single
+// source of the HUD/debug offsets — replaces the former inline `+ 8` in ArenaScene.
+export const HUD_MARGIN = 8;
 
 // --- Game-over overlay ------------------------------------------------------
 // Shown when PlayerState.gameOver is true: a dimming full-arena rectangle plus

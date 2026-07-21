@@ -5,7 +5,8 @@
 // bomb latch, and the render snapshot) lives here, isolated from any Phaser type so
 // it can be unit-tested headlessly — mirroring the inputMath / inputMethod
 // convention. PlayerInputSampler is the SOLE Phaser boundary: it feeds this model
-// pointer id/down/move/up (in arena logical space) and reads back the vectors it
+// pointer id/down/move/up (in base-resolution / screen space — pointer.x/y, the
+// 1280×720 logical unit space but WITHOUT camera-shake scroll; Story 7.2) and reads back the vectors it
 // writes through InputState (which does the unit-circle clamp / normalize), so the
 // movement / firing / bomb systems need no changes.
 //
@@ -55,6 +56,17 @@ export class TouchControls {
     this._bombPointerId = null;
     this._bombLatched = false;
 
+    // Runtime smart-bomb button rect (Story 7.2). Defaults to the fixed
+    // TOUCH_BOMB_BUTTON constant; ArenaScene's safe-area layout shifts it via
+    // setBombButton so the drawn button clears a bottom home indicator. This is the
+    // SINGLE source of truth for both the hit region (_insideBomb) and the drawn
+    // position (snapshot), so they can never drift apart when the layout moves it.
+    this._bombButton = {
+      x: TOUCH_BOMB_BUTTON.x,
+      y: TOUCH_BOMB_BUTTON.y,
+      radius: TOUCH_BOMB_BUTTON.radius,
+    };
+
     // Persistent return objects (no per-frame allocation).
     this._moveOut = { x: 0, y: 0 };
     this._aimOut = { x: 0, y: 0, active: false };
@@ -89,11 +101,27 @@ export class TouchControls {
     this._bombLatched = false;
   }
 
+  /**
+   * Reposition the smart-bomb button's hit region + drawn rect (Story 7.2). Driven
+   * from ArenaScene's safe-area layout so the button clears a bottom home indicator.
+   * A single runtime rect backs both the hit test and the snapshot, so the tap
+   * target and the drawn button stay identical after a shift.
+   * @param {number} x New center x (arena-logical).
+   * @param {number} y New center y (arena-logical).
+   * @param {number} [radius] New radius (defaults to the current radius).
+   */
+  setBombButton(x, y, radius = this._bombButton.radius) {
+    this._bombButton.x = x;
+    this._bombButton.y = y;
+    this._bombButton.radius = radius;
+  }
+
   /** Whether (x, y) lies within the smart-bomb button's circular hit region. */
   _insideBomb(x, y) {
-    const dx = x - TOUCH_BOMB_BUTTON.x;
-    const dy = y - TOUCH_BOMB_BUTTON.y;
-    return dx * dx + dy * dy <= TOUCH_BOMB_BUTTON.radius * TOUCH_BOMB_BUTTON.radius;
+    const b = this._bombButton;
+    const dx = x - b.x;
+    const dy = y - b.y;
+    return dx * dx + dy * dy <= b.radius * b.radius;
   }
 
   /**
@@ -102,8 +130,8 @@ export class TouchControls {
    * aim stick. Each stick anchors on its first touch and ignores further touches
    * while already owned (the base is the floating anchor for the whole gesture).
    * @param {number} id Pointer id.
-   * @param {number} x Arena-logical x (pointer.worldX).
-   * @param {number} y Arena-logical y (pointer.worldY).
+   * @param {number} x Base-resolution / screen x (pointer.x) — logical units without camera-shake scroll.
+   * @param {number} y Base-resolution / screen y (pointer.y) — logical units without camera-shake scroll.
    */
   onPointerDown(id, x, y) {
     if (this._insideBomb(x, y)) {
@@ -145,8 +173,8 @@ export class TouchControls {
    * direction; a sub-deadzone drift leaves the last direction untouched (so a
    * thumb returning toward center keeps firing the last aimed way while held).
    * @param {number} id Pointer id.
-   * @param {number} x Arena-logical x.
-   * @param {number} y Arena-logical y.
+   * @param {number} x Base-resolution / screen x (pointer.x) — logical units without camera-shake scroll.
+   * @param {number} y Base-resolution / screen y (pointer.y) — logical units without camera-shake scroll.
    */
   onPointerMove(id, x, y) {
     if (this._moveStick.active && id === this._moveStick.id) {
@@ -279,6 +307,11 @@ export class TouchControls {
     s.aim.baseY = this._aimStick.baseY;
     s.aim.curX = this._aimStick.curX;
     s.aim.curY = this._aimStick.curY;
+    // Reflect the runtime bomb rect (Story 7.2) so the drawn button tracks the
+    // safe-area-shifted hit region — a single source of truth for both.
+    s.bomb.x = this._bombButton.x;
+    s.bomb.y = this._bombButton.y;
+    s.bomb.radius = this._bombButton.radius;
     s.bomb.pressed = this._bombPointerId !== null;
     return s;
   }

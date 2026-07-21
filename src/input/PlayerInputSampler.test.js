@@ -124,12 +124,14 @@ function makeHarness({ pad = null, pads, ship = { x: 100, y: 100 }, pointerMoveT
       downListeners.forEach((fn) =>
         fn(downPad ?? slot.pads.find((p) => p && p.connected) ?? slot.pads[0], { index }),
       ),
-    // Fire a touch pointer event (Story 7.1). Defaults to a touch pointer
+    // Fire a touch pointer event (Story 7.1 / 7.2). Defaults to a touch pointer
     // (wasTouch:true); pass wasTouch:false to model a mouse event the touch
-    // listeners must ignore.
-    firePointer: (evt, { id = 2, x = 0, y = 0, wasTouch = true } = {}) =>
+    // listeners must ignore. Story 7.2 screen-anchors touch, so the sampler now
+    // reads pointer.x/y (base-resolution, shake-free) rather than worldX/worldY —
+    // the fake pointer carries both (equal here, since there is no camera scroll).
+    firePointer: (evt, { id = 2, x = 0, y = 0, worldX = x, worldY = y, wasTouch = true } = {}) =>
       (pointerListeners[evt] ?? []).forEach((fn) =>
-        fn({ id, worldX: x, worldY: y, wasTouch }),
+        fn({ id, x, y, worldX, worldY, wasTouch }),
       ),
   };
 }
@@ -628,5 +630,58 @@ describe('PlayerInputSampler touch twin-stick (Story 7.1)', () => {
     expect(snap.move.active).toBe(true);
     expect(snap.move.baseX).toBe(TOUCH_LEFT_X);
     expect(snap.move.curX).toBe(TOUCH_LEFT_X + 30);
+  });
+});
+
+describe('PlayerInputSampler touch screen-anchoring + bomb rect (Story 7.2)', () => {
+  const R = TOUCH_STICK_MAX_RADIUS;
+
+  it('feeds the touch model pointer.x/y (screen space), NOT worldX/worldY (shake-affected)', () => {
+    // Model a camera shake: pointer.x/y (base-resolution) stay at the stick while
+    // worldX/worldY are offset by the shake scroll. The stick base + deflection must
+    // derive from x/y only — otherwise the shake would double-count and drift the aim.
+    const h = makeHarness();
+    h.firePointer('pointerdown', {
+      id: 2,
+      x: TOUCH_LEFT_X,
+      y: 400,
+      worldX: TOUCH_LEFT_X + 500, // wildly different world coords (shake)
+      worldY: 400 + 500,
+    });
+    h.firePointer('pointermove', {
+      id: 2,
+      x: TOUCH_LEFT_X + R, // one full radius +x in SCREEN space
+      y: 400,
+      worldX: TOUCH_LEFT_X + R + 500,
+      worldY: 400 + 500,
+    });
+
+    h.sampler.sample();
+
+    // Base (screen) TOUCH_LEFT_X, current TOUCH_LEFT_X + R → deflection exactly +R → move +1.
+    expect(h.input.moveX).toBeCloseTo(1, 6);
+    expect(h.input.moveY).toBeCloseTo(0, 6);
+    // The snapshot base is the screen-space touch point, not the world one.
+    expect(h.sampler.touchSnapshot().move.baseX).toBe(TOUCH_LEFT_X);
+  });
+
+  it('setBombButton passthrough moves the tap target: new center latches, old center does not', () => {
+    const h = makeHarness();
+    const nx = TOUCH_BOMB_BUTTON.x;
+    const ny = TOUCH_BOMB_BUTTON.y - (TOUCH_BOMB_BUTTON.radius + 20); // raised clear of the old center
+
+    h.sampler.setBombButton(nx, ny, TOUCH_BOMB_BUTTON.radius);
+
+    // A tap at the OLD center no longer latches (outside the moved hit region).
+    h.firePointer('pointerdown', { id: 9, x: TOUCH_BOMB_BUTTON.x, y: TOUCH_BOMB_BUTTON.y });
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(false);
+
+    // A tap at the NEW center latches exactly one bomb through queueBomb.
+    h.firePointer('pointerdown', { id: 10, x: nx, y: ny });
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(true);
+    // And the overlay snapshot reflects the shifted rect.
+    expect(h.sampler.touchSnapshot().bomb.y).toBe(ny);
   });
 });

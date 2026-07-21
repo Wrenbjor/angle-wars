@@ -251,3 +251,92 @@ describe('render-integration — touch twin-stick wiring (ArenaScene, Story 7.1)
     expect(arenaSrc).toMatch(/\}\s*else\s*\{\s*this\.touchOverlayGraphics\.clear\(\);\s*\}/);
   });
 });
+
+describe('render-integration — responsive mobile layout wiring (Story 7.2)', () => {
+  // Pins the load-bearing Story 7.2 layout/orientation/safe-area glue across the
+  // Phaser-coupled boundaries that unit tests cannot reach: the ArenaScene overlay
+  // screen-anchor + the create/resize/shutdown layout wiring, the sampler's
+  // screen-space touch feed, the BootScene landscape lock, and the index.html
+  // viewport-fit=cover meta (without which env(safe-area-inset-*) is never reported).
+  // The pure math + injectable boundaries carry their own unit coverage in
+  // mobileLayout.test.js; these guard only that the app actually calls into them.
+  const arenaSrc = readSrc('./ArenaScene.js');
+  const bootSrc = readSrc('./BootScene.js');
+  const samplerSrc = readSrc('../input/PlayerInputSampler.js');
+  const indexHtml = readSrc('../../index.html');
+
+  it('index.html sets viewport-fit=cover so env(safe-area-inset-*) is reported', () => {
+    expect(indexHtml).toMatch(
+      /<meta\s+name="viewport"\s+content="[^"]*viewport-fit=cover[^"]*"\s*\/?>/,
+    );
+  });
+
+  it('screen-anchors the touch overlay with setScrollFactor(0)', () => {
+    // Paired with the sampler's pointer.x/y feed below, this keeps the overlay
+    // shake-stable — the two changes are a package (one without the other regresses).
+    expect(arenaSrc).toMatch(/this\.touchOverlayGraphics\.setScrollFactor\(\s*0\s*\)/);
+  });
+
+  it('feeds the touch model screen-space pointer.x/y (not worldX/worldY)', () => {
+    expect(samplerSrc).toMatch(
+      /this\.touch\.onPointerDown\(\s*pointer\.id\s*,\s*pointer\.x\s*,\s*pointer\.y\s*\)/,
+    );
+    expect(samplerSrc).toMatch(
+      /this\.touch\.onPointerMove\(\s*pointer\.id\s*,\s*pointer\.x\s*,\s*pointer\.y\s*\)/,
+    );
+    // Mouse aim deliberately STAYS on worldX/worldY (arena-logical) — the overlay
+    // change must not have swept the mouse-aim path onto screen space.
+    expect(samplerSrc).toMatch(/p\.worldX\s*-\s*this\.ship\.x/);
+  });
+
+  it('applies the mobile layout at create() and re-applies on every scale resize', () => {
+    expect(arenaSrc).toMatch(/this\._applyMobileLayout\(\)/);
+    expect(arenaSrc).toMatch(
+      /this\.scale\.on\(\s*['"]resize['"]\s*,\s*this\._applyMobileLayout\s*,\s*this\s*\)/,
+    );
+  });
+
+  it('_applyMobileLayout reads insets → logical → layout and positions HUD/debug/bomb', () => {
+    // The seam is called with the injected browser boundaries and its result drives
+    // the three UI placements. The composition args are pinned exactly so an arg swap
+    // or transpose (e.g. parentH/parentW, or the arena dims out of order) fails here.
+    expect(arenaSrc).toMatch(/readSafeAreaInsetsCss\(\s*document\s*,/);
+    // The display size feeding the letterbox comes from the single-frame resolver
+    // (parentSize else window, both axes together) — pin that the scene routes through
+    // it rather than reading parentSize per-axis, so the mixed-frame regression can't
+    // return here. The resolver's frame-selection logic is unit-tested in mobileLayout.test.js.
+    expect(arenaSrc).toMatch(/resolveDisplaySize\(\s*this\.scale\.parentSize\s*,\s*window\s*\)/);
+    expect(arenaSrc).toMatch(
+      /logicalSafeInsets\(\s*insetsCss\s*,\s*parentW\s*,\s*parentH\s*,\s*ARENA_WIDTH\s*,\s*ARENA_HEIGHT\s*\)/,
+    );
+    expect(arenaSrc).toMatch(/computeMobileLayout\(\s*logical\s*\)/);
+    // Debug reposition (inside the DEV gate in _applyMobileLayout) — assert the
+    // source string; the DEV gate itself is pinned by buildConfig.test.js.
+    expect(arenaSrc).toMatch(
+      /this\.debugText\.setPosition\(\s*layout\.debug\.x\s*,\s*layout\.debug\.y\s*\)/,
+    );
+    expect(arenaSrc).toMatch(/this\.hudText\.setPosition\(\s*layout\.hud\.x\s*,\s*layout\.hud\.y\s*\)/);
+    expect(arenaSrc).toMatch(
+      /this\.inputSampler\.setBombButton\(\s*layout\.bomb\.x\s*,\s*layout\.bomb\.y\s*,\s*layout\.bomb\.radius\s*\)/,
+    );
+  });
+
+  it('removes the resize listener on shutdown (no cross-restart leak)', () => {
+    expect(arenaSrc).toMatch(
+      /this\.scale\.off\(\s*['"]resize['"]\s*,\s*this\._applyMobileLayout\s*,\s*this\s*\)/,
+    );
+  });
+
+  it('BootScene requests a best-effort landscape lock at boot before starting Preload', () => {
+    // Bind the guarded screen.orientation argument shape: a regression to
+    // lockLandscape(screen) would silently disable the lock (the seam expects the
+    // orientation, not the screen) while a bare /lockLandscape\(/ pin stayed green.
+    expect(bootSrc).toMatch(
+      /lockLandscape\(\s*typeof\s+screen\s*!==\s*['"]undefined['"]\s*\?\s*screen\.orientation\s*:\s*null\s*\)/,
+    );
+    // Ordered before the PreloadScene handoff.
+    expect(bootSrc).toMatch(
+      /lockLandscape\([\s\S]*?screen\.orientation[\s\S]*?\)[\s\S]*?this\.scene\.start\(\s*['"]PreloadScene['"]\s*\)/,
+    );
+  });
+});

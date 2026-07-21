@@ -22,6 +22,7 @@ import {
   DEBUG_FONT,
   COLOR_HUD_TEXT,
   HUD_FONT,
+  HUD_MARGIN,
   COLOR_GAMEOVER_OVERLAY,
   GAMEOVER_OVERLAY_ALPHA,
   COLOR_GAMEOVER_TEXT,
@@ -53,6 +54,12 @@ import {
   telegraphScale,
 } from './telegraphCue.js';
 import { drawTouchOverlay, TOUCH_OVERLAY_STYLE } from './touchOverlay.js';
+import {
+  readSafeAreaInsetsCss,
+  logicalSafeInsets,
+  computeMobileLayout,
+  resolveDisplaySize,
+} from './mobileLayout.js';
 import { reflectorEndpoints } from '../systems/mirrorReflectorMath.js';
 import { blackHoleInstability } from '../entities/BlackHole.js';
 import {
@@ -276,6 +283,9 @@ export class ArenaScene extends Phaser.Scene {
     // stacks another set on the shared audio context (leak-free restart).
     this.events.once('shutdown', () => {
       this.audioEngine.dispose();
+      // Story 7.2: drop the scale `resize` listener so the responsive layout handler
+      // does not leak across scene.restart (create() re-registers a fresh one).
+      this.scale.off('resize', this._applyMobileLayout, this);
     });
 
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
@@ -362,12 +372,13 @@ export class ArenaScene extends Phaser.Scene {
     // frame from the sampler's Phaser-free snapshot (base ring + thumb knob per
     // active stick, plus the bomb button). Created AFTER every gameplay layer so the
     // controls read on top of the action, but BEFORE the flash/HUD/overlays so those
-    // stay above it. Left in NORMAL blend (a UI element, not a neon gameplay layer)
-    // and drawn in ARENA-LOGICAL / world space (default scroll factor), so during a
-    // camera shake a stationary finger's drawn knob drifts a few px with the world;
-    // shake-robust screen-space anchoring (setScrollFactor(0) + placement) is Story
-    // 7.2's concern. Cleared when no touch is active / on pause, so nothing lingers.
+    // stay above it. Left in NORMAL blend (a UI element, not a neon gameplay layer).
+    // Story 7.2 screen-anchors it: pinned setScrollFactor(0) so the camera shake never
+    // drifts the drawn sticks/bomb button, paired with the sampler feeding the model
+    // pointer.x/y (base-resolution, shake-free) — the two changes are a package.
+    // Cleared when no touch is active / on pause, so nothing lingers.
     this.touchOverlayGraphics = this.add.graphics();
+    this.touchOverlayGraphics.setScrollFactor(0);
 
     // --- Screen juice: flash overlay + render-owned countdowns (Story 4.4) ---
     // A full-view white rectangle, pinned with setScrollFactor(0) so it always
@@ -400,8 +411,8 @@ export class ArenaScene extends Phaser.Scene {
     // it and it stays off the per-frame render path.
     if (import.meta.env.DEV) {
       this.debugText = this.add.text(
-        ARENA_BORDER_INSET + 8,
-        ARENA_BORDER_INSET + 8,
+        ARENA_BORDER_INSET + HUD_MARGIN,
+        ARENA_BORDER_INSET + HUD_MARGIN,
         '',
         { font: DEBUG_FONT, color: COLOR_DEBUG_TEXT },
       );
@@ -418,8 +429,8 @@ export class ArenaScene extends Phaser.Scene {
     // ScoreState/PlayerState so a kill or a death shows on the next frame.
     // Placeholder styling only (Epic 4 owns the aesthetic).
     this.hudText = this.add.text(
-      ARENA_WIDTH - ARENA_BORDER_INSET - 8,
-      ARENA_BORDER_INSET + 8,
+      ARENA_WIDTH - ARENA_BORDER_INSET - HUD_MARGIN,
+      ARENA_BORDER_INSET + HUD_MARGIN,
       '',
       { font: HUD_FONT, color: COLOR_HUD_TEXT, align: 'right' },
     );
@@ -586,6 +597,48 @@ export class ArenaScene extends Phaser.Scene {
     if (import.meta.env.DEV) {
       this._simRateSampler = new SimRateSampler(1000);
     }
+
+    // --- Responsive mobile layout, orientation & safe areas (Story 7.2) ------
+    // Read the device safe-area insets, convert them through the FIT letterbox to
+    // arena-logical units, and push the HUD / DEV debug readout / smart-bomb button
+    // in from their edges so none is clipped or under a notch / rounded corner / home
+    // indicator (FR21). Applied ONCE here after every UI object exists, then re-applied
+    // on every scale `resize` (orientation change / rotate / window resize). With no
+    // insets (desktop / no notch) the computed positions equal the fixed base
+    // positions verbatim — zero regression. Allocation-free (computed at create + on
+    // resize, never per render frame). The listener is torn down in `shutdown` above.
+    this._applyMobileLayout();
+    this.scale.on('resize', this._applyMobileLayout, this);
+  }
+
+  /**
+   * Read the CSS safe-area insets, convert them to arena-logical units through the
+   * FIT letterbox, and apply the resulting layout to the HUD, the DEV debug readout,
+   * and the touch smart-bomb button. Called at the end of create() and on every scale
+   * `resize`. Pure math lives in the Phaser-free mobileLayout seam; this method is the
+   * thin Phaser boundary that reads the live parent size and writes the positions.
+   */
+  _applyMobileLayout() {
+    // Parent (display) size drives the letterbox bars; fall back to the window if the
+    // scale manager has not measured a parent yet (logicalSafeInsets guards ≤ 0).
+    // Window-frame assumption: the env(safe-area-inset-*) insets and the FIT letterbox
+    // bars are BOTH measured in the window frame, so mixing them is valid only while
+    // #game fills the viewport — index.html guarantees a full-window parent (html/body
+    // 100% + #game width/height 100%), so the parent frame IS the window frame here.
+    // resolveDisplaySize commits to a single frame (parent, else window for BOTH axes)
+    // so a half-measured parent can never mix a valid axis with a window axis.
+    const { width: parentW, height: parentH } = resolveDisplaySize(this.scale.parentSize, window);
+    const insetsCss = readSafeAreaInsetsCss(document, window.getComputedStyle.bind(window));
+    const logical = logicalSafeInsets(insetsCss, parentW, parentH, ARENA_WIDTH, ARENA_HEIGHT);
+    const layout = computeMobileLayout(logical);
+    // The DEV debug readout is created only in a dev build (the whole block is
+    // tree-shaken from a production bundle), so its repositioning must live behind the
+    // SAME DEV gate — a production build never creates the readout to position.
+    if (import.meta.env.DEV) {
+      this.debugText.setPosition(layout.debug.x, layout.debug.y);
+    }
+    this.hudText.setPosition(layout.hud.x, layout.hud.y);
+    this.inputSampler.setBombButton(layout.bomb.x, layout.bomb.y, layout.bomb.radius);
   }
 
   /**

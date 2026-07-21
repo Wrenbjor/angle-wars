@@ -100,8 +100,13 @@ export class PlayerInputSampler {
 
     // Touch twin-stick (Story 7.1): the Phaser-free floating-stick + bomb model.
     // The sampler is the SOLE Phaser boundary, so ALL touch pointer events are
-    // routed into the model here, in arena logical space (pointer.worldX/worldY —
-    // the FIT+CENTER camera maps a screen touch there, matching the ship's space).
+    // routed into the model here, in SCREEN / base-resolution space (pointer.x/y).
+    // Story 7.2 screen-anchors touch: pointer.x/y exclude the camera shake scroll
+    // (worldX/worldY include it), and the overlay graphics is pinned scrollFactor(0),
+    // so hit-testing and drawing stay shake-stable and inside the safe area. These
+    // two changes (coords + scrollFactor) are a package — one without the other
+    // regresses shake behavior. The half-split at ARENA_WIDTH/2 and the deflection
+    // math are unchanged (base-resolution space still maps the split correctly).
     // Each listener is guarded two ways, mirroring the gamepad bomb listener above:
     //  - the Story 5.2 pause freeze (this.scene._paused): while paused, update()
     //    returns before sample(), so buffering touch here would let it apply on
@@ -114,11 +119,11 @@ export class PlayerInputSampler {
     this.touch = new TouchControls();
     scene.input.on('pointerdown', (pointer) => {
       if (this.scene._paused || !pointer.wasTouch) return;
-      this.touch.onPointerDown(pointer.id, pointer.worldX, pointer.worldY);
+      this.touch.onPointerDown(pointer.id, pointer.x, pointer.y);
     });
     scene.input.on('pointermove', (pointer) => {
       if (this.scene._paused || !pointer.wasTouch) return;
-      this.touch.onPointerMove(pointer.id, pointer.worldX, pointer.worldY);
+      this.touch.onPointerMove(pointer.id, pointer.x, pointer.y);
     });
     const onTouchUp = (pointer) => {
       if (this.scene._paused || !pointer.wasTouch) return;
@@ -156,6 +161,19 @@ export class PlayerInputSampler {
    */
   resetTouch() {
     this.touch.reset();
+  }
+
+  /**
+   * Reposition the touch smart-bomb button (Story 7.2 safe-area layout). A thin
+   * passthrough to the touch model, which owns the single runtime bomb rect backing
+   * both the hit region and the drawn button. ArenaScene calls this from
+   * _applyMobileLayout at create and on every scale resize.
+   * @param {number} x New center x (arena-logical).
+   * @param {number} y New center y (arena-logical).
+   * @param {number} [radius] New radius (defaults to the current radius).
+   */
+  setBombButton(x, y, radius) {
+    this.touch.setBombButton(x, y, radius);
   }
 
   /**
