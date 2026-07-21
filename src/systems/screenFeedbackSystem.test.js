@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ScreenFeedbackSystem } from './ScreenFeedbackSystem.js';
+import { HAPTIC_STYLE } from '../scenes/nativeFeel.js';
 import {
   FIXED_STEP_MS,
   SCREEN_SHAKE_TRAUMA_BOMB,
@@ -44,15 +45,29 @@ function makeShip() {
   return { x: 100, y: 100, radius: 16 };
 }
 
-// A helper that builds a system with all four sources wired.
+// ExtraLifeSystem stand-in: only awardSeq is read (the extra-life haptic edge).
+function fakeExtraLife(awardSeq = 0) {
+  return { awardSeq };
+}
+
+// A helper that builds a system with all sources wired. `extraLife` is the optional
+// trailing source (Story 7.5); omitted → null (byte-identical to the pre-7.5 arity).
 function build({
   collision = fakeCollision(0),
   bomb = fakeBomb(0),
   death = fakeDeath(0),
   ship = makeShip(),
   pools = [fakePool()],
+  extraLife = null,
 } = {}) {
-  return new ScreenFeedbackSystem(collision, bomb, death, ship, pools);
+  return new ScreenFeedbackSystem(collision, bomb, death, ship, pools, extraLife);
+}
+
+// Drain the pending haptic pulses into an array (the render-loop sink stand-in).
+function drainToArray(sys) {
+  const out = [];
+  sys.drainHapticPulses((style) => out.push(style));
+  return out;
 }
 
 // Ship at (100,100) r16, enemy r14 → overlap lower bound = 30, near-miss band is
@@ -248,6 +263,101 @@ describe('ScreenFeedbackSystem — consume resets', () => {
     expect(sys.consumePendingTrauma()).toBe(0);
     expect(sys.consumeFlashRequest()).toBe(0);
     expect(sys.consumeHitStopRequest()).toBe(0);
+  });
+});
+
+describe('ScreenFeedbackSystem — haptic aggregation + drain (Story 7.5)', () => {
+  it('aggregates one HEAVY pulse on a death edge, drained then empty', () => {
+    const death = fakeDeath(0);
+    const sys = build({ death });
+
+    death.deathSeq = 1;
+    sys.fixedUpdate(DT);
+
+    expect(drainToArray(sys)).toEqual([HAPTIC_STYLE.HEAVY]);
+    // Drain empties the buffer — a second drain emits nothing.
+    expect(drainToArray(sys)).toEqual([]);
+  });
+
+  it('aggregates one MEDIUM pulse on a bomb detonation edge', () => {
+    const bomb = fakeBomb(0);
+    const sys = build({ bomb });
+
+    bomb.shockwaveMs = 300;
+    sys.fixedUpdate(DT);
+
+    expect(drainToArray(sys)).toEqual([HAPTIC_STYLE.MEDIUM]);
+  });
+
+  it('aggregates one LIGHT pulse on an extra-life award edge', () => {
+    const extraLife = fakeExtraLife(0);
+    const sys = build({ extraLife });
+
+    extraLife.awardSeq = 1;
+    sys.fixedUpdate(DT);
+
+    expect(drainToArray(sys)).toEqual([HAPTIC_STYLE.LIGHT]);
+  });
+
+  it('collapses a multi-life award tick to a single LIGHT pulse (edge, not per-life)', () => {
+    const extraLife = fakeExtraLife(0);
+    const sys = build({ extraLife });
+
+    extraLife.awardSeq = 3; // three lives awarded this tick
+    sys.fixedUpdate(DT);
+
+    expect(drainToArray(sys)).toEqual([HAPTIC_STYLE.LIGHT]);
+  });
+
+  it('emits nothing when no edge fired', () => {
+    const sys = build();
+    sys.fixedUpdate(DT);
+    expect(drainToArray(sys)).toEqual([]);
+  });
+
+  it('aggregates all three edges landing in one tick', () => {
+    const bomb = fakeBomb(0);
+    const death = fakeDeath(0);
+    const extraLife = fakeExtraLife(0);
+    const sys = build({ bomb, death, extraLife });
+
+    bomb.shockwaveMs = 300;
+    death.deathSeq = 1;
+    extraLife.awardSeq = 1;
+    sys.fixedUpdate(DT);
+
+    const out = drainToArray(sys);
+    expect(out).toHaveLength(3);
+    expect(out).toContain(HAPTIC_STYLE.HEAVY);
+    expect(out).toContain(HAPTIC_STYLE.MEDIUM);
+    expect(out).toContain(HAPTIC_STYLE.LIGHT);
+  });
+
+  it('seeds the extra-life prev so a mid-run construction fires nothing on an unchanged tick', () => {
+    const extraLife = fakeExtraLife(5); // constructed after 5 lives already awarded
+    const sys = build({ extraLife });
+
+    sys.fixedUpdate(DT); // awardSeq unchanged this tick
+    expect(drainToArray(sys)).toEqual([]);
+  });
+
+  it('never aggregates an extra-life pulse when no extraLifeSystem is injected', () => {
+    const sys = build(); // extraLife defaults to null
+    sys.fixedUpdate(DT);
+    expect(drainToArray(sys)).toEqual([]);
+  });
+
+  it('accumulates pulses across sub-steps between drains (one drain per frame)', () => {
+    const death = fakeDeath(0);
+    const sys = build({ death });
+
+    death.deathSeq = 1; // first sub-step: death edge
+    sys.fixedUpdate(DT);
+    death.deathSeq = 2; // second sub-step (same frame): another death edge
+    sys.fixedUpdate(DT);
+
+    // Both pulses survive to the single end-of-frame drain.
+    expect(drainToArray(sys)).toEqual([HAPTIC_STYLE.HEAVY, HAPTIC_STYLE.HEAVY]);
   });
 });
 

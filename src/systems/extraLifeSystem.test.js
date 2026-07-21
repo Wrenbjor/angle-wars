@@ -129,3 +129,56 @@ describe('ExtraLifeSystem — milestone extra-life award (FR10)', () => {
     expect(scoreState.score).toBe(T1 + 1); // untouched by the award
   });
 });
+
+describe('ExtraLifeSystem — awardSeq observability latch (Story 7.5)', () => {
+  it('starts at 0 on a fresh run', () => {
+    const { system } = makeSystem();
+    expect(system.awardSeq).toBe(0);
+  });
+
+  it('rises by exactly 1 when the score crosses a single threshold', () => {
+    const { system, scoreState } = makeSystem();
+    scoreState.score = T1 + 1;
+    system.fixedUpdate(DT);
+    expect(system.awardSeq).toBe(1);
+  });
+
+  it('rises by exactly N when one tick crosses N thresholds', () => {
+    const { system, scoreState } = makeSystem();
+    scoreState.score = T3 + 1; // crosses T1, T2, T3 in one tick
+    system.fixedUpdate(DT);
+    expect(system.awardSeq).toBe(3);
+  });
+
+  it('is unchanged on a non-award tick', () => {
+    const { system, scoreState } = makeSystem();
+    scoreState.score = T1 + 1;
+    system.fixedUpdate(DT);
+    expect(system.awardSeq).toBe(1);
+
+    scoreState.score = T2 - 1; // grows but crosses nothing new
+    system.fixedUpdate(DT);
+    expect(system.awardSeq).toBe(1); // latch unchanged
+  });
+
+  it('does not count thresholds already passed at construction (no retroactive latch)', () => {
+    const { system, scoreState } = makeSystem({ score: T2 + 1 });
+    expect(system.awardSeq).toBe(0); // seeded cursor past T1/T2, no award latched
+
+    system.fixedUpdate(DT); // same score → no award
+    expect(system.awardSeq).toBe(0);
+
+    scoreState.score = T3; // cross the next unawarded threshold
+    system.fixedUpdate(DT);
+    expect(system.awardSeq).toBe(1);
+  });
+
+  it('tracks the lives awarded exactly (awardSeq == lives gained)', () => {
+    const { system, scoreState, playerState } = makeSystem();
+    const startLives = playerState.lives;
+    scoreState.score = T4 + 1; // all thresholds in one tick
+    system.fixedUpdate(DT);
+    expect(system.awardSeq).toBe(playerState.lives - startLives);
+    expect(system.awardSeq).toBe(LIFE_AWARD_SCORE_THRESHOLDS.length);
+  });
+});

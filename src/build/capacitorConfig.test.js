@@ -34,24 +34,34 @@ describe('package.json — Capacitor deps + convenience scripts', () => {
   const pkg = readJson('package.json');
   const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
 
-  it('declares the four @capacitor/* packages at a single, numeric major', () => {
+  it('declares the @capacitor/* packages at a single, numeric major (8)', () => {
+    // Story 7.5 adds @capacitor/app + @capacitor/haptics — both pinned to the same
+    // Capacitor-8 line as the four native-shell packages, so `cap sync` stays coherent.
     const required = [
       '@capacitor/core',
       '@capacitor/cli',
       '@capacitor/android',
       '@capacitor/ios',
+      '@capacitor/app',
+      '@capacitor/haptics',
     ];
     const majors = new Set();
     for (const dep of required) {
       expect(allDeps[dep]).toBeDefined();
-      // Extract the major from a `^X.Y.Z` / `~X.Y.Z` / `X.Y.Z` range. Anchor at the
-      // start and require a numeric major so a floating spec (`*`, `latest`, a git
-      // URL) fails instead of collapsing to a size-1 Set of `undefined`.
-      const major = String(allDeps[dep]).match(/^[\^~]?(\d+)\./)?.[1];
+      // Extract the major from a `^X.Y.Z` / `~X.Y.Z` / `X.Y.Z` / `^X` range. Require a
+      // numeric major so a floating spec (`*`, `latest`, a git URL) fails instead of
+      // collapsing to a size-1 Set of `undefined`.
+      const major = String(allDeps[dep]).match(/^[\^~]?(\d+)(?:\.|$)/)?.[1];
       expect(major).toMatch(/^\d+$/);
       majors.add(major);
     }
     expect(majors.size).toBe(1);
+    expect(majors.has('8')).toBe(true);
+  });
+
+  it('declares the Story 7.5 native lifecycle + haptics plugins', () => {
+    expect(allDeps['@capacitor/app']).toBeDefined();
+    expect(allDeps['@capacitor/haptics']).toBeDefined();
   });
 
   it('exposes the cap:sync and cap:copy scripts', () => {

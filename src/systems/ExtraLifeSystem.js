@@ -50,6 +50,14 @@ export class ExtraLifeSystem extends System {
     // awarded retroactively (mirrors BombSystem._scoreCursor = scoreState.score).
     // A fresh instance per run (scene.restart rebuilds every system) resets it.
     this._nextThresholdIndex = 0;
+
+    // Observability latch (Story 7.5): a monotonic count of lives awarded so far,
+    // incremented once per award below. ScreenFeedbackSystem edge-detects this to
+    // fire the extra-life haptic pulse. Purely observational — the award timing and
+    // ordering are byte-identical (this is the ONLY field added). Seeded at 0 (fresh
+    // instance per run via scene.restart), never seeded from past awards.
+    this.awardSeq = 0;
+
     const score = scoreState.score;
     while (
       this._nextThresholdIndex < LIFE_AWARD_SCORE_THRESHOLDS.length &&
@@ -75,6 +83,7 @@ export class ExtraLifeSystem extends System {
       score >= LIFE_AWARD_SCORE_THRESHOLDS[idx]
     ) {
       this.playerState.lives += 1;
+      this.awardSeq += 1; // observability latch only — award behavior unchanged
       idx += 1;
     }
     this._nextThresholdIndex = idx;

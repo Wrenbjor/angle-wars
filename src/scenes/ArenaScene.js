@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { Haptics } from '@capacitor/haptics';
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
@@ -73,6 +74,12 @@ import {
   resolveQualityProfile,
 } from '../config/qualityProfile.js';
 import { PAUSE_TITLE, PAUSE_PROMPT, togglePause } from './pauseControl.js';
+import { decideKeepAwake } from './nativeLifecycle.js';
+import {
+  emitHaptic,
+  acquireWakeLock,
+  releaseWakeLock,
+} from './nativeFeel.js';
 import {
   GRID_FRAGMENT_SRC,
   buildGridUniforms,
@@ -259,6 +266,32 @@ export class ArenaScene extends Phaser.Scene {
     // nothing (mirrors the zero-per-frame-allocation discipline).
     this._musicGains = new Array(AUDIO_MUSIC_LAYER_COUNT).fill(0);
 
+    // --- Native feel + keep-awake (Story 7.5) --------------------------------
+    // Keep-awake edge state: the wake lock is requested/released only when the
+    // desired-awake boolean flips (never per frame), tracked here + released on
+    // shutdown so a held lock never leaks across a scene.restart. The sentinel is
+    // whatever acquireWakeLock returns (a WakeLockSentinel promise on device, null
+    // on an unsupported host); releaseWakeLock accepts either.
+    this._displayAwake = false;
+    this._wakeSentinel = null;
+    // Reused scratch for the per-frame decideKeepAwake call so the keep-awake path
+    // allocates nothing per frame (NFR2). runActive is always true inside a running
+    // ArenaScene; paused/gameOver are refreshed each frame before the decision.
+    this._keepAwakeState = { runActive: true, paused: false, gameOver: false };
+    // One-shot recovery from an INVOLUNTARY wake-lock release (thermal / battery-saver,
+    // no visibilitychange): drop the intent latch so the next update() re-acquires while
+    // still in play. Stable bound closure (created once, not per frame).
+    this._onWakeLockReleased = () => {
+      this._displayAwake = false;
+    };
+    // Stable bound haptic sink (created ONCE per create(), not per frame — no
+    // per-frame allocation). ArenaScene ALWAYS drains the pulses each frame
+    // (deterministic); emitHaptic is the pure Reduced-Motion gate that only touches the
+    // fail-safe Haptics boundary when Reduced Motion is off — output-layer suppression
+    // exactly like screen-shake/flash (the drain still empties either way).
+    // `this._reducedMotion` is read live at call time through the closure.
+    this._drainHapticSink = (style) => emitHaptic(this._reducedMotion, Haptics, style);
+
     // Persist the current settings AND re-apply the effective master gain. Called
     // after every mute/volume change. Muted ⇒ effective gain 0 (silence) while the
     // sim, latches, and music voices keep running (only master gain is 0).
@@ -306,6 +339,12 @@ export class ArenaScene extends Phaser.Scene {
       // Story 7.2: drop the scale `resize` listener so the responsive layout handler
       // does not leak across scene.restart (create() re-registers a fresh one).
       this.scale.off('resize', this._applyMobileLayout, this);
+      // Story 7.5: release the screen wake lock on shutdown (scene.restart / leaving
+      // the arena) so a lock held during play never leaks across runs. Fail-safe: a
+      // null sentinel is a no-op.
+      releaseWakeLock(this._wakeSentinel);
+      this._wakeSentinel = null;
+      this._displayAwake = false;
     });
 
     // Seekers are placeholder blue vector shapes, cleared and redrawn each render
@@ -594,20 +633,9 @@ export class ArenaScene extends Phaser.Scene {
       // Esc/P would flip _paused every repeat tick. A single tap still toggles
       // exactly once (the native KeyboardEvent has repeat === false).
       if (event && event.repeat) return;
-      this._paused = togglePause(this._paused, this.playerState.gameOver);
-      // On the transition INTO pause, settle the render-owned juice so the
-      // PAUSED screen reads cleanly: the top-of-update gate returns before the
-      // flash/shake countdowns decay, so a flash or camera shake in flight at
-      // pause time would otherwise freeze — washing the overlay near-white or
-      // holding a shake offset for the whole pause. Zeroing _flashMs makes the
-      // next unpaused frame set flash alpha 0 naturally; the resume path is
-      // untouched.
-      if (this._paused) {
-        this._flashMs = 0;
-        this._trauma = 0;
-        this.cameras.main.scrollX = 0;
-        this.cameras.main.scrollY = 0;
-      }
+      // Route through setPaused so the render-juice settle runs on the pause edge —
+      // shared with the native lifecycle (background / back-button) pause path.
+      this.setPaused(togglePause(this._paused, this.playerState.gameOver));
     };
     this.input.keyboard.on('keydown-ESC', togglePauseInput);
     this.input.keyboard.on('keydown-P', togglePauseInput);
@@ -662,6 +690,28 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   /**
+   * Set the paused flag AND, on the transition INTO pause, settle the render-owned
+   * juice so the PAUSED screen reads cleanly. The top-of-update gate returns before
+   * the flash/shake countdowns decay, so a flash or camera shake in flight at pause
+   * time would otherwise freeze — washing the overlay near-white or holding a shake
+   * offset for the whole pause. Zeroing _flashMs makes the next unpaused frame set
+   * flash alpha 0 naturally; the resume path is untouched. This is the SINGLE pause
+   * entry point shared by the keyboard handler AND the native lifecycle controller
+   * (background auto-pause / hardware back button), so every pause path settles
+   * identically (a mid-bomb background pause never freezes a near-white overlay).
+   * @param {boolean} paused The next paused state.
+   */
+  setPaused(paused) {
+    this._paused = paused;
+    if (paused) {
+      this._flashMs = 0;
+      this._trauma = 0;
+      this.cameras.main.scrollX = 0;
+      this.cameras.main.scrollY = 0;
+    }
+  }
+
+  /**
    * Phaser's render-rate update. It NEVER runs simulation logic directly —
    * it only feeds the render delta to the fixed-timestep accumulator, which
    * runs the world at the constant fixed rate.
@@ -669,6 +719,33 @@ export class ArenaScene extends Phaser.Scene {
    * @param {number} delta Elapsed render time since last frame (ms).
    */
   update(time, delta) {
+    // Story 7.5: native feel + keep-awake. Keep-awake is evaluated HERE at the TOP of
+    // update() BEFORE the pause early-return, so the wake lock is released on the pause
+    // edge (desired-awake flips false while paused). The haptic drain is NOT here — it
+    // runs later, BELOW the pause early-return, co-located with the flash/shake consumes,
+    // so a paused frame drains nothing and a buzz lands on the same frame as its cue.
+    //
+    // Keep-awake (edge-triggered): the ArenaScene is running whenever update() fires,
+    // so run-active is true here; decideKeepAwake then reduces to !paused && !gameOver.
+    // The wake lock is requested/released ONLY when the desired boolean flips, never
+    // per frame. Not gated by Reduced Motion (that governs motion, not screen sleep).
+    const keepAwakeState = this._keepAwakeState;
+    keepAwakeState.paused = this._paused;
+    keepAwakeState.gameOver = this.playerState.gameOver;
+    const desiredAwake = decideKeepAwake(keepAwakeState);
+    if (desiredAwake !== this._displayAwake) {
+      this._displayAwake = desiredAwake;
+      if (desiredAwake) {
+        this._wakeSentinel = acquireWakeLock(
+          typeof navigator !== 'undefined' ? navigator : null,
+          this._onWakeLockReleased,
+        );
+      } else {
+        releaseWakeLock(this._wakeSentinel);
+        this._wakeSentinel = null;
+      }
+    }
+
     // Story 5.2 pause gate (top of update): mirror the paused flag onto the
     // overlay, then — while paused — FREEZE the whole sim by returning before
     // any input sampling or sim/juice/audio advancement. No fixed step runs, no
@@ -722,6 +799,14 @@ export class ArenaScene extends Phaser.Scene {
     if (flashRequest > 0) this._flashMs = flashRequest;
     const hitStopRequest = this.screenFeedbackSystem.consumeHitStopRequest();
     if (hitStopRequest > 0) this._hitStopMs = hitStopRequest;
+
+    // Story 7.5 haptic drain: consume the pulses this frame's fixed steps aggregated,
+    // co-located with the shake/flash consumes BELOW the pause gate's early return (so
+    // it runs only on active, non-paused frames) and AFTER the fixed-step advance — so a
+    // death/bomb/extra-life buzz fires on the SAME frame as its shake/flash rather than
+    // one frame late. Always drains (deterministic); the sink's emitHaptic gate suppresses
+    // the actual buzz under Reduced Motion while the buffer still empties.
+    this.screenFeedbackSystem.drainHapticPulses(this._drainHapticSink);
 
     // Camera shake: advance the oscillation phase by real time, decay the trauma,
     // and write the camera scroll offset from it. At trauma 0 the offset is exactly

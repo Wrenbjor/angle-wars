@@ -340,3 +340,87 @@ describe('render-integration — responsive mobile layout wiring (Story 7.2)', (
     );
   });
 });
+
+describe('render-integration — native feel + keep-awake wiring (ArenaScene, Story 7.5)', () => {
+  // Pins the load-bearing Story 7.5 haptic + keep-awake glue in ArenaScene. This scene
+  // is Phaser-coupled and cannot be imported headlessly, so — like the reduced-motion /
+  // touch checks above — these are SOURCE-TEXT assertions. The pure decisions
+  // (decideKeepAwake) and the fail-safe boundaries (pulseHaptic / acquire/releaseWakeLock)
+  // carry their own unit coverage; the on-device buzz + screen wake are the disclosed
+  // manual boundary, so these guard only that the scene wires them correctly.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('drains the haptic pulses each frame through a stable bound sink', () => {
+    expect(arenaSrc).toMatch(
+      /this\.screenFeedbackSystem\.drainHapticPulses\(\s*this\._drainHapticSink\s*\)/,
+    );
+  });
+
+  it('suppresses the haptic pulse under reduced motion at the output layer only', () => {
+    // The always-drained sink routes through the pure emitHaptic gate (unit-tested in
+    // nativeFeel.test.js), which fires the Haptics boundary ONLY when reduced motion is
+    // off — mirrors the shake/flash output-layer suppression; the drain still empties.
+    expect(arenaSrc).toMatch(
+      /emitHaptic\(\s*this\._reducedMotion\s*,\s*Haptics\s*,\s*style\s*\)/,
+    );
+  });
+
+  it('edge-triggers keep-awake via decideKeepAwake, tracking the display-awake boolean', () => {
+    // Desired-awake is computed each frame from a REUSED scratch object (no per-frame
+    // allocation); the wake lock is acquired/released ONLY on the boolean flip.
+    expect(arenaSrc).toMatch(/decideKeepAwake\(\s*keepAwakeState\s*\)/);
+    expect(arenaSrc).toMatch(/if\s*\(\s*desiredAwake\s*!==\s*this\._displayAwake\s*\)/);
+    expect(arenaSrc).toMatch(/acquireWakeLock\(/);
+    expect(arenaSrc).toMatch(/releaseWakeLock\(\s*this\._wakeSentinel\s*\)/);
+    // Bind the acquire to the desired-awake arm AND pin the involuntary-release
+    // recovery arg (Story 7.5 follow-up review, verification-gap): dropping
+    // `this._onWakeLockReleased` silently kills the thermal/battery-saver re-acquire,
+    // and swapping the acquire/release branches makes the screen sleep during play and
+    // stay lit while paused — the loose `acquireWakeLock(` pin above catches neither.
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*desiredAwake\s*\)\s*\{[\s\S]*?acquireWakeLock\([\s\S]*?this\._onWakeLockReleased[\s\S]*?\}\s*else\s*\{[\s\S]*?releaseWakeLock\(\s*this\._wakeSentinel\s*\)/,
+    );
+  });
+
+  it('setPaused runs the render-juice settle on the enter-pause edge only', () => {
+    // Story 7.5 follow-up review (verification-gap): setPaused is the SOLE pause entry
+    // point — the keyboard handler and the native background/back-button controller both
+    // route through it — and its job is to zero the flash/shake/camera so a mid-bomb
+    // background pause doesn't freeze a near-white overlay / held camera offset on the
+    // PAUSED screen. ArenaScene is Phaser-coupled (cannot be imported headlessly), so —
+    // per this file's source-text convention — pin the settle here: deleting any of the
+    // resets, or ungating them from `if (paused)`, must fail this test.
+    expect(arenaSrc).toMatch(
+      /setPaused\(\s*paused\s*\)\s*\{[\s\S]*?if\s*\(\s*paused\s*\)\s*\{[\s\S]*?this\._flashMs\s*=\s*0[\s\S]*?this\._trauma\s*=\s*0[\s\S]*?cameras\.main\.scrollX\s*=\s*0[\s\S]*?cameras\.main\.scrollY\s*=\s*0/,
+    );
+  });
+
+  it('releases the wake lock on scene shutdown (no cross-restart leak)', () => {
+    // The shutdown handler (which also disposes audio + drops the resize listener)
+    // releases the sentinel so a lock held during play never leaks across a restart.
+    expect(arenaSrc).toMatch(
+      /once\(\s*['"]shutdown['"][\s\S]*?releaseWakeLock\(\s*this\._wakeSentinel\s*\)/,
+    );
+  });
+});
+
+describe('render-integration — native lifecycle controller wiring (main.js, Story 7.5)', () => {
+  // Pins the main.js lifecycle glue: it cannot be imported headlessly (constructs a
+  // new Phaser.Game at load), so these are SOURCE-TEXT assertions. The controller's
+  // FR23 branch logic now lives (and is unit-tested) in makeLifecycleController; these
+  // guard only that main.js captures the game, builds the controller, wires it, and
+  // never reaches for an abrupt-close.
+  const mainSrc = readSrc('../main.js');
+
+  it('captures the game and builds + wires the lifecycle controller', () => {
+    expect(mainSrc).toMatch(/const\s+game\s*=\s*new\s+Phaser\.Game\(\s*config\s*\)/);
+    expect(mainSrc).toMatch(/makeLifecycleController\(\s*game\s*,\s*App\s*\)/);
+    expect(mainSrc).toMatch(/wireNativeLifecycle\(\s*\{/);
+  });
+
+  it('imports the Capacitor App plugin and never reaches for an abrupt close', () => {
+    expect(mainSrc).toMatch(/import\s*\{\s*App\s*\}\s*from\s*['"]@capacitor\/app['"]/);
+    // The load-bearing negative: the app is NEVER abruptly closed from the entry point.
+    expect(mainSrc).not.toContain('exitApp');
+  });
+});

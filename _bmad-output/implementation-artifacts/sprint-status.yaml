@@ -90,6 +90,6 @@ development_status:
   7-2-responsive-mobile-layout-orientation-and-safe-areas: done
   7-3-capacitor-native-shell-and-device-build: done
   7-4-mobile-performance-profile: done
-  7-5-native-lifecycle-and-feel-integration: backlog
+  7-5-native-lifecycle-and-feel-integration: done
   7-6-store-release-scaffolding: backlog
   epic-7-retrospective: optional

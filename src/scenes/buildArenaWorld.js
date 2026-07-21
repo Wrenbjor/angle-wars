@@ -333,6 +333,10 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     playerDeathSystem,
     ship,
     enemyPools,
+    // Story 7.5: the extra-life award latch source, so the system can edge-detect a
+    // life earned and aggregate its LIGHT haptic pulse. extraLifeSystem was
+    // constructed above (Story 3.3 section), so the one instance flows here too.
+    extraLifeSystem,
   );
   world.addSystem(screenFeedbackSystem);
 

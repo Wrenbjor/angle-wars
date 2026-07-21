@@ -9,6 +9,7 @@ import {
   SCREEN_NEARMISS_RADIUS,
   SCREEN_NEARMISS_COOLDOWN_MS,
 } from '../config/constants.js';
+import { HAPTIC_STYLE } from '../scenes/nativeFeel.js';
 
 // ScreenFeedbackSystem — the Phaser-free simulation seam for screen juice
 // (Story 4.4): camera shake, screen flash, and hit-stop.
@@ -57,19 +58,32 @@ export class ScreenFeedbackSystem extends System {
    * @param {import('../core/Pool.js').Pool[]} enemyPools Every combat-archetype
    *   enemy pool; their active, non-telegraphing instances are scanned for a
    *   near-miss. Observed, never mutated.
+   * @param {import('./ExtraLifeSystem.js').ExtraLifeSystem|null} [extraLifeSystem]
+   *   Optional source of the extra-life award latch (its awardSeq increment = a life
+   *   earned). Trailing + optional so existing positional callers/tests stay intact;
+   *   null → the extra-life haptic edge is simply never detected. Story 7.5.
    */
-  constructor(collisionSystem, bombSystem, playerDeathSystem, ship, enemyPools) {
+  constructor(collisionSystem, bombSystem, playerDeathSystem, ship, enemyPools, extraLifeSystem = null) {
     super();
     this.collisionSystem = collisionSystem;
     this.bombSystem = bombSystem;
     this.playerDeathSystem = playerDeathSystem;
     this.ship = ship;
     this.enemyPools = enemyPools;
+    this.extraLifeSystem = extraLifeSystem;
 
     // Edge-detection previous-values, SEEDED from the current state so no spurious
     // cue fires on the first tick (mirrors GridFieldSystem's prev seeding).
     this._prevShockwaveMs = bombSystem ? bombSystem.shockwaveMs : 0;
     this._prevDeathSeq = playerDeathSystem ? playerDeathSystem.deathSeq : 0;
+    this._prevAwardSeq = extraLifeSystem ? extraLifeSystem.awardSeq : 0;
+
+    // Story 7.5: pending haptic pulses aggregated this frame, drained once per render
+    // frame by ArenaScene via drainHapticPulses(sink). A single REUSED buffer (cleared
+    // by resetting .length on drain, never reallocated) keeps the aggregation
+    // zero-per-frame-allocation, mirroring the trauma/flash latch discipline. Death →
+    // HEAVY, bomb → MEDIUM, extra life → LIGHT.
+    this._hapticPulses = [];
 
     // Render-consumable latches (reset by the consume*() reads).
     this._pendingTrauma = 0;
@@ -116,6 +130,7 @@ export class ScreenFeedbackSystem extends System {
         this._pendingTrauma += SCREEN_SHAKE_TRAUMA_BOMB;
         this._flashPending = true;
         this._hitStopPending = true;
+        this._hapticPulses.push(HAPTIC_STYLE.MEDIUM); // bomb → MEDIUM pulse (Story 7.5)
       }
       this._prevShockwaveMs = bs.shockwaveMs;
     }
@@ -128,7 +143,21 @@ export class ScreenFeedbackSystem extends System {
         this._pendingTrauma += SCREEN_SHAKE_TRAUMA_DEATH;
         this._flashPending = true;
         this._hitStopPending = true;
+        this._hapticPulses.push(HAPTIC_STYLE.HEAVY); // death → HEAVY pulse (Story 7.5)
         this._prevDeathSeq = pds.deathSeq;
+      }
+    }
+
+    // (2b) Extra life earned — LIGHT haptic pulse only (Story 7.5, no shake/flash).
+    //      awardSeq is a monotonic count of lives awarded; any increment since the
+    //      last tick is one earn-event edge → one LIGHT pulse (mirrors the deathSeq
+    //      edge collapse: a multi-threshold tick still buzzes once). Observability
+    //      only — this system never touches lives/score.
+    const els = this.extraLifeSystem;
+    if (els) {
+      if (els.awardSeq !== this._prevAwardSeq) {
+        this._hapticPulses.push(HAPTIC_STYLE.LIGHT);
+        this._prevAwardSeq = els.awardSeq;
       }
     }
 
@@ -194,5 +223,21 @@ export class ScreenFeedbackSystem extends System {
     if (!this._hitStopPending) return 0;
     this._hitStopPending = false;
     return SCREEN_HITSTOP_MS;
+  }
+
+  /**
+   * Drain the haptic pulses aggregated since the last drain: call `sink(style)` once
+   * per pending pulse (in aggregation order), then empty the buffer. ArenaScene calls
+   * this every render frame with a stable bound sink, always consuming (deterministic)
+   * and firing the Haptics boundary only when Reduced Motion is off. Zero new
+   * allocation — the reused buffer is cleared by resetting its length. (Story 7.5)
+   * @param {(style:string)=>void} sink Receives each pending HAPTIC_STYLE.* value.
+   */
+  drainHapticPulses(sink) {
+    const pulses = this._hapticPulses;
+    for (let i = 0; i < pulses.length; i++) {
+      sink(pulses[i]);
+    }
+    pulses.length = 0;
   }
 }

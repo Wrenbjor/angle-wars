@@ -180,6 +180,14 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.audioDirector.blackHoleSystem).toBe(ctx.blackHoleSystem);
   });
 
+  it('threads the ExtraLifeSystem into the ScreenFeedbackSystem (Story 7.5 haptic edge)', () => {
+    const ctx = buildArenaWorld();
+    // The extra-life LIGHT haptic pulse depends on ScreenFeedbackSystem edge-detecting
+    // ExtraLifeSystem.awardSeq — so the 6th constructor arg must be the SAME instance.
+    // Without this, dropping/reordering/nulling it would silently kill the pulse.
+    expect(ctx.screenFeedbackSystem.extraLifeSystem).toBe(ctx.extraLifeSystem);
+  });
+
   it('constructs the collisionSystem over enemyPools (not deathPools)', () => {
     const ctx = buildArenaWorld();
     // CollisionSystem holds the array of archetype pools it scans; it must be the
