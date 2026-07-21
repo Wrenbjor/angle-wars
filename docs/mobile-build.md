@@ -86,6 +86,108 @@ simulator/device and press **Run**.
 > on macOS completes it. If the committed `ios/` template is ever incomplete,
 > regenerate it on macOS with `npx cap add ios`.
 
+## Store release
+
+This section covers turning the native shells into store-uploadable artifacts
+for the App Store / Google Play (NFR10). Everything below is config, committed
+branded assets, and signing scaffold — no gameplay/`src/` change.
+
+### Branded icons & splash screens
+
+The launcher icons and splash screens are generated from a single brand source,
+`resources/icon.svg` (an emblem-only neon angular mark), by a deterministic
+ImageMagick generator. To regenerate every iOS + Android density after editing
+the source:
+
+```bash
+npm run assets:mobile   # == bash scripts/gen-mobile-assets.sh
+```
+
+This overwrites, at their exact required dimensions:
+
+- **Android** launcher icons `ic_launcher.png` / `ic_launcher_round.png`
+  (mdpi 48 → xxxhdpi 192), the adaptive-icon `ic_launcher_foreground.png`
+  (mdpi 108 → xxxhdpi 432, alpha preserved so it composites over the
+  `@color/ic_launcher_background` layer), and every `splash.png`
+  (`drawable/` + all `drawable-land-*` / `drawable-port-*` densities).
+- **iOS** the single universal `AppIcon-512@2x.png` (1024×1024, Xcode derives
+  the rest) and the three `Splash.imageset/splash-2732x2732*.png`.
+
+Alpha rules are load-bearing: the iOS app icon and all opaque icons/splashes are
+flattened onto the brand background with the alpha channel **stripped** (the App
+Store rejects icons with alpha); the Android adaptive foreground **keeps** its
+alpha. The generator needs ImageMagick (`convert`) at build time only — the PNGs
+are committed, so no consumer needs it. Re-running is idempotent w.r.t. dimensions.
+
+### Versioning (bump before every store upload)
+
+| Platform | File | Keys |
+| -------- | ---- | ---- |
+| Android  | `android/app/build.gradle` | `versionCode` (integer, must increase every upload) and `versionName` (user-facing string) |
+| iOS      | Xcode target build settings | `MARKETING_VERSION` (user-facing, e.g. `1.0.0`) and `CURRENT_PROJECT_VERSION` (build number, must increase) — surfaced in `Info.plist` as `CFBundleShortVersionString` / `CFBundleVersion` |
+
+Both stores require a strictly increasing build number (`versionCode` /
+`CURRENT_PROJECT_VERSION`) for each new upload of the same version.
+
+### Android — signed release AAB
+
+Google Play accepts an **Android App Bundle** (`.aab`). The signing config is
+already scaffolded in `android/app/build.gradle`: it reads
+`android/keystore.properties` behind a `file.exists()` guard, so without that
+file the release build is simply **unsigned** (dev/CI stay green), and with it
+the build signs via `signingConfigs.release`.
+
+1. Create an upload keystore (once), keeping it somewhere safe **outside** the repo:
+
+   ```bash
+   keytool -genkey -v -keystore release.jks -alias anglewars \
+           -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. Copy `android/keystore.properties.example` → `android/keystore.properties`
+   and fill in `storeFile` / `storePassword` / `keyAlias` / `keyPassword`.
+   `storeFile` is resolved by `build.gradle` via `file(...)`, i.e. **relative to
+   the `android/app` module directory** — for a keystore kept outside the repo
+   (recommended), set `storeFile` to an **absolute path** (a bare `release.jks`
+   would be looked up under `android/app/`, not your cwd). `keystore.properties`,
+   `*.jks`, and `*.keystore` are **gitignored** — never commit them.
+
+3. Build the bundle on an SDK-equipped machine (Android SDK + JDK 21):
+
+   ```bash
+   npm run build && npm run cap:sync
+   cd android && ./gradlew bundleRelease
+   # → app/build/outputs/bundle/release/app-release.aab  (signed)
+   ```
+
+   Upload `app-release.aab` to the Google Play Console. (`./gradlew assembleRelease`
+   produces a signed APK instead if you need one.)
+
+### iOS — signed archive & .ipa (macOS only)
+
+App Store Connect accepts an `.ipa` exported from an archive.
+
+1. Copy `ios/ExportOptions.plist.example` → `ios/ExportOptions.plist` and set
+   your `teamID` (and switch `signingStyle` to `manual` with a
+   `provisioningProfiles` entry if you are not using automatic signing).
+
+2. Archive and export (macOS + Xcode + a valid signing identity):
+
+   ```bash
+   npm run build && npm run cap:sync
+   xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
+     -configuration Release -archivePath build/App.xcarchive archive
+   xcodebuild -exportArchive -archivePath build/App.xcarchive \
+     -exportPath build/ipa -exportOptionsPlist ios/ExportOptions.plist
+   ```
+
+   Or, in Xcode: **Product → Archive**, then **Distribute App → App Store Connect**.
+   Upload the resulting `.ipa` with Xcode Organizer or `xcrun altool` / Transporter.
+
+Both platforms are locked to landscape to match the game: Android
+`MainActivity` sets `android:screenOrientation="sensorLandscape"` and the iOS
+`Info.plist` advertises only `LandscapeLeft` / `LandscapeRight` for iPhone.
+
 ## Manual end-to-end acceptance
 
 The automated Vitest gate (`src/build/capacitorConfig.test.js`) proves the shell

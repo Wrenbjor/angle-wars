@@ -1,5 +1,33 @@
 apply plugin: 'com.android.application'
 
+// Release signing scaffold (Story 7.6). Real secrets live only in a gitignored
+// `keystore.properties` at the Android project root (see keystore.properties.example);
+// nothing is committed. When the file is absent — dev machines and CI — the release
+// build is simply left unsigned and Gradle does NOT error, so the existing build
+// stays green. The moment a developer drops in their keystore + keystore.properties,
+// the release build signs via signingConfigs.release.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    // Parse defensively: a malformed keystore.properties (e.g. an unescaped
+    // Windows path like storeFile=C:\utils\release.jks — `\u` is a bad unicode
+    // escape) makes Properties.load() throw, which would abort Gradle
+    // configuration for EVERY build type (including debug/CI). Swallow the parse
+    // error and fall through to the unsigned path (hasKeystore stays false).
+    try {
+        keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+    } catch (Exception e) {
+        logger.warn("keystore.properties present but could not be parsed (${e.message}); " +
+            "release build will be left unsigned.")
+        keystoreProperties.clear()
+    }
+}
+// Sign only when the file exists AND every required key is present + non-empty.
+// A partially-filled keystore.properties would otherwise feed null into file(...)
+// and break configuration for ALL build types (including debug) — so guard on this.
+def hasKeystore = keystorePropertiesFile.exists() &&
+    ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].every { keystoreProperties[it] }
+
 android {
     namespace = "com.wrenbjor.anglewars"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +44,26 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // Populated only when a complete keystore.properties exists; otherwise
+            // the release build is unsigned (see the guard on buildTypes.release below).
+            if (hasKeystore) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Only wire the signing config in when a complete keystore is present.
+            if (hasKeystore) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

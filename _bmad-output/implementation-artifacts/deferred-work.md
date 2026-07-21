@@ -339,3 +339,18 @@ resolution: resolved by sweep bundle dw-build-artifact-verification-test
 - source_spec: `_bmad-output/implementation-artifacts/spec-7-4-mobile-performance-profile.md`
   summary: TitleScene and SettingsScene still register the full desktop camera bloom on mobile; the Story 7.4 mobile bloom reduction is applied only in ArenaScene.
   evidence: `src/scenes/TitleScene.js` and `src/scenes/SettingsScene.js` call `addNeonBloom(this.cameras.main)` with the desktop NEON_BLOOM default. Bloom is a screen-space, entity-count-independent fill pass, so a mobile GPU pays the full desktop bloom cost on the menus. Story 7.4 scopes the profile to ArenaScene (gameplay peak load), so menu adoption is a deliberate open scope question; threading the resolved profile's bloom into those two scenes would make menu bloom cost consistent with gameplay.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-7-6-store-release-scaffolding.md`
+  summary: On Android 12+ (targetSdk 36 → all current devices) the branded full-bleed splash PNGs may not display as intended, because the launch theme still uses the pre-SplashScreen-API model (`AppTheme.NoActionBarLaunch` sets only `android:background=@drawable/splash`), while Android 12+ shows the launcher icon centered on `windowSplashScreenBackground`.
+  evidence: `android/app/src/main/res/values/styles.xml:19-20` — `Theme.SplashScreen` parent with only `android:background=@drawable/splash`; no `windowSplashScreenBackground`/`windowSplashScreenAnimatedIcon` and no `values-v31` override. Pre-existing Capacitor scaffold (Story 7.3), not caused by 7.6; the 11 regenerated `splash.png` densities are the legacy full-bleed splash the A12+ system splash no longer renders. Fixing it is a design call (A12 mandates icon-on-background, not full-bleed) plus on-device visual QA — the disclosed manual boundary. Consider adding `windowSplashScreenBackground` (@color brand #05060A) + `windowSplashScreenAnimatedIcon` in a `values-v31` theme.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-7-6-store-release-scaffolding.md`
+  summary: The signing-secret ignore rules (`*.jks`/`*.keystore`/`keystore.properties`) live only in `android/.gitignore`, so a keystore or `keystore.properties` dropped anywhere outside `android/` (repo root, `resources/`, etc.) is not gitignored and could be committed.
+  evidence: Adversarial + edge-case layers converged. Story 7.6 added the ignore lines to `android/.gitignore` (scoped to the `android/` subtree); the repo-root `.gitignore` has no `*.jks`/`*.keystore`/`keystore.properties` entries. The documented flow keeps the keystore in `android/` or outside the repo via an absolute `storeFile` path (both covered), so a root/other-dir drop is contrary to the docs and thus low-probability — but the intent's hard constraint is "never commit any real keystore", and a repo-root `.gitignore` hardening (defense-in-depth) would catch a secret placed anywhere in the tree. Pre-existing scope of the root `.gitignore`, surfaced incidentally by this story's signing work.
+
+### DW-36: Follow-up review still recommended for 7-6-store-release-scaffolding after the damping cap was spent
+origin: review-budget-followup
+source_spec: `spec-7-6-store-release-scaffolding.md`
+severity: low
+reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260721-001456-df79; this entry preserves the lingering recommendation for a deliberate later review.
+status: open

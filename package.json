@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "cap:sync": "cap sync",
-    "cap:copy": "cap copy"
+    "cap:copy": "cap copy",
+    "assets:mobile": "bash scripts/gen-mobile-assets.sh"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

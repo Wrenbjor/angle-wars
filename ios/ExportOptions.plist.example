@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  iOS export options — TEMPLATE (Story 7.6).
+
+  Copy to ExportOptions.plist and fill in your Apple Developer team id, then run
+  (on macOS with Xcode):
+
+    xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
+      -configuration Release -archivePath build/App.xcarchive archive
+    xcodebuild -exportArchive -archivePath build/App.xcarchive \
+      -exportPath build/ipa -exportOptionsPlist ios/ExportOptions.plist
+
+  The exported .ipa uploads to App Store Connect. See docs/mobile-build.md.
+
+  Signing: leave signingStyle=automatic to let Xcode manage provisioning with
+  your teamID (recommended). For manual signing, set signingStyle=manual and add
+  a provisioningProfiles dictionary mapping the bundle id to a profile name, e.g.:
+    <key>signingStyle</key><string>manual</string>
+    <key>provisioningProfiles</key>
+    <dict>
+      <key>com.wrenbjor.anglewars</key>
+      <string>Angle Wars App Store</string>
+    </dict>
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store</string>
+    <key>teamID</key>
+    <string>YOUR_TEAM_ID</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>uploadBitcode</key>
+    <false/>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>destination</key>
+    <string>export</string>
+</dict>
+</plist>

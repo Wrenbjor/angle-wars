@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Angle Wars brand mark — emblem only, no wordmark.
+
+  Pure geometry (rect + polyline strokes) so ImageMagick's internal MSVG
+  renderer rasterizes it with no rsvg/inkscape/font delegate. This is the
+  single source of truth for every native icon + splash; the neon glow is
+  applied at raster time by scripts/gen-mobile-assets.sh (blur + composite),
+  NOT by an SVG filter (IM6's MSVG renderer does not support feGaussianBlur).
+
+  Colours: cyan primary #12e6ff, magenta accent #ff2ea6, on near-black #05060a.
+  The forward-pointing nested angle brackets read as motion + the "angle" of
+  Angle Wars.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="0" y="0" width="1024" height="1024" fill="#05060a"/>
+
+  <!-- outer cyan angle bracket, pointing right -->
+  <polyline points="300,232 596,512 300,792"
+            fill="none" stroke="#12e6ff" stroke-width="86"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- inner cyan angle bracket -->
+  <polyline points="470,318 664,512 470,706"
+            fill="none" stroke="#12e6ff" stroke-width="58"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- magenta accent angle bracket, innermost -->
+  <polyline points="628,392 748,512 628,632"
+            fill="none" stroke="#ff2ea6" stroke-width="46"
+            stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
