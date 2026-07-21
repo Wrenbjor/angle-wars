@@ -86,6 +86,36 @@ describe('addNeonBloom', () => {
     expect(returned).toBe(controller);
   });
 
+  it('forwards an INJECTED bloomConfig positionally (Story 7.4 mobile profile)', () => {
+    // A distinct sentinel config (e.g. the mobile profile ArenaScene injects): every
+    // field must forward to its addBloom position, not the desktop NEON_BLOOM default.
+    const mobileBloom = {
+      color: 0xabcdef,
+      offsetX: 7,
+      offsetY: 8,
+      blurStrength: 0.5,
+      strength: 0.6,
+      steps: 2,
+    };
+    const addBloom = vi.fn();
+    addNeonBloom({ postFX: { addBloom } }, mobileBloom);
+    expect(addBloom).toHaveBeenCalledTimes(1);
+    expect(addBloom).toHaveBeenCalledWith(0xabcdef, 7, 8, 0.5, 0.6, 2);
+  });
+
+  it('defaults to NEON_BLOOM when bloomConfig is omitted (byte-identical desktop)', () => {
+    const addBloom = vi.fn();
+    addNeonBloom({ postFX: { addBloom } });
+    expect(addBloom).toHaveBeenCalledWith(
+      NEON_BLOOM.color,
+      NEON_BLOOM.offsetX,
+      NEON_BLOOM.offsetY,
+      NEON_BLOOM.blurStrength,
+      NEON_BLOOM.strength,
+      NEON_BLOOM.steps,
+    );
+  });
+
   it('forwards fields to addBloom positions in documented order — verified with distinct values', async () => {
     // The other order assertions use the real constants, whose fixture values
     // collide (offsetX==offsetY==1, blurStrength==strength==1.2), so a within-pair

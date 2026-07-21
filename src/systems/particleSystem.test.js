@@ -211,6 +211,101 @@ describe('ParticleSystem — soft cap (PARTICLE_MAX)', () => {
   });
 });
 
+describe('ParticleSystem — injected mobile cap (Story 7.4)', () => {
+  it('defaults maxParticles to PARTICLE_MAX when the arg is omitted (byte-identical desktop)', () => {
+    const system = new ParticleSystem(fakeCollision(), fakeShip(), fakeInput());
+    expect(system.maxParticles).toBe(PARTICLE_MAX);
+  });
+
+  it('stores an injected cap on maxParticles', () => {
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(),
+      fakeInput(),
+      constRng(0.5),
+      300,
+    );
+    expect(system.maxParticles).toBe(300);
+  });
+
+  it('falls back to PARTICLE_MAX for a 0 / NaN / negative injected cap (placeholder footgun guard)', () => {
+    // An injected 0 would suppress ALL emission; NaN/negative never caps. Each falls
+    // back to the desktop cap rather than silently breaking the particle system.
+    const mk = (cap) =>
+      new ParticleSystem(fakeCollision(), fakeShip(), fakeInput(), constRng(0.5), cap);
+    expect(mk(0).maxParticles).toBe(PARTICLE_MAX);
+    expect(mk(NaN).maxParticles).toBe(PARTICLE_MAX);
+    expect(mk(-5).maxParticles).toBe(PARTICLE_MAX);
+  });
+
+  it('never lets live particles exceed the injected cap under sustained burst emission', () => {
+    const CAP = 300;
+    // Enough bullet-kill snapshots per tick that emission wants to blow past the cap.
+    const kills = Math.ceil((CAP * 2) / PARTICLE_BURST_COUNT);
+    const xs = [];
+    const ys = [];
+    for (let i = 0; i < kills; i++) {
+      xs.push((i % 50) + 1);
+      ys.push((i % 50) + 1);
+    }
+    const cs = fakeCollision(kills, xs, ys);
+    const system = new ParticleSystem(
+      cs,
+      fakeShip(640, 360, 0),
+      fakeInput(1, 0),
+      constRng(0.5),
+      CAP,
+    );
+    // Non-expiring particles (Infinity lifetime via a long dt would still age); use a
+    // few ticks and assert the cap is honored every tick.
+    for (let i = 0; i < 20; i++) {
+      system.fixedUpdate(DT);
+      expect(system.pool.activeCount).toBeLessThanOrEqual(CAP);
+    }
+    // The cap actually bit (saturation reached), not a trivial idle run.
+    expect(system.pool.activeCount).toBe(CAP);
+  });
+
+  it('holds the steady-state no-growth invariant under a mobile cap (NFR2)', () => {
+    const CAP = 300;
+    const kills = Math.ceil((CAP * 2) / PARTICLE_BURST_COUNT);
+    const xs = [];
+    const ys = [];
+    for (let i = 0; i < kills; i++) {
+      xs.push((i % 50) + 1);
+      ys.push((i % 50) + 1);
+    }
+    const cs = fakeCollision(kills, xs, ys);
+    const system = new ParticleSystem(
+      cs,
+      fakeShip(640, 360, 0),
+      fakeInput(1, 0),
+      constRng(0.5),
+      CAP,
+    );
+
+    // Warm up to a stable pool capacity (loop-until-stable), then assert no growth.
+    let capacity = system.pool.activeCount + system.pool.freeCount;
+    let stableStreak = 0;
+    for (let i = 0; i < 2000 && stableStreak < 3; i++) {
+      system.fixedUpdate(DT);
+      const total = system.pool.activeCount + system.pool.freeCount;
+      stableStreak = total === capacity ? stableStreak + 1 : 0;
+      capacity = total;
+    }
+    expect(stableStreak).toBeGreaterThanOrEqual(3);
+
+    for (let i = 0; i < 500; i++) {
+      system.fixedUpdate(DT);
+      expect(system.pool.activeCount + system.pool.freeCount).toBe(capacity);
+      expect(system.pool.activeCount).toBeLessThanOrEqual(CAP);
+    }
+    // The pool capacity plateaus at/around the mobile cap, well below PARTICLE_MAX.
+    expect(capacity).toBeLessThanOrEqual(PARTICLE_MAX);
+    expect(capacity).toBeGreaterThan(0);
+  });
+});
+
 describe('ParticleSystem — gameplay neutrality (read-only observer)', () => {
   it('mutates only its own pool — never the ship, input, or collision inputs', () => {
     // One tick that exercises BOTH read paths: a bullet kill (burst reads the

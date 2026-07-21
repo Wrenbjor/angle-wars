@@ -62,13 +62,33 @@ export class ParticleSystem extends System {
    *   for the thrust gate. Observed, never mutated.
    * @param {() => number} [rng] Uniform [0,1) source (injected for deterministic
    *   tests). Defaults to Math.random.
+   * @param {number} [maxParticles] Hard cap on simultaneously-live particles.
+   *   Defaults to the desktop PARTICLE_MAX; ArenaScene injects the (smaller) mobile
+   *   cap from the resolved quality profile (Story 7.4) so a phone GPU renders fewer
+   *   particles. Byte-identical to today when omitted.
    */
-  constructor(collisionSystem, ship, inputState, rng = Math.random) {
+  constructor(
+    collisionSystem,
+    ship,
+    inputState,
+    rng = Math.random,
+    maxParticles = PARTICLE_MAX,
+  ) {
     super();
     this.collisionSystem = collisionSystem;
     this.ship = ship;
     this.inputState = inputState;
     this.rng = rng;
+    // The live-particle soft cap this system enforces on both emission paths. A
+    // frozen-profile value injected once at construction — never mutated per frame.
+    // Guard the placeholder footgun (mirrors the `step > 0` trail guard below and
+    // buildArenaWorld's rng coercion): the `= PARTICLE_MAX` default only catches
+    // `undefined`, so an injected 0 (suppresses ALL emission), NaN, or negative falls
+    // back to the desktop cap rather than silently breaking the particle system.
+    this.maxParticles =
+      Number.isFinite(maxParticles) && maxParticles > 0
+        ? maxParticles
+        : PARTICLE_MAX;
 
     // The particle pool — the single source of active/free truth. Lazy growth;
     // reuse on the hot path (no per-tick allocation once warm).
@@ -134,7 +154,7 @@ export class ParticleSystem extends System {
         const x = cs.bulletKillX[k];
         const y = cs.bulletKillY[k];
         for (let c = 0; c < PARTICLE_BURST_COUNT; c++) {
-          if (this.pool.activeCount >= PARTICLE_MAX) break; // soft cap reached
+          if (this.pool.activeCount >= this.maxParticles) break; // soft cap reached
           const heading = this.rng() * TAU;
           const speed =
             PARTICLE_BURST_SPEED_MIN +
@@ -172,7 +192,7 @@ export class ParticleSystem extends System {
         if (step > 0) {
           while (this._trailAccumMs >= step) {
             this._trailAccumMs -= step;
-            if (this.pool.activeCount >= PARTICLE_MAX) continue; // capped: still drain
+            if (this.pool.activeCount >= this.maxParticles) continue; // capped: still drain
             // Drift opposite the ship's facing (angle + PI), jittered by the spread.
             const spread = (this.rng() * 2 - 1) * PARTICLE_TRAIL_SPREAD_RAD;
             const heading = ship.angle + Math.PI + spread;

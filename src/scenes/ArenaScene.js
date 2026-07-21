@@ -67,6 +67,11 @@ import {
   blackHolePulseAlpha,
 } from './blackHoleRender.js';
 import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
+import {
+  detectMobile,
+  readMobileEnv,
+  resolveQualityProfile,
+} from '../config/qualityProfile.js';
 import { PAUSE_TITLE, PAUSE_PROMPT, togglePause } from './pauseControl.js';
 import {
   GRID_FRAGMENT_SRC,
@@ -110,6 +115,19 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   create() {
+    // --- Mobile quality profile (Story 7.4) ---------------------------------
+    // Resolve the presentation-cost profile ONCE per create() (device-derived, never
+    // per frame): detect mobile / the Capacitor WebView through the fail-safe boundary
+    // (any missing/throwing host global degrades to the DESKTOP profile — create never
+    // crashes), then map it to a frozen { particleMax, bloom, gridSpacing }. On desktop
+    // every field equals today's constant, so the wiring below is byte-identical; on a
+    // phone it scales the particle cap, the bloom fill cost, and the grid density DOWN
+    // (NFR9, NFR1). It COMPOSES with — never replaces — Reduced Motion (read separately
+    // below). Introduces zero new per-frame allocation.
+    this._qualityProfile = resolveQualityProfile(
+      detectMobile(readMobileEnv(typeof window !== 'undefined' ? window : null)),
+    );
+
     // --- Deforming grid field (Story 4.2) -----------------------------------
     // The signature "living grid": ONE full-arena fragment-shader quad drawn on the
     // GPU, added FIRST so it renders BEHIND every entity/HUD. All ripple + warp
@@ -121,7 +139,7 @@ export class ArenaScene extends Phaser.Scene {
     // to the arena with a top-left origin so fragment space maps 1:1 to arena pixels.
     this.gridShader = this.add
       .shader(
-        new Phaser.Display.BaseShader('grid', GRID_FRAGMENT_SRC, undefined, buildGridUniforms()),
+        new Phaser.Display.BaseShader('grid', GRID_FRAGMENT_SRC, undefined, buildGridUniforms(this._qualityProfile.gridSpacing)),
         0,
         0,
         ARENA_WIDTH,
@@ -153,7 +171,9 @@ export class ArenaScene extends Phaser.Scene {
     // inline. The factory is the seam that makes the load-bearing wiring headlessly
     // assertable (buildArenaWorld.test.js); create() cannot be unit-tested because
     // it needs a live Phaser context.
-    const arena = buildArenaWorld();
+    const arena = buildArenaWorld({
+      particleMax: this._qualityProfile.particleMax,
+    });
     this.world = arena.world;
     this.ship = arena.ship;
     this.inputState = arena.inputState;
@@ -365,7 +385,7 @@ export class ArenaScene extends Phaser.Scene {
       ],
       Phaser.BlendModes.ADD,
     );
-    addNeonBloom(this.cameras.main);
+    addNeonBloom(this.cameras.main, this._qualityProfile.bloom);
 
     // --- Touch controls overlay (Story 7.1) ---------------------------------
     // The floating move/aim sticks + smart-bomb button, drawn each active render

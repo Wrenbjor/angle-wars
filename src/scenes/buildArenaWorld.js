@@ -64,7 +64,11 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 // their draws — inject per-system streams if independent sequences matter.
 // highScoreStorage: when omitted or null, defaults to createHighScoreStorage()
 // (the guarded localStorage port that no-ops when the store is unavailable).
-export function buildArenaWorld({ rng, highScoreStorage } = {}) {
+// particleMax: the live-particle cap threaded into the ParticleSystem. When omitted,
+// ParticleSystem's own `= PARTICLE_MAX` default applies (byte-identical to today);
+// ArenaScene passes the resolved quality profile's (smaller) mobile cap (Story 7.4),
+// mirroring the existing optional-injection pattern (rng / highScoreStorage).
+export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // Coerce the injected rng once: only a function is honored, so a null/non-function
   // value falls back to each system's own `= Math.random` default (undefined), the
   // same as the no-arg path — never stored raw to throw deep inside a tick.
@@ -315,6 +319,7 @@ export function buildArenaWorld({ rng, highScoreStorage } = {}) {
     ship,
     inputState,
     _rng,
+    particleMax,
   );
   world.addSystem(particleSystem);
 

@@ -922,3 +922,34 @@ export const SETTINGS_FULLSCREEN_DEFAULT = false;
 // ArenaScene suppresses the grid warp, full-screen flash, and camera shake at
 // render time; it is read once at ArenaScene.create() (never live re-read mid-run).
 export const SETTINGS_REDUCED_MOTION_DEFAULT = false;
+
+// --- Mobile performance profile (Story 7.4) ---------------------------------
+// The mobile-scaled counterparts of the desktop presentation-cost tunables. When
+// the game detects it is running on a phone / inside the Capacitor WebView (see
+// src/config/qualityProfile.js), resolveQualityProfile() sources these values
+// instead of the desktop PARTICLE_MAX / NEON_BLOOM_* / GRID_SPACING, scaling the
+// particle cap, the bloom fill cost, and the grid line density DOWN so a mid-range
+// mobile GPU under peak load holds the 60 FPS target (NFR9, NFR1). The profile is
+// resolved ONCE per ArenaScene.create() (device-derived, never per frame) and
+// threaded into the three existing consumption seams, each of which defaults to its
+// desktop constant so non-mobile play is byte-identical. Every value here is a
+// documented post-launch placeholder (tuned on-device post-launch — this Linux host
+// has no phone GPU to measure), mirroring the NEON_BLOOM_* / GRID_* / PARTICLE_*
+// discipline. INVARIANT: each MOBILE_* value MUST be strictly less costly than its
+// desktop counterpart — a smaller particle cap, fewer bloom steps + lower blur/
+// strength, and a larger/coarser grid spacing.
+
+// Mobile hard cap on simultaneously-live particles (< PARTICLE_MAX): a smaller pool
+// and per-frame render cost for the weaker mobile fill rate.
+export const MOBILE_PARTICLE_MAX = 800;
+// Mobile bloom blur strength (<= NEON_BLOOM_BLUR_STRENGTH): a tighter, cheaper halo.
+export const MOBILE_NEON_BLOOM_BLUR_STRENGTH = 0.8;
+// Mobile bloom blend strength (<= NEON_BLOOM_STRENGTH): a slightly dimmer bleed.
+export const MOBILE_NEON_BLOOM_STRENGTH = 0.9;
+// Mobile bloom steps (< NEON_BLOOM_STEPS, integer): the load-bearing GPU win — the
+// bloom fill pass is screen-space, so halving the step count roughly halves its cost.
+export const MOBILE_NEON_BLOOM_STEPS = 2;
+// Mobile grid line spacing (> GRID_SPACING): a coarser grid draws fewer neon lines
+// (less smoothstep fill) — the honest "grid resolution down" knob, without touching
+// the shader's compiled GRID_MAX_RIPPLES #define.
+export const MOBILE_GRID_SPACING = 72;

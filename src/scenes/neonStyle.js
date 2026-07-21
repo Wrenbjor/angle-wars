@@ -58,20 +58,27 @@ export function applyAdditiveBlend(layers, blendAdd) {
 }
 
 /**
- * Register ONE Bloom post-FX pass on the given camera from NEON_BLOOM. Cost is a
+ * Register ONE Bloom post-FX pass on the given camera from a bloom config. Cost is a
  * single screen-space pass independent of entity count (this is why it holds
- * 60 FPS in a busy arena). Forwards the NEON_BLOOM tuple positionally in the
+ * 60 FPS in a busy arena). Forwards the config's fields positionally in the
  * documented addBloom order.
+ *
+ * `bloomConfig` defaults to the desktop NEON_BLOOM, so an omitted arg is byte-identical
+ * to today's registration. ArenaScene injects the resolved quality profile's bloom
+ * (Story 7.4) — the mobile variant lowers the blur/strength and step count so the
+ * screen-space fill pass is cheaper on a phone GPU.
  * @param {{postFX: {addBloom: function}}} camera The camera (cameras.main).
+ * @param {{color:number, offsetX:number, offsetY:number, blurStrength:number, strength:number, steps:number}} [bloomConfig]
+ *   The bloom tuple (defaults to NEON_BLOOM).
  * @returns {*} The Bloom FX controller returned by addBloom.
  */
-export function addNeonBloom(camera) {
+export function addNeonBloom(camera, bloomConfig = NEON_BLOOM) {
   return camera.postFX.addBloom(
-    NEON_BLOOM.color,
-    NEON_BLOOM.offsetX,
-    NEON_BLOOM.offsetY,
-    NEON_BLOOM.blurStrength,
-    NEON_BLOOM.strength,
-    NEON_BLOOM.steps,
+    bloomConfig.color,
+    bloomConfig.offsetX,
+    bloomConfig.offsetY,
+    bloomConfig.blurStrength,
+    bloomConfig.strength,
+    bloomConfig.steps,
   );
 }

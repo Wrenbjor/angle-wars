@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildArenaWorld } from './buildArenaWorld.js';
 import {
   FIXED_STEP_MS,
+  PARTICLE_MAX,
   SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
   SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
 } from '../config/constants.js';
@@ -205,6 +206,16 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(() => {
       for (let i = 0; i < 120; i++) world.fixedUpdate(FIXED_STEP_MS);
     }).not.toThrow();
+  });
+
+  it('threads an injected particleMax into the ParticleSystem cap (Story 7.4)', () => {
+    const ctx = buildArenaWorld({ particleMax: 300 });
+    expect(ctx.particleSystem.maxParticles).toBe(300);
+  });
+
+  it('defaults the ParticleSystem cap to PARTICLE_MAX when particleMax is omitted', () => {
+    const ctx = buildArenaWorld();
+    expect(ctx.particleSystem.maxParticles).toBe(PARTICLE_MAX);
   });
 
   it('honors an injected high-score port', () => {

@@ -66,6 +66,27 @@ describe('buildGridUniforms — shape & types', () => {
     });
   });
 
+  it('injects a custom gridSpacing into uGridSpacing (Story 7.4 mobile profile)', () => {
+    const u = buildGridUniforms(72);
+    expect(u.uGridSpacing).toEqual({ type: '1f', value: 72 });
+  });
+
+  it('falls back to GRID_SPACING for a 0 / negative injected spacing (placeholder footgun guard)', () => {
+    // A 0 / negative spacing would NaN the shader's mod(sampled, uGridSpacing) math.
+    expect(buildGridUniforms(0).uGridSpacing.value).toBe(GRID_SPACING);
+    expect(buildGridUniforms(-10).uGridSpacing.value).toBe(GRID_SPACING);
+  });
+
+  it('defaults uGridSpacing to GRID_SPACING when the arg is omitted (byte-identical desktop)', () => {
+    const u = buildGridUniforms();
+    expect(u.uGridSpacing.value).toBe(GRID_SPACING);
+    // Every OTHER static uniform is unaffected by the injected spacing.
+    const injected = buildGridUniforms(999);
+    expect(injected.uGridLineWidth).toEqual(u.uGridLineWidth);
+    expect(injected.uGridColor).toEqual(u.uGridColor);
+    expect(injected.uRippleSpeed).toEqual(u.uRippleSpeed);
+  });
+
   it('uRipples is a 3fv Float32Array of length 3*GRID_MAX_RIPPLES seeded inactive', () => {
     const u = buildGridUniforms();
     expect(u.uRipples.type).toBe('3fv');

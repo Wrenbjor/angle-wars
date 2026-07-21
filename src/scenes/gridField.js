@@ -145,9 +145,21 @@ void main() {
  * NOTE: Phaser deep-copies this config into the live Shader GameObject at creation,
  * so per-frame packing must target `shader.uniforms` (the live copy), not the object
  * returned here — see ArenaScene.
+ *
+ * `gridSpacing` defaults to the desktop GRID_SPACING, so an omitted arg is byte-identical
+ * to today's grid. ArenaScene injects the resolved quality profile's gridSpacing
+ * (Story 7.4) — the mobile variant is COARSER (larger spacing), drawing fewer neon
+ * lines (less smoothstep fill) for the weaker mobile GPU. It changes only the uniform
+ * value; the compiled shader (its GRID_MAX_RIPPLES #define) is untouched.
+ * @param {number} [gridSpacing] Grid line spacing in px (defaults to GRID_SPACING).
  * @returns {object} The uniforms config for `new Phaser.Display.BaseShader(...)`.
  */
-export function buildGridUniforms() {
+export function buildGridUniforms(gridSpacing = GRID_SPACING) {
+  // Guard the placeholder footgun: the `= GRID_SPACING` default only catches
+  // `undefined`, so a 0 / negative / NaN spacing would reach the shader and NaN its
+  // `mod(sampled, uGridSpacing)` line math. Fall back to the desktop spacing instead.
+  const spacing =
+    Number.isFinite(gridSpacing) && gridSpacing > 0 ? gridSpacing : GRID_SPACING;
   const uRipples = new Float32Array(3 * GRID_MAX_RIPPLES);
   // Seed every slot inactive: ageSeconds (the 3rd component) = -1 so the shader
   // skips it. x/y stay 0 and are irrelevant while inactive.
@@ -155,7 +167,7 @@ export function buildGridUniforms() {
     uRipples[i * 3 + 2] = -1;
   }
   return {
-    uGridSpacing: { type: '1f', value: GRID_SPACING },
+    uGridSpacing: { type: '1f', value: spacing },
     uGridLineWidth: { type: '1f', value: GRID_LINE_WIDTH },
     uGridColor: { type: '3f', value: colorToVec3(GRID_COLOR) },
     uRippleDurationSec: { type: '1f', value: GRID_RIPPLE_DURATION_MS / 1000 },
