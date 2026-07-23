@@ -24,7 +24,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-07-19
-last_updated: 2026-07-21
+last_updated: 2026-07-23
 project: Angle Wars
 project_key: NOKEY
 tracking_system: file-system
@@ -93,3 +93,75 @@ development_status:
   7-5-native-lifecycle-and-feel-integration: done
   7-6-store-release-scaffolding: done
   epic-7-retrospective: optional
+
+  # ===== v2 — Progression =====
+
+  # Epic 8 — The Level-Up Loop (XP, Curve & Card UI)
+  epic-8: backlog
+  8-1-xp-orbs-drop-drift-and-pickup: backlog
+  8-2-xp-level-curve-and-leveling: backlog
+  8-3-level-up-moment-and-card-ui: backlog
+  8-4-weighted-card-offer-and-slot-limits: backlog
+  8-5-reroll-and-banish: backlog
+  epic-8-retrospective: optional
+
+  # Epic 9 — Adaptive Spawn Director & Armored Threat
+  epic-9: backlog
+  9-1-player-dps-telemetry: backlog
+  9-2-build-adaptive-spawn-scaling: backlog
+  9-3-armored-enemy-archetype: backlog
+  9-4-governor-validation-power-spikes: backlog
+  epic-9-retrospective: optional
+
+  # Epic 10 — Core Arsenal (Stat-Stackers)
+  epic-10: backlog
+  10-1-item-and-upgrade-framework: backlog
+  10-2-overcharge: backlog
+  10-3-spread-cannon: backlog
+  10-4-nanite-shield: backlog
+  10-5-afterburner: backlog
+  epic-10-retrospective: optional
+
+  # Epic 11 — Exotic Arsenal & New Entity Systems
+  epic-11: backlog
+  11-1-orbit-blade: backlog
+  11-2-seeker-drones: backlog
+  11-3-mine-layer: backlog
+  11-4-piercing-lance: backlog
+  11-5-ricochet-rounds: backlog
+  11-6-flak-burst: backlog
+  11-7-gravity-well: backlog
+  11-8-reinforced-hull: backlog
+  11-9-bomb-capacitor: backlog
+  11-10-chrono-field: backlog
+  epic-11-retrospective: optional
+
+  # Epic 12 — The Fusion Tech Tree (Epics)
+  epic-12: backlog
+  12-1-fusion-system-and-ux: backlog
+  12-2-proof-epics-tesla-railgun-phase-armor: backlog
+  12-3-offense-epics: backlog
+  12-4-defense-epics: backlog
+  epic-12-retrospective: optional
+
+  # Epic 13 — The Generosity Engine (Opt-In Reward Ads)
+  epic-13: backlog
+  13-1-rewarded-ad-integration: backlog
+  13-2-ad-button-and-generosity-ux: backlog
+  13-3-cheat-code-reward-payouts: backlog
+  13-4-generosity-pillar-guardrails: backlog
+  epic-13-retrospective: optional
+
+  # Epic 14 — Meta-Progression & Ships
+  epic-14: backlog
+  14-1-cores-economy-and-persistence: backlog
+  14-2-permanent-core-tree: backlog
+  14-3-ship-unlocks-and-roster: backlog
+  14-4-ship-trade-off-integration: backlog
+  epic-14-retrospective: optional
+
+  # Epic 15 — Daily Seeded Run
+  epic-15: backlog
+  15-1-deterministic-simulation-hardening: backlog
+  15-2-daily-seeded-run-mode: backlog
+  epic-15-retrospective: optional
