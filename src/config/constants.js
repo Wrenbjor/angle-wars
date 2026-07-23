@@ -49,6 +49,19 @@ export const DPS_WINDOW_MS = 10000;
 // enemy is one-shot today). This is the Story 9.3 refinement seam — armored HP
 // will refine per-kill crediting through this same constant + the `dps` surface
 // without changing the telemetry system's shape.
+//
+// Story 10.2 NOTE: per-hit damage is now SCALABLE (Overcharge's `damageMult`
+// scales PLAYER_BULLET_BASE_DAMAGE per bullet), but the DPS unit deliberately
+// stays ONE-PER-HIT. `CollisionSystem.bulletDamageCount` remains an integer hit
+// count, so the rolling ring stays integer-valued (no float drift) and the Story
+// 9.2 governor keeps the calibration it was tuned against
+// (SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE is a hits/sec reference). A stronger
+// build reaches the governor through its fire-rate rungs ONLY — more hits/sec. The
+// damage rung is invisible here by design, and it is NOT true that more damage
+// reaches the governor "by killing durable enemies sooner": at Overcharge Lv1
+// (1.15x) `ceil(ARMORED_HP / 1.15) === ceil(5 / 1.15) === 5`, identical to base, so
+// nothing dies sooner and no hit is freed up. Above Lv1 it frees hits only
+// indirectly, never as damage magnitude. See DW-370.
 export const DPS_DAMAGE_PER_KILL = 1;
 
 // --- Player ship (feel) -----------------------------------------------------
@@ -136,6 +149,64 @@ export const COLOR_TOUCH_BOMB = 0xff66cc;
 // shots-per-second are identical regardless of render frame rate. Lower =
 // faster stream. 1000/FIRE_INTERVAL_MS ≈ shots per second.
 export const FIRE_INTERVAL_MS = 90;
+// Absolute lower bound (ms) on the EFFECTIVE fire interval once the player's
+// `fireRateMult` divides FIRE_INTERVAL_MS (Story 10.2). This is a SAFETY guard on
+// the `while (_accumMs >= interval)` spawn loop — it guarantees a strictly positive
+// interval so the loop always terminates, whatever multiplier the item framework
+// can produce. It is explicitly NOT a balance lever: it sits far below every
+// authored value (Overcharge Lv5's 1.4x yields 90/1.4 ≈ 64ms), so no shipped build
+// ever reaches it.
+export const FIRE_INTERVAL_FLOOR_MS = 10;
+// Absolute UPPER bound (ms) on the effective fire interval — the symmetric partner
+// of FIRE_INTERVAL_FLOOR_MS, and equally a SAFETY guard rather than a balance lever.
+// The floor stops a huge multiplier banking unbounded spawns per tick; this ceiling
+// stops a TINY positive multiplier producing an interval so large that the non-aiming
+// branch latches it into `_accumMs` and the next normal-multiplier tick has to work
+// that credit down one interval at a time. A merely FINITE guard is not enough there:
+// `fireRateMult = 1e-12` yields a finite 9e13 ms, which then costs ~1.4e12 spawn-loop
+// iterations to drain — a hang in everything but name. 9000ms is 100x the base
+// interval, far above any plausible slow-fire debuff, and bounds the post-latch drain
+// at ~140 iterations.
+export const FIRE_INTERVAL_CEIL_MS = 9000;
+// The named v1 per-bullet damage unit (Story 10.2). Every player bullet is stamped
+// at spawn with `PLAYER_BULLET_BASE_DAMAGE × playerStats.damageMult`, and the
+// CollisionSystem decrements a finite-`hp` enemy by that stamped amount. Keeping
+// the base at 1 preserves today's balance exactly (an unmodified bullet still
+// removes one hp per hit); it simply NAMES the unit `damageMult` scales.
+export const PLAYER_BULLET_BASE_DAMAGE = 1;
+// Absolute lower bound on the damage a single hit may apply to a finite-`hp` enemy.
+// The exact counterpart of FIRE_INTERVAL_FLOOR_MS, and a SAFETY guard for the same
+// reason: `hp -= dmg` makes NO progress at all once `dmg` falls below `ulp(hp)`, so a
+// finite, positive, but tiny stamped damage (e.g. 1e-12) leaves an armored enemy
+// mathematically unkillable by gunfire — it survives every hit forever while
+// `bulletDamageCount` keeps crediting the DPS governor a hit per tick. Clamping (not
+// falling back to the base unit) keeps the semantics honest: a weak bullet stays weak,
+// it just cannot be weak enough to stop making progress. 0.01 is 100x below the
+// smallest authored damage (the base unit, 1), so no shipped or authorable build
+// reaches it — it is not a balance lever.
+export const PLAYER_BULLET_MIN_DAMAGE = 0.01;
+// Float tolerance (hp units) on the CollisionSystem's survive/kill boundary
+// (Story 10.2). Scaled damage is rarely binary-exact (0.15/1.15/1.35/1.6 all have
+// repeating binary expansions), so repeated `hp -= dmg` leaves a positive residue of
+// a few ULPs: an hp that is an EXACT multiple of the per-hit damage would otherwise
+// survive one extra hit purely on rounding noise (hp 8 vs dmg 1.6 → a 4.4e-16
+// leftover that reads as "still alive"). The survive test is therefore
+// `hp > dmg + HP_EPSILON`, so a residual-epsilon sliver dies on the hit that should
+// have finished it. It can never absorb a real fraction of damage — it is a rounding
+// guard, not a balance lever.
+//
+// SIZING PREMISE, stated so it can be checked rather than assumed: this is an
+// ABSOLUTE tolerance, while the residue it absorbs grows as ulp(STARTING hp) x hit
+// count. It therefore holds only while hp stays O(10^3) or below. Measured: hp 6750 /
+// dmg 1.35 is still exact at 5000 hits; hp 67500 / dmg 1.35 costs one extra hit.
+// ARMORED_HP is 5 today, so the headroom is enormous — but note the coupling, because
+// the ledger's proposed fix for Overcharge's saturated damage ladder is to RAISE
+// ARMORED_HP and Epic 11 is where HP-bearing content lands. Scaling the tolerance to
+// the CURRENT hp does not extend the range (tried and measured: by the deciding
+// comparison hp has fallen to ~dmg, so the relative term is ~1e-12 against a residue
+// of ~4e-8). A durable fix means not accumulating the residue at all — integer or
+// fixed-point hp — which is a design change, not a constant change.
+export const HP_EPSILON = 1e-9;
 // Bullet travel speed (px/s). Velocity derives ONLY from the aim direction ×
 // this speed — never from the ship's velocity (the FR1 independence guarantee).
 export const BULLET_SPEED = 900;
@@ -338,8 +409,9 @@ export const REFLECTED_BULLET_HARMS_PLAYER = false;
 // The Armored enemy is the late-run counter that keeps melee/mine/AoE builds
 // relevant against a pure-projectile build. It is a slow homing chaser (mirrors
 // the Seeker's homing) with multi-hit `hp`: ONLY the projectile path
-// (CollisionSystem) decrements `hp` and releases at 0, so projectiles deal
-// REDUCED effective damage (ARMORED_HP hits to kill) while the AoE/melee paths
+// (CollisionSystem) decrements `hp` by the hitting bullet's damage and releases
+// when a hit meets or exceeds the remaining hp, so projectiles deal REDUCED
+// effective damage (ceil(hp / damage) hits to kill) while the AoE/melee paths
 // (smart bomb, black hole) — which release enemies unconditionally regardless of
 // `hp` — deal FULL damage for free. It is NEVER immune to anything. It spawns
 // through the SAME SpawnDirector + telegraph seam as every other archetype, gated
@@ -354,9 +426,17 @@ export const ARMORED_RADIUS = 20;
 // Homing speed (px/s). Velocity each tick = unit(ship − armored) × this. Slow
 // (below the Seeker) — it is a durable bruiser, not a fast chaser.
 export const ARMORED_SPEED = 70;
-// Bullet hits to kill: the armored survives (ARMORED_HP − 1) projectile hits and
-// is destroyed on the ARMORED_HP-th. ONLY the CollisionSystem (bullet) path reads
-// this; the AoE/melee paths ignore it (full damage — one hit). Tunable.
+// Projectile durability (hp) a fresh armored spawns with. ONLY the CollisionSystem
+// (bullet) path reads it; the AoE/melee paths ignore it (full damage — one hit).
+//
+// Hits to kill is NOT this number — since Story 10.2 each bullet carries its own
+// `damage` (PLAYER_BULLET_BASE_DAMAGE × the player's `damageMult`). The armored
+// SURVIVES while its remaining `hp` exceeds the hitting bullet's damage (hp is
+// decremented by that damage), and a hit whose damage MEETS OR EXCEEDS the remaining
+// hp KILLS it. So hits-to-kill is `ceil(hp / damage)`: ARMORED_HP at the base damage
+// unit of 1, and fewer as `damageMult` rises (at ARMORED_HP = 5, Overcharge Lv2+'s
+// 1.25x–1.6x all kill in 4). Tunable — but note that changing this value changes the
+// hits-to-kill ladder for every damage rung at once.
 export const ARMORED_HP = 5;
 // Base score awarded per Armored kill, carried on each instance. The ScoringSystem
 // multiplies this base by the run multiplier at the shared per-kill seam; keep this

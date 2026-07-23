@@ -27,8 +27,11 @@ import {
 //             frozen (ArmoredSystem skips its homing); it renders a spawn-in cue.
 //             Defaults to 0 (spawned-and-active); ArmoredSystem.spawn overwrites it.
 //  - hp     : the PROJECTILE-ONLY durability. ONLY the CollisionSystem (bullet)
-//             path decrements it: a hit with hp > 1 survives (hp -= 1), a hit at
-//             hp <= 1 kills. The AoE/melee paths (smart bomb, black hole) ignore hp
+//             path decrements it, by the HITTING BULLET's `damage` (Story 10.2):
+//             the armored survives while hp exceeds that damage (hp -= damage), and
+//             a hit whose damage meets or exceeds the remaining hp kills it. So
+//             hits-to-kill is ceil(hp / damage) — ARMORED_HP only at the base damage
+//             unit of 1. The AoE/melee paths (smart bomb, black hole) ignore hp
 //             entirely — they release unconditionally = full damage for free. Reset
 //             to ARMORED_HP on every spawn. This per-instance `hp` field is what
 //             distinguishes the armored from the one-hit archetypes (which have no

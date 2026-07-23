@@ -31,8 +31,11 @@ import {
 //
 // What makes it distinct is durability, not motion: each instance carries an `hp`
 // field reset to ARMORED_HP on spawn. ONLY the projectile path (CollisionSystem)
-// decrements it — a bullet hit with hp > 1 survives, a hit at hp <= 1 kills. The
-// AoE/melee paths (BombSystem, BlackHoleSystem) release enemies unconditionally
+// decrements it, by the HITTING BULLET's `damage` (Story 10.2) — the armored
+// survives while hp exceeds that damage, and a hit whose damage meets or exceeds the
+// remaining hp kills it (hits-to-kill = ceil(hp / damage), which is ARMORED_HP only
+// at the base damage unit). The AoE/melee paths (BombSystem, BlackHoleSystem)
+// release enemies unconditionally
 // regardless of hp, so they deal FULL damage for free. The asymmetry falls out of
 // WHERE hp is checked — no kind-enum, no new pipeline. This system holds no HP
 // logic itself; it only sets hp on spawn (the CollisionSystem owns the decrement).

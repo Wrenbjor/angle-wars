@@ -1,4 +1,9 @@
 import { System } from '../core/System.js';
+import {
+  PLAYER_BULLET_BASE_DAMAGE,
+  PLAYER_BULLET_MIN_DAMAGE,
+  HP_EPSILON,
+} from '../config/constants.js';
 
 // CollisionSystem — bullet↔enemy destruction across all archetype pools (Phaser-free).
 //
@@ -26,7 +31,8 @@ import { System } from '../core/System.js';
 // Zero per-frame allocation: reusable scratch arrays materialize the pools'
 // active sets (iterating a Set directly can't be indexed, and releasing mutates
 // it mid-iteration — both unsafe), a parallel array records each enemy's owning
-// pool so the release routes correctly, and pre-cleared reusable Sets track hits.
+// pool so the release routes correctly, and a pre-cleared reusable Set + Map track
+// hits (the Map carries each hit enemy's claiming-bullet damage — Story 10.2).
 // Releases are deferred to a second pass because mutating a pool's active set
 // mid-iteration is unsafe.
 export class CollisionSystem extends System {
@@ -59,10 +65,15 @@ export class CollisionSystem extends System {
     // `_collectEnemy`), so materializing the bullet set reuses one closure instead
     // of allocating a fresh arrow per tick.
     this._collectBullet = (b) => this._bullets.push(b);
-    // Reusable pre-cleared hit-tracking sets, so a bullet that already hit is
-    // skipped and an enemy already destroyed is skipped.
+    // Reusable pre-cleared hit-tracking structures, so a bullet that already hit is
+    // skipped and an enemy already hit this tick is skipped.
     this._hitBullets = new Set();
-    this._hitEnemies = new Set();
+    // enemy → the DAMAGE of the bullet that claimed it this tick (Story 10.2). A Map
+    // rather than a Set (or a parallel array) because pass 2 iterates ENEMIES, not
+    // bullets, and needs the damage of whichever bullet claimed each one. `.has()`
+    // reads are unchanged; the Map is `.clear()`ed each tick, so it is still reused
+    // (no per-tick allocation).
+    this._hitEnemies = new Map();
 
     // Public per-tick kill report: the enemies this system destroyed this tick
     // (any archetype). Reset at the top of every fixedUpdate (so an empty tick
@@ -174,7 +185,21 @@ export class CollisionSystem extends System {
         // Squared compare avoids a sqrt; ≤ so a boundary touch counts as a hit.
         if (dx * dx + dy * dy <= r * r) {
           hitBullets.add(b);
-          hitEnemies.add(s);
+          // Record the HITTING bullet's damage against this enemy (Story 10.2).
+          // Resolved defensively in two steps. FALLBACK: a bullet with no `damage`
+          // field (a hand-built fixture, or any non-FiringSystem bullet source) or a
+          // non-finite / non-positive value uses the named base unit, so the v1
+          // one-hit-one-unit contract is preserved for every such bullet. CLAMP: a
+          // finite, positive but TINY damage is floored at PLAYER_BULLET_MIN_DAMAGE,
+          // because `hp -= dmg` makes no progress at all once dmg falls below
+          // ulp(hp) — an unclamped 1e-12 leaves an armored enemy alive after every
+          // hit, forever, while still crediting the DPS governor a hit per tick.
+          hitEnemies.set(
+            s,
+            Number.isFinite(b.damage) && b.damage > 0
+              ? Math.max(PLAYER_BULLET_MIN_DAMAGE, b.damage)
+              : PLAYER_BULLET_BASE_DAMAGE,
+          );
           break; // bullet consumed — at most one enemy per bullet
         }
       }
@@ -182,21 +207,46 @@ export class CollisionSystem extends System {
 
     // Pass 2: resolve each marked hit (safe to mutate the pools now). Every hit
     // credits ONE integer damage-unit to `damageCount` (the honest per-hit build-
-    // power figure — Story 9.3). An ARMORED survivor (a finite hp > 1) ABSORBS the
-    // hit: hp is decremented and the enemy is NOT released and NOT reported as a
-    // kill (drops no orb / no score / no kill-ripple — a non-killing armor hit). A
-    // one-hit enemy (no hp field, or hp <= 1 — the armored's final hit) runs the
-    // existing kill path UNCHANGED: record it in the public kill report + snapshots
-    // for the ScoringSystem/grid/XP and release it to its OWNING pool. Iterate the
-    // parallel arrays so each release routes to the pool that owns that instance.
+    // power figure — Story 9.3; deliberately a HIT COUNT, not the scaled damage, so
+    // the DPS ring stays integer-valued and the Story 9.2 governor keeps its
+    // hits/sec calibration). An ARMORED survivor (a finite hp GREATER than the
+    // hitting bullet's damage, beyond the HP_EPSILON rounding guard) ABSORBS the
+    // hit: hp drops by that damage and the enemy is NOT released and NOT reported as
+    // a kill (drops no orb / no score / no kill-ripple — a non-killing armor hit). A
+    // one-hit enemy (no hp field, or an hp the hit meets or exceeds — the armored's
+    // final hit) runs the existing kill path UNCHANGED: record it in the public kill
+    // report + snapshots for the ScoringSystem/grid/XP and release it to its OWNING
+    // pool. Iterate the parallel arrays so each release routes to the pool that owns
+    // that instance.
+    //
+    // The rounding tolerance exists because scaled damage is rarely binary-exact:
+    // repeated `hp -= dmg` leaves a few-ULP positive residue, so an hp that is an
+    // exact multiple of the per-hit damage would survive one EXTRA hit on rounding
+    // noise alone (hp 8 / dmg 1.6 → 6 hits instead of 5). Comparing against
+    // `dmg + HP_EPSILON` kills that residual sliver on the hit that should have
+    // finished it. At the base damage unit (1) hp is integral and the epsilon is
+    // inert, so the pre-10.2 behavior is untouched.
+    //
+    // KNOWN LIMIT (see the ledger). The residue accumulates in proportion to
+    // ulp(STARTING hp) x hit count, while HP_EPSILON is absolute — so the guard holds
+    // only while hp stays O(10^3) or below. Measured: hp 6750 / dmg 1.35 is correct at
+    // 5000 hits; hp 67500 / dmg 1.35 takes 50001 instead of 50000. A tolerance scaled
+    // by the CURRENT hp does NOT fix this and was tried and rejected: by the deciding
+    // comparison hp has fallen to ~dmg, so the relative term is ~1e-12 while the
+    // accumulated residue is ~4e-8. A durable fix has to stop the accumulation (integer
+    // or fixed-point hp), not widen the tolerance. ARMORED_HP is 5 and Epic 11 is the
+    // first content that could approach the limit, so this is recorded, not guessed at.
     let damageCount = 0;
     for (let j = 0; j < enemies.length; j++) {
       const s = enemies[j];
       if (hitEnemies.has(s)) {
         damageCount++; // every hit = 1 integer damage-unit (armor survivor OR kill)
-        if (Number.isFinite(s.hp) && s.hp > 1) {
-          // Armored survivor: absorb one hit and live. NOT released, NOT a kill.
-          s.hp -= 1;
+        const dmg = hitEnemies.get(s); // the hitting bullet's damage (Story 10.2)
+        if (Number.isFinite(s.hp) && s.hp > dmg + HP_EPSILON) {
+          // Armored survivor: absorb this bullet's damage and live. NOT released,
+          // NOT a kill. At the base damage unit (1) this is byte-for-byte the
+          // pre-10.2 `hp > 1` / `hp -= 1` branch.
+          s.hp -= dmg;
           continue;
         }
         killedEnemies.push(s);

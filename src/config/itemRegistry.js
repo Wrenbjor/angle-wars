@@ -26,11 +26,12 @@
 //               never re-offered (cardWeight 0).
 //   - levels  : exactly five per-level effect descriptors. `desc` is the human text
 //               (from PRD §13.3/§13.4); `stats` is the current-level TOTAL modifier
-//               map the fold applies. THIS story registers every item with an EMPTY
-//               `stats: {}` — the framework is real, but each item's real per-level
-//               effect NUMBERS and gameplay-seam wiring land in its own story
-//               (Overcharge 10.2, Spread Cannon 10.3, Nanite Shield 10.4,
-//               Afterburner 10.5). So the fold is a proven no-op on real content today.
+//               map the fold applies, authored as FRACTIONAL BONUSES onto the fold's
+//               base (see the AUTHORING CONVENTION in state/PlayerStats.js). Each
+//               item's real per-level effect NUMBERS and gameplay-seam wiring land in
+//               its OWN story: Overcharge 10.2 (AUTHORED below), Spread Cannon 10.3,
+//               Nanite Shield 10.4, Afterburner 10.5 — those three still carry EMPTY
+//               `stats: {}` and contribute nothing to the fold until their story lands.
 //   - fusion  : {partner, epic} — this item at Lv5 + `partner` at Lv3 unlocks `epic`
 //               (PRD §13.5); or null when it has no fusion. Tracked + exposed here;
 //               Epic 12 owns the actual fusion consumption.
@@ -41,7 +42,8 @@ import { ITEM_MAX_LEVEL } from './constants.js';
  * The four Epic-10 items (PRD §13.3 offense / §13.4 defense) as data-driven
  * definitions. Frozen (the array and every entry + nested level/fusion object) so no
  * consumer can mutate the shared registry. Effect NUMBERS are deferred to each item's
- * own story — every `stats` map is empty here.
+ * own story — Overcharge's are authored (Story 10.2); the other three `stats` maps
+ * are still empty.
  * @type {ReadonlyArray<{ id: string, name: string, title: string,
  *   track: 'offense'|'defense', rarity: number, maxLevel: number,
  *   levels: ReadonlyArray<{ level: number, desc: string, stats: Object<string,number> }>,
@@ -56,12 +58,37 @@ export const ITEM_REGISTRY = Object.freeze([
     track: 'offense',
     rarity: 5,
     maxLevel: ITEM_MAX_LEVEL,
+    // Story 10.2 — the real per-level NUMBERS (PRD §13.3). Per the PlayerStats.js
+    // AUTHORING CONVENTION these are FRACTIONAL BONUSES folded onto the base of 1
+    // (`{ damageMult: 0.25 }` → 1.25x), and each level entry is the TOTAL at that
+    // level, not a delta from the level before it. Every value must agree with the
+    // `desc` text beside it — the registry is the single source of truth for both.
     levels: Object.freeze([
-      Object.freeze({ level: 1, desc: '+15% damage', stats: Object.freeze({}) }),
-      Object.freeze({ level: 2, desc: '+25% damage / +10% fire rate', stats: Object.freeze({}) }),
-      Object.freeze({ level: 3, desc: '+35% damage / +20% fire rate', stats: Object.freeze({}) }),
-      Object.freeze({ level: 4, desc: '+45% damage / +30% fire rate', stats: Object.freeze({}) }),
-      Object.freeze({ level: 5, desc: '+60% damage / +40% fire rate', stats: Object.freeze({}) }),
+      Object.freeze({
+        level: 1,
+        desc: '+15% damage',
+        stats: Object.freeze({ damageMult: 0.15 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '+25% damage / +10% fire rate',
+        stats: Object.freeze({ damageMult: 0.25, fireRateMult: 0.1 }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+35% damage / +20% fire rate',
+        stats: Object.freeze({ damageMult: 0.35, fireRateMult: 0.2 }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '+45% damage / +30% fire rate',
+        stats: Object.freeze({ damageMult: 0.45, fireRateMult: 0.3 }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '+60% damage / +40% fire rate',
+        stats: Object.freeze({ damageMult: 0.6, fireRateMult: 0.4 }),
+      }),
     ]),
     // Overcharge Lv5 + any 2 offense items at Lv5 → Critical Resonance (PRD §13.5).
     // The "any 2 offense" condition has no single partner id; Epic 12 resolves it.

@@ -5,6 +5,8 @@ import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
 import { createArmored } from '../entities/Armored.js';
+import { createPlayerStats, recomputePlayerStats } from '../state/PlayerStats.js';
+import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 import {
   FIXED_STEP_MS,
   BULLET_RADIUS,
@@ -15,6 +17,8 @@ import {
   ARMORED_HP,
   ARMORED_SCORE,
   ARMORED_XP,
+  PLAYER_BULLET_BASE_DAMAGE,
+  PLAYER_BULLET_MIN_DAMAGE,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -587,6 +591,357 @@ describe('CollisionSystem — armored HP (projectile-only durability, Story 9.3)
     armoredPool.release(s); // the unconditional AoE release
     expect(armoredPool.activeCount).toBe(0); // gone in one event, hp untouched/ignored
     expect(s.hp).toBe(ARMORED_HP);
+  });
+});
+
+describe('CollisionSystem — per-bullet damage (Story 10.2, Overcharge)', () => {
+  // Same harness as the armored-HP suite, plus a damage-carrying bullet helper. Every
+  // bullet the FiringSystem spawns is stamped with `base × damageMult`; this seam
+  // decrements a finite-`hp` enemy by THAT value instead of a hardcoded 1.
+  function makeArmoredSystem() {
+    const bulletPool = new Pool(createBullet);
+    const armoredPool = new Pool(createArmored);
+    const system = new CollisionSystem(bulletPool, [armoredPool]);
+    return { bulletPool, armoredPool, system };
+  }
+
+  function addArmored(pool, x, y, hp = ARMORED_HP) {
+    const s = pool.acquire();
+    s.x = x;
+    s.y = y;
+    s.vx = 0;
+    s.vy = 0;
+    s.hp = hp;
+    return s;
+  }
+
+  // A bullet stamped exactly as FiringSystem would (base × damageMult).
+  function addDamagingBullet(pool, x, y, damage) {
+    const b = addBullet(pool, x, y);
+    b.damage = damage;
+    return b;
+  }
+
+  it('the COLD factory shape carries the base damage unit', () => {
+    // Cold acquire only. Pool.release resets nothing, so a RECYCLED bullet still
+    // carries the previous shot's damage until it is stamped again — see the
+    // stamp-at-acquire obligation on the Bullet factory, and the FiringSystem test
+    // that pins the stamp actually happening on every recycled acquire.
+    expect(createBullet().damage).toBe(PLAYER_BULLET_BASE_DAMAGE);
+  });
+
+  it('damageMult 1.25 kills an ARMORED_HP enemy in 4 hits (base still takes 5)', () => {
+    // The headline observable: Overcharge Lv2's 1.25x crosses the 5-hp division
+    // boundary — ceil(5 / 1.25) = 4, one fewer hit than base's ceil(5 / 1) = 5.
+    const dmg = PLAYER_BULLET_BASE_DAMAGE * 1.25;
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 200, 200, ARMORED_HP);
+
+    let hits = 0;
+    while (armoredPool.activeCount > 0 && hits < 20) {
+      addDamagingBullet(bulletPool, 200, 200, dmg);
+      system.fixedUpdate(DT);
+      hits++;
+    }
+    expect(hits).toBe(4);
+    expect(system.killedEnemies).toContain(s);
+    expect(system.bulletKillCount).toBe(1);
+
+    // Base damage: the same enemy still takes the full ARMORED_HP hits.
+    const base = makeArmoredSystem();
+    addArmored(base.armoredPool, 200, 200, ARMORED_HP);
+    let baseHits = 0;
+    while (base.armoredPool.activeCount > 0 && baseHits < 20) {
+      addBullet(base.bulletPool, 200, 200); // factory damage = base unit
+      base.system.fixedUpdate(DT);
+      baseHits++;
+    }
+    expect(baseHits).toBe(ARMORED_HP);
+    expect(hits).toBeLessThan(baseHits);
+  });
+
+  it('decrements hp by the HITTING bullet\'s damage (fractional hp is well-defined)', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 300, 300, ARMORED_HP); // 5
+
+    addDamagingBullet(bulletPool, 300, 300, 1.25);
+    system.fixedUpdate(DT);
+    expect(s.hp).toBeCloseTo(3.75, 10);
+    expect(armoredPool.activeCount).toBe(1); // survived
+    expect(system.bulletDamageCount).toBe(1); // still ONE integer hit-unit
+
+    addDamagingBullet(bulletPool, 300, 300, 1.25);
+    system.fixedUpdate(DT);
+    expect(s.hp).toBeCloseTo(2.5, 10);
+
+    addDamagingBullet(bulletPool, 300, 300, 1.25);
+    system.fixedUpdate(DT);
+    expect(s.hp).toBeCloseTo(1.25, 10);
+    // Still alive, and LEFT sitting at exactly hp === damage: the survive test runs
+    // BEFORE the decrement, so this hit found hp 2.5 (> 1.25) and absorbed. The NEXT
+    // hit finds hp === damage, fails the survive test, and kills — see the
+    // "hp exactly equal is a kill" test below.
+    expect(armoredPool.activeCount).toBe(1);
+  });
+
+  it('kills when hp <= the hitting damage (hp exactly equal is a kill, not a 0-hp survivor)', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 400, 400, 1.25);
+    addDamagingBullet(bulletPool, 400, 400, 1.25);
+    system.fixedUpdate(DT);
+    // `hp > damage` survives; equality falls through to the kill path, so no enemy
+    // can be left stranded at exactly 0 hp.
+    expect(armoredPool.activeCount).toBe(0);
+    expect(system.killedEnemies).toContain(s);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletDamageCount).toBe(1);
+  });
+
+  it('a single overwhelming hit kills outright (no negative hp survivor)', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 250, 250, ARMORED_HP);
+    addDamagingBullet(bulletPool, 250, 250, ARMORED_HP + 3);
+    system.fixedUpdate(DT);
+    expect(armoredPool.activeCount).toBe(0);
+    expect(system.killedEnemies).toContain(s);
+    expect(system.bulletDamageCount).toBe(1); // still exactly one integer hit-unit
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['NaN', NaN],
+    ['zero', 0],
+    ['negative', -3],
+    ['Infinity', Infinity],
+    ['a string', '2'],
+  ])(
+    'falls back to PLAYER_BULLET_BASE_DAMAGE for a bullet whose damage is %s',
+    (_label, value) => {
+      // Hand-built fixtures and any non-FiringSystem bullet source keep the v1
+      // one-hit-one-unit contract.
+      const { bulletPool, armoredPool, system } = makeArmoredSystem();
+      const s = addArmored(armoredPool, 200, 200, ARMORED_HP);
+      const b = addBullet(bulletPool, 200, 200);
+      if (value === undefined) delete b.damage;
+      else b.damage = value;
+
+      system.fixedUpdate(DT);
+
+      expect(s.hp).toBe(ARMORED_HP - PLAYER_BULLET_BASE_DAMAGE);
+      expect(armoredPool.activeCount).toBe(1);
+      expect(system.bulletDamageCount).toBe(1);
+    },
+  );
+
+  it('a one-shot enemy (no hp field) dies on the first hit at ANY damage', () => {
+    for (const dmg of [PLAYER_BULLET_BASE_DAMAGE, 1.15, 1.6, 0.25]) {
+      const { bulletPool, enemyPool, system } = makeSystem();
+      const s = addSeeker(enemyPool, 100, 100); // no hp field
+      addDamagingBullet(bulletPool, 100, 100, dmg);
+
+      system.fixedUpdate(DT);
+
+      expect(enemyPool.activeCount).toBe(0);
+      expect(system.killedEnemies).toContain(s);
+      expect(system.bulletKillCount).toBe(1);
+      expect(system.bulletDamageCount).toBe(1);
+      // Kill snapshots (coords + XP) recorded exactly as before.
+      expect(system.bulletKillX[0]).toBe(100);
+      expect(system.bulletKillY[0]).toBe(100);
+      expect(system.bulletKillXp.length).toBe(1);
+    }
+  });
+
+  it('two bullets over one armored in a tick: hp drops by exactly ONE bullet\'s damage', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 400, 400, ARMORED_HP);
+    addDamagingBullet(bulletPool, 400, 400, 1.6);
+    addDamagingBullet(bulletPool, 400, 400, 1.6);
+
+    system.fixedUpdate(DT);
+
+    expect(s.hp).toBeCloseTo(ARMORED_HP - 1.6, 10); // one decrement, not two
+    expect(system.bulletDamageCount).toBe(1);
+    expect(bulletPool.activeCount).toBe(1); // the second bullet stays active
+    expect(bulletPool.freeCount).toBe(1); // exactly one consumed
+  });
+
+  it('applies the claiming bullet\'s damage when bullets of DIFFERENT damage overlap one armored', () => {
+    // Pass 1 claims an enemy with the FIRST bullet that overlaps it (iteration order),
+    // and pass 2 must apply THAT bullet's damage — not the last-seen or a default.
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 500, 500, 10);
+    const first = addDamagingBullet(bulletPool, 500, 500, 1.6);
+    addDamagingBullet(bulletPool, 500, 500, 1.15);
+
+    system.fixedUpdate(DT);
+
+    expect(s.hp).toBeCloseTo(10 - 1.6, 10); // the FIRST bullet's damage
+    expect(bulletPool.activeCount).toBe(1);
+    // The consumed one is the claimer.
+    let stillActive = null;
+    bulletPool.forEachActive((b) => {
+      stillActive = b;
+    });
+    expect(stillActive).not.toBe(first);
+  });
+
+  it('bulletDamageCount stays an integer hit count under fractional damage (DPS ring unchanged)', () => {
+    // Story 9.2's governor is calibrated on hits/sec: crediting fractional damage here
+    // would re-tune it and re-open the float-drift hazard. Two armored survivors hit in
+    // one tick must report exactly 2, whatever the per-bullet damage.
+    const bulletPool = new Pool(createBullet);
+    const armoredPool = new Pool(createArmored);
+    const system = new CollisionSystem(bulletPool, [armoredPool]);
+    const a = addArmored(armoredPool, 100, 100, ARMORED_HP);
+    const b = addArmored(armoredPool, 600, 600, ARMORED_HP);
+    addDamagingBullet(bulletPool, 100, 100, 1.6);
+    addDamagingBullet(bulletPool, 600, 600, 1.15);
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletDamageCount).toBe(2);
+    expect(Number.isInteger(system.bulletDamageCount)).toBe(true);
+    expect(system.bulletKillCount).toBe(0);
+    expect(a.hp).toBeCloseTo(ARMORED_HP - 1.6, 10);
+    expect(b.hp).toBeCloseTo(ARMORED_HP - 1.15, 10);
+  });
+
+  // Hits to kill an enemy starting at `hp`, driven by a fresh system per run.
+  function hitsToKill(hp, damage) {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    addArmored(armoredPool, 200, 200, hp);
+    let hits = 0;
+    while (armoredPool.activeCount > 0 && hits < 50) {
+      addDamagingBullet(bulletPool, 200, 200, damage);
+      system.fixedUpdate(DT);
+      hits++;
+    }
+    expect(armoredPool.activeCount).toBe(0); // never bailed on the guard
+    return hits;
+  }
+
+  it.each([
+    // hp is an EXACT multiple of a damage value with no exact binary representation.
+    // Naive `hp > dmg` lets a few-ULP residue survive as a phantom sliver, costing an
+    // extra hit (8 / 1.6 → 6 instead of 5). HP_EPSILON is what makes the arithmetic
+    // read the way a balance tuner expects.
+    [8, 1.6, 5],
+    [6.75, 1.35, 5],
+    [4.5, 1.5, 3],
+    [5.6, 1.4, 4],
+  ])(
+    'kills in exactly ceil(hp/dmg) when hp is an exact multiple (hp %s / dmg %s → %s hits)',
+    (hp, damage, expected) => {
+      expect(hitsToKill(hp, damage)).toBe(expected);
+    },
+  );
+
+  it.each([
+    // Base plus all five Overcharge rungs against an ARMORED_HP (5) enemy, with the
+    // damage derived from the REAL registry via the REAL fold — not from literals —
+    // so an authoring change to the numbers shows up here as a changed ladder.
+    //
+    // Read this ladder honestly: Lv1 (1.15x) is INERT — ceil(5 / 1.15) = 5, the same
+    // as base — and the damage rung SATURATES at Lv2, because every value from 1.25x
+    // to 1.6x lands in ceil(5 / d) = 4. That is what the PRD-mandated numbers produce
+    // against the current one-shot roster (Armored is the game's only hp bearer); it
+    // is a balance observation logged to the deferred-work ledger, not a defect, and
+    // it resolves as HP-bearing content lands. Do NOT "fix" it by editing the
+    // authored numbers or ARMORED_HP — this test exists to keep the real resolution
+    // visible rather than hidden behind the single rung that happens to move.
+    [0, 5],
+    [1, 5],
+    [2, 4],
+    [3, 4],
+    [4, 4],
+    [5, 4],
+  ])(
+    'Overcharge Lv%i takes exactly %i hits to kill an ARMORED_HP enemy',
+    (level, expectedHits) => {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, level > 0 ? { overcharge: level } : {}, ITEM_REGISTRY);
+      const damage = PLAYER_BULLET_BASE_DAMAGE * ps.damageMult;
+      expect(hitsToKill(ARMORED_HP, damage)).toBe(expectedHits);
+      // Cross-check against the closed form the balance comment quotes.
+      expect(expectedHits).toBe(Math.ceil(ARMORED_HP / damage));
+    },
+  );
+
+  it('a higher Overcharge level never takes MORE hits to kill (monotonic ladder)', () => {
+    let prev = Infinity;
+    for (const level of [0, 1, 2, 3, 4, 5]) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, level > 0 ? { overcharge: level } : {}, ITEM_REGISTRY);
+      const hits = hitsToKill(ARMORED_HP, PLAYER_BULLET_BASE_DAMAGE * ps.damageMult);
+      expect(hits).toBeLessThanOrEqual(prev);
+      prev = hits;
+    }
+  });
+
+  it('leaves no phantom sliver: the killing hit is the one that reaches 0, not the one after', () => {
+    // The residue this guards is real — assert it exists so the test cannot silently
+    // become vacuous if the float behavior changes.
+    const residue = 8 - 1.6 - 1.6 - 1.6 - 1.6 - 1.6;
+    expect(residue).not.toBe(0); // ~4.44e-16 — positive, hence the epsilon
+    expect(Math.abs(residue)).toBeLessThan(1e-9);
+    expect(hitsToKill(8, 1.6)).toBe(5);
+  });
+
+  it.each([
+    ['a denormal', 5e-324],
+    ['1e-17 (below ulp(5))', 1e-17],
+    ['1e-12', 1e-12],
+  ])(
+    'floors %s stamped damage so a finite-hp enemy stays KILLABLE',
+    (_label, tinyDamage) => {
+      // Unfloored this is not "very slow", it is NEVER: `hp -= dmg` is an exact float
+      // no-op once dmg < ulp(hp), so hp never moves and the survive branch is taken
+      // forever while bulletDamageCount keeps crediting the DPS governor a hit per
+      // tick. The clamp is the damage-side counterpart of FIRE_INTERVAL_FLOOR_MS.
+      const expectedHits = Math.ceil(ARMORED_HP / PLAYER_BULLET_MIN_DAMAGE); // 500
+      const { bulletPool, armoredPool, system } = makeArmoredSystem();
+      addArmored(armoredPool, 200, 200, ARMORED_HP);
+      let hits = 0;
+      while (armoredPool.activeCount > 0 && hits < expectedHits + 10) {
+        addDamagingBullet(bulletPool, 200, 200, tinyDamage);
+        system.fixedUpdate(DT);
+        hits++;
+      }
+      expect(armoredPool.activeCount).toBe(0); // killable at all — the whole point
+      expect(hits).toBe(expectedHits); // clamped to the floor, so ceil(hp / floor)
+    },
+  );
+
+  it('does NOT clamp a damage at or above the floor (the floor is not a balance lever)', () => {
+    // Every authored value is >= the base unit (1), 100x above the floor, so the
+    // clamp must be invisible to real content.
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 200, 200, ARMORED_HP);
+    // Strictly ABOVE the floor: at exactly the floor, Math.max(floor, d) === d whether
+    // the clamp is present or absent, so the assertion could not fail for the property
+    // in the title. 3x the floor is still far below every authored value.
+    const above = PLAYER_BULLET_MIN_DAMAGE * 3;
+    addDamagingBullet(bulletPool, 200, 200, above);
+    system.fixedUpdate(DT);
+    expect(s.hp).toBeCloseTo(ARMORED_HP - above, 12);
+    expect(PLAYER_BULLET_MIN_DAMAGE).toBeLessThan(PLAYER_BULLET_BASE_DAMAGE);
+    expect(PLAYER_BULLET_MIN_DAMAGE).toBeGreaterThan(0);
+  });
+
+  it('reuses the hit-enemy Map across ticks, pre-cleared (no per-tick allocation)', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const ref = system._hitEnemies;
+    expect(ref).toBeInstanceOf(Map);
+    addArmored(armoredPool, 200, 200, ARMORED_HP);
+    addDamagingBullet(bulletPool, 200, 200, 1.25);
+    system.fixedUpdate(DT);
+    expect(system._hitEnemies).toBe(ref);
+    expect(ref.size).toBe(1);
+    // A tick with no overlap clears it (a stale entry would double-damage next tick).
+    system.fixedUpdate(DT);
+    expect(system._hitEnemies).toBe(ref);
+    expect(ref.size).toBe(0);
   });
 });
 

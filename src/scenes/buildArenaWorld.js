@@ -103,10 +103,20 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const playerMovementSystem = new PlayerMovementSystem(ship, inputState);
   world.addSystem(playerMovementSystem);
 
+  // Runtime player-stat modifier store (Story 10.1): folded from the owned build on
+  // each card pick (LevelUpSystem, wired far below), read by the item gameplay seams
+  // (Epic 10.2–10.5). Plain data with NO dependencies, so it is created here — above
+  // the Firing section — purely so the ONE instance can be threaded into
+  // FiringSystem's constructor (Story 10.2: fire cadence + per-bullet damage). The
+  // fold mutates this object IN PLACE, so every consumer holding this reference sees
+  // an upgrade with no system reconstruction. Run-scoped, never touched by death.
+  const playerStats = createPlayerStats();
+
   // --- Firing -------------------------------------------------------------
   // Added after movement so bullets spawn from the ship's post-move position
-  // this tick. Owns its own bullet pool (not world.entities).
-  const firingSystem = new FiringSystem(ship, inputState);
+  // this tick. Owns its own bullet pool (not world.entities). Reads the SHARED
+  // playerStats store (Story 10.2) for its effective cadence + stamped bullet damage.
+  const firingSystem = new FiringSystem(ship, inputState, playerStats);
   world.addSystem(firingSystem);
 
   // --- Enemies ------------------------------------------------------------
@@ -153,10 +163,10 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // touched by the death path, so it resets on a fresh run and survives a non-final
   // death (mirrors scoreState.xp).
   const progressionState = createProgressionState();
-  // Runtime player-stat modifier store (Story 10.1): folded from the owned build on
-  // each card pick (LevelUpSystem), read by the item gameplay seams (Epic 10.2–10.5).
-  // A plain-data object beside progressionState; run-scoped, never touched by death.
-  const playerStats = createPlayerStats();
+  // (playerStats — the runtime modifier store that used to be created here — now
+  // lives above the Firing section so the ONE instance can be passed into
+  // FiringSystem's constructor. Same object, same lifetime; only the creation point
+  // moved. LevelUpSystem still folds into it below.)
   // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
   // another enemy pool, and deliberately NOT shared into the CollisionSystem /
   // BombSystem / BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire,

@@ -7,9 +7,10 @@ import {
 import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 
 // Story 10.1 — the runtime player-stat modifier store + its pure in-place fold. The
-// fold resets to base then adds each owned item's CURRENT-LEVEL stats contribution. The
-// four shipped items carry EMPTY stats, so the fold is a proven no-op on real content
-// today; a SYNTHETIC-fixture registry drives the real folding math.
+// fold resets to base then adds each owned item's CURRENT-LEVEL stats contribution. A
+// SYNTHETIC-fixture registry drives the general folding math (including the malformed-
+// definition guards); Story 10.2 added the first REAL-content exercise below, driving
+// the SHIPPED ITEM_REGISTRY with Overcharge owned at every level.
 
 // A synthetic registry whose stats maps are non-empty, so the fold is observable.
 // Level entries are TOTALS-at-that-level (not deltas summed across levels).
@@ -148,13 +149,30 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.shieldCharges).toBe(0);
   });
 
-  it('the SHIPPED registry folds to base today (all four items carry empty stats)', () => {
+  it('the SHIPPED registry contributes ONLY Overcharge today (10.3–10.5 stats still empty)', () => {
     const ps = createPlayerStats();
-    // Own every shipped item at a spread of levels — every stats map is empty, so the
-    // store stays exactly the base (the framework is real; item numbers are deferred).
+    // Own every shipped item at a spread of levels. Only Overcharge has authored
+    // numbers (Story 10.2); the other three carry empty stats maps, so the rest of
+    // the store stays exactly at base.
     recomputePlayerStats(
       ps,
       { overcharge: 5, 'spread-cannon': 3, 'nanite-shield': 2, afterburner: 4 },
+      ITEM_REGISTRY,
+    );
+    expect(ps.damageMult).toBeCloseTo(1.6);
+    expect(ps.fireRateMult).toBeCloseTo(1.4);
+    // The seams the other three stories own are untouched by this build.
+    expect(ps.moveSpeedMult).toBe(PLAYER_STATS_BASE.moveSpeedMult);
+    expect(ps.shieldCharges).toBe(PLAYER_STATS_BASE.shieldCharges);
+    // And the fold introduced no key beyond the declared base fields.
+    expect(Object.keys(ps).sort()).toEqual(Object.keys(PLAYER_STATS_BASE).sort());
+  });
+
+  it('the SHIPPED registry with NO Overcharge owned still folds to exactly base', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(
+      ps,
+      { 'spread-cannon': 5, 'nanite-shield': 5, afterburner: 5 },
       ITEM_REGISTRY,
     );
     expect(ps).toEqual({ ...PLAYER_STATS_BASE });
@@ -190,5 +208,53 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
       recomputePlayerStats(ps, { ghost: 2, dmg: 1 }, SYNTH_REGISTRY),
     ).not.toThrow();
     expect(ps.damageMult).toBeCloseTo(1.15); // only the known id folded
+  });
+});
+
+describe('recomputePlayerStats — Overcharge against the REAL registry (Story 10.2)', () => {
+  // The first real-content exercise of the fold: drive the SHIPPED ITEM_REGISTRY (not a
+  // synthetic fixture) at every Overcharge level and pin the resulting multipliers. This
+  // is what proves the authored fractional bonuses land as the intended TOTAL multipliers
+  // — an authoring slip (writing 1.25 instead of 0.25) would show up here as 2.25x.
+  const EXPECTED_BY_LEVEL = [
+    { level: 1, damageMult: 1.15, fireRateMult: 1 },
+    { level: 2, damageMult: 1.25, fireRateMult: 1.1 },
+    { level: 3, damageMult: 1.35, fireRateMult: 1.2 },
+    { level: 4, damageMult: 1.45, fireRateMult: 1.3 },
+    { level: 5, damageMult: 1.6, fireRateMult: 1.4 },
+  ];
+
+  it.each(EXPECTED_BY_LEVEL)(
+    'Overcharge Lv$level folds to damageMult $damageMult / fireRateMult $fireRateMult',
+    ({ level, damageMult, fireRateMult }) => {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { overcharge: level }, ITEM_REGISTRY);
+      expect(ps.damageMult).toBeCloseTo(damageMult, 10);
+      expect(ps.fireRateMult).toBeCloseTo(fireRateMult, 10);
+      // Overcharge touches ONLY the two global fire rungs.
+      expect(ps.moveSpeedMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+    },
+  );
+
+  it('re-folding at a LOWER Overcharge level does not accumulate (levels are totals)', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    recomputePlayerStats(ps, { overcharge: 1 }, ITEM_REGISTRY);
+    expect(ps.damageMult).toBeCloseTo(1.15, 10);
+    expect(ps.fireRateMult).toBe(1); // L1 has no fire-rate rung — back to base
+  });
+
+  it('an over-cap Overcharge level clamps to the Lv5 entry', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 99 }, ITEM_REGISTRY);
+    expect(ps.damageMult).toBeCloseTo(1.6, 10);
+    expect(ps.fireRateMult).toBeCloseTo(1.4, 10);
+  });
+
+  it('an unowned (level 0) Overcharge contributes nothing', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 0 }, ITEM_REGISTRY);
+    expect(ps).toEqual({ ...PLAYER_STATS_BASE });
   });
 });

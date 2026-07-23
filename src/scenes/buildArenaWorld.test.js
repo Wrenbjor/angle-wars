@@ -1,14 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { buildArenaWorld } from './buildArenaWorld.js';
 import { ITEM_REGISTRY } from '../config/itemRegistry.js';
-import { PLAYER_STATS_BASE } from '../state/PlayerStats.js';
+import { PLAYER_STATS_BASE, recomputePlayerStats } from '../state/PlayerStats.js';
 import {
+  FIRE_INTERVAL_MS,
+  PLAYER_BULLET_BASE_DAMAGE,
   FIXED_STEP_MS,
   PARTICLE_MAX,
   SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
   SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
   SPAWN_DIRECTOR_ARMORED_BASE_WEIGHT,
   SPAWN_DIRECTOR_ARMORED_PEAK_WEIGHT,
+  ARMORED_HP,
   ARMORED_MIN_ELAPSED_MS,
   REROLL_INITIAL_CHARGES,
   BANISH_INITIAL_CHARGES,
@@ -294,6 +297,125 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.levelUpSystem.playerStats).toBe(ctx.playerStats);
     // Fresh run: the store is at its base (every field at its base value).
     expect(ctx.playerStats).toEqual({ ...PLAYER_STATS_BASE });
+  });
+
+  it('wires the FiringSystem (Story 10.2) with the SAME playerStats instance LevelUpSystem folds', () => {
+    const ctx = buildArenaWorld();
+    // One store, three holders: the ctx handle, the fold's target, and the firing seam.
+    // If the factory ever handed the firing system a copy, a card pick would fold into
+    // an object nothing reads and Overcharge would be inert.
+    expect(ctx.firingSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.firingSystem.playerStats).toBe(ctx.levelUpSystem.playerStats);
+    // At base, the firing seam is exactly the pre-10.2 cadence.
+    expect(ctx.firingSystem._fireIntervalMs()).toBe(FIRE_INTERVAL_MS);
+  });
+
+  it('an Overcharge fold changes the firing seam through the shared store, with no reconstruction', () => {
+    // The end-to-end path this story exists for: registry stats → fold → the ONE store
+    // → the firing seam's cadence + stamped bullet damage. Nothing is re-constructed.
+    const ctx = buildArenaWorld();
+    const firingSystem = ctx.firingSystem;
+
+    // Baseline: hold aim and step the world; the bullet carries the base damage unit
+    // and the cadence is the base interval.
+    ctx.inputState.setAim(0, 1);
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+    let spawned = [];
+    firingSystem.bulletPool.forEachActive((b) => spawned.push(b));
+    expect(spawned.length).toBeGreaterThan(0);
+    for (const b of spawned) expect(b.damage).toBe(PLAYER_BULLET_BASE_DAMAGE);
+    const baseInterval = firingSystem._fireIntervalMs();
+    expect(baseInterval).toBe(FIRE_INTERVAL_MS);
+    const systemsBefore = ctx.world.systems.slice();
+
+    // The card pick: own Overcharge at Lv5 and fold the REAL registry into the SHARED
+    // store, exactly as LevelUpSystem does on a selection.
+    ctx.progressionState.ownedCards.overcharge = 5;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+    expect(ctx.playerStats.damageMult).toBeCloseTo(1.6, 10);
+    expect(ctx.playerStats.fireRateMult).toBeCloseTo(1.4, 10);
+
+    // No system was replaced or re-added by the pick — the SAME instances still run.
+    // IDENTITY, not deep equality: `toEqual` would deep-walk the live system graph
+    // (pools, reusable Maps/Sets, cross-system late-binds) and would happily pass for
+    // a freshly constructed but structurally similar replacement — which is exactly
+    // the regression this assertion exists to catch.
+    expect(ctx.world.systems).toHaveLength(systemsBefore.length);
+    systemsBefore.forEach((s, i) => expect(ctx.world.systems[i]).toBe(s));
+    // The very same FiringSystem instance now reports the tighter cadence…
+    expect(firingSystem._fireIntervalMs()).toBeCloseTo(FIRE_INTERVAL_MS / 1.4, 10);
+    expect(firingSystem._fireIntervalMs()).toBeLessThan(baseInterval);
+
+    // …and the NEXT bullets it spawns carry the upgraded damage.
+    const before = new Set(spawned);
+    // Step the way the REAL loop does: FixedTimestep only ever calls
+    // world.fixedUpdate(stepMs), so a single oversized step would exercise a
+    // multi-interval-banking path the running game never produces.
+    for (let i = 0; i < 4; i++) ctx.world.fixedUpdate(FIXED_STEP_MS);
+    spawned = [];
+    firingSystem.bulletPool.forEachActive((b) => spawned.push(b));
+    const fresh = spawned.filter((b) => !before.has(b));
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const b of fresh) expect(b.damage).toBeCloseTo(1.6, 10);
+  });
+
+  it('kills an armored in FEWER hits at Overcharge Lv5 — through the ASSEMBLED pipeline', () => {
+    // The story's headline observable, driven at the surface the intent states it at:
+    // a player STAT goes in, an enemy DEATH comes out. Every other test proves one
+    // half — FiringSystem's stamp against a hand-built store, or CollisionSystem's
+    // decrement against a hand-stamped fixture bullet. No test drove a REAL
+    // FiringSystem-spawned bullet into a REAL CollisionSystem, so the join was pinned
+    // only by the stamp formula the ladder test re-derives as a literal of its own. If
+    // the stamp ever changed shape (rounding, a different base, a per-source
+    // multiplier), both halves would stay green while "Overcharge kills armored
+    // enemies faster" quietly stopped being true.
+    function isActive(pool, target) {
+      let found = false;
+      pool.forEachActive((e) => {
+        if (e === target) found = true;
+      });
+      return found;
+    }
+
+    function hitsToKill(overchargeLevel) {
+      const ctx = buildArenaWorld();
+      if (overchargeLevel > 0) {
+        ctx.progressionState.ownedCards.overcharge = overchargeLevel;
+        recomputePlayerStats(
+          ctx.levelUpSystem.playerStats,
+          ctx.progressionState.ownedCards,
+          ITEM_REGISTRY,
+        );
+      }
+      const armored = ctx.armoredSystem.enemyPool.acquire();
+      armored.hp = ARMORED_HP;
+      ctx.inputState.setAim(0, 1);
+      let hits = 0;
+      for (let tick = 0; tick < 500; tick++) {
+        // Park the armored on the ship's nose so every spawned bullet reaches it, and
+        // re-pin it each tick so ArmoredSystem's homing never carries it out of the
+        // firing line. Only the DAMAGE PATH is under test here, not pursuit.
+        armored.x = ctx.ship.x;
+        armored.y = ctx.ship.y + ctx.ship.radius;
+        armored.vx = 0;
+        armored.vy = 0;
+        ctx.world.fixedUpdate(FIXED_STEP_MS);
+        hits += ctx.collisionSystem.bulletDamageCount;
+        if (!isActive(ctx.armoredSystem.enemyPool, armored)) return hits;
+      }
+      throw new Error('the armored never died — the damage path is not connected');
+    }
+
+    // Base: the pre-10.2 contract, unchanged. Lv5: strictly fewer hits.
+    const base = hitsToKill(0);
+    const lv5 = hitsToKill(5);
+    expect(base).toBe(ARMORED_HP); // 5 hits at 1 damage per hit
+    expect(lv5).toBe(Math.ceil(ARMORED_HP / 1.6)); // 4 at damageMult 1.6
+    expect(lv5).toBeLessThan(base);
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {

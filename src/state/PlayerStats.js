@@ -10,10 +10,11 @@
 //
 // Field vocabulary starts minimal and each item story extends it. The fold is
 // additive onto a per-field base: MULTIPLIER fields (suffix `Mult`) base at 1, all
-// other (additive/count) fields base at 0. Because Story 10.1's four registered items
-// carry EMPTY `stats` maps, the fold is a no-op on real content today and is proven by
-// a synthetic-fixture test — the framework is real; the item numbers are each story's
-// job.
+// other (additive/count) fields base at 0. Story 10.2 gave the fold its first REAL
+// content: Overcharge's five levels carry authored `damageMult`/`fireRateMult` maps,
+// exercised against the SHIPPED registry in playerStats.test.js (not only against
+// synthetic fixtures). The other three items (10.3–10.5) still carry empty `stats`
+// maps — the framework is real; the item numbers are each story's job.
 //
 // AUTHORING CONVENTION (read this before writing any `stats` map in stories 10.2–10.5).
 // The fold ADDS onto the base, so a `*Mult` entry is the FRACTIONAL BONUS, never the
