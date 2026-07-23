@@ -354,3 +354,11 @@ source_spec: `spec-7-6-store-release-scaffolding.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260721-001456-df79; this entry preserves the lingering recommendation for a deliberate later review.
 status: open
+
+- source_spec: `spec-9-1-player-dps-telemetry.md`
+  summary: The DPS estimator's incremental running-sum (evict-then-add) and the test's exact-equality decay assertions (`toBe(0)`) are exact only while per-kill damage is integer (v1 one-shot, `DPS_DAMAGE_PER_KILL = 1`); Story 9.3's armored-HP fractional per-kill crediting will introduce float drift (potential slightly-negative `dps`) and make the exact-equality tests flaky.
+  evidence: Adversarial + edge-case layers converged (BH#2/#6, Edge#2). Not reachable under the current integer model (Float64 integer cancellation is exact, so no drift and `toBe(0)` holds), so it is deferred rather than patched — it is triggered only by Story 9.3, which the code explicitly names as the `DPS_DAMAGE_PER_KILL`/`dps` refinement seam. Fix when 9.3 lands: periodic full re-sum from the ring (or clamp `dps = Math.max(0, ...)`) and switch decay assertions to `toBeCloseTo`.
+
+- source_spec: `spec-9-1-player-dps-telemetry.md`
+  summary: `dps` decays during the level-up time-dilation window (sim keeps ticking at LEVELUP_TIME_SCALE while the player is held non-firing), so the rolling estimate sags right after a card is gained — Story 9.2's adaptive spawn director could read an artificially depressed build-power signal exactly when the build just got stronger.
+  evidence: Adversarial layer (BH#7). Real behavior, but it is a Story 9.2 *consumer* design consideration, not a defect in this producer-only story — the estimate correctly reports *realized* output (a level-up is a lull), matching the AC's "or a lull" clause. Resolve in Story 9.2 by deciding whether the director should ignore/hold `dps` during and just after `levelUpSystem.selectionActive`.

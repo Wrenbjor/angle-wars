@@ -16,11 +16,12 @@ import {
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 23-system registration order (spec Design Notes; Story 6.3 added
+// The canonical 24-system registration order (spec Design Notes; Story 6.3 added
 // MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector;
 // Story 8.1 added XpOrbSystem right after the BombSystem late-bind; Story 8.2 added
 // LevelSystem right after XpOrbSystem; Story 8.3 added LevelUpSystem right after
-// LevelSystem, before PlayerDeathSystem).
+// LevelSystem, before PlayerDeathSystem; Story 9.1 added DpsTelemetrySystem right
+// after ScoringSystem, before BlackHoleSystem).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -33,6 +34,7 @@ const CANONICAL_ORDER = [
   'SpawnDirector',
   'CollisionSystem',
   'ScoringSystem',
+  'DpsTelemetrySystem',
   'BlackHoleSystem',
   'BombSystem',
   'XpOrbSystem',
@@ -73,6 +75,7 @@ const RETURN_HANDLES = [
   'spawnDirector',
   'collisionSystem',
   'scoringSystem',
+  'dpsTelemetrySystem',
   'blackHoleSystem',
   'bombSystem',
   'xpOrbSystem',
@@ -95,7 +98,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 23 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 24 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -163,6 +166,17 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.mirrorReflectorSystem.bulletPool).toBe(ctx.firingSystem.bulletPool);
     expect(ctx.mirrorReflectorSystem.playerState).toBe(ctx.playerState);
     expect(ctx.mirrorReflectorSystem.scoreState).toBe(ctx.scoreState);
+  });
+
+  it('wires the DpsTelemetrySystem (Story 9.1) over the shared collisionSystem, dps starting at 0', () => {
+    const ctx = buildArenaWorld();
+    // Returned as its own handle.
+    expect(ctx.dpsTelemetrySystem).toBeDefined();
+    // Its telemetry source is the SAME shared collision system the rest of the
+    // world uses — it reads that seam's latched per-tick bulletKillCount.
+    expect(ctx.dpsTelemetrySystem.collisionSystem).toBe(ctx.collisionSystem);
+    // Fresh build: the rolling estimate starts empty.
+    expect(ctx.dpsTelemetrySystem.dps).toBe(0);
   });
 
   it('wires the XpOrbSystem (Story 8.1) with the shared drop-report sources + ship + scoreState', () => {

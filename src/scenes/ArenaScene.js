@@ -239,6 +239,7 @@ export class ArenaScene extends Phaser.Scene {
     this.spawnDirector = arena.spawnDirector;
     this.collisionSystem = arena.collisionSystem;
     this.scoringSystem = arena.scoringSystem;
+    this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
     this.bombSystem = arena.bombSystem;
     this.xpOrbSystem = arena.xpOrbSystem;
@@ -1652,6 +1653,7 @@ export class ArenaScene extends Phaser.Scene {
           `sim ticks  : ${this.simClock.ticks}`,
           `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
           `cards      : ${Object.keys(this.progressionState.ownedCards).length}  stat ${this.progressionState.debugStat}`,
+          `dps        : ${this.dpsTelemetrySystem.dps.toFixed(1)}`,
         ].join('\n'),
       );
     }

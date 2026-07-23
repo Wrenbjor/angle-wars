@@ -24,6 +24,7 @@ import { MirrorReflectorSystem } from '../systems/MirrorReflectorSystem.js';
 import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
+import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
 import { BombSystem } from '../systems/BombSystem.js';
 import { ExtraLifeSystem } from '../systems/ExtraLifeSystem.js';
@@ -231,6 +232,16 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const scoringSystem = new ScoringSystem(collisionSystem, scoreState);
   world.addSystem(scoringSystem);
 
+  // --- Player DPS telemetry (Story 9.1 / Epic 9) --------------------------
+  // A pure observer that maintains a rolling ~10s estimate of player weapon
+  // output (the build-power signal Story 9.2's adaptive spawn director will
+  // consume). Registered immediately AFTER CollisionSystem/ScoringSystem so it
+  // reads THIS tick's FINAL collisionSystem.bulletKillCount (the bullet-only
+  // count, bomb/black-hole removals excluded). It writes only its own fields —
+  // it mutates no pool, score, xp, or player state. Nothing consumes `dps` yet.
+  const dpsTelemetrySystem = new DpsTelemetrySystem(collisionSystem);
+  world.addSystem(dpsTelemetrySystem);
+
   // The shared player lifecycle state (playerState) was likewise created up in the
   // enemy section (Story 6.3): the MirrorReflectorSystem, the BlackHoleSystem (a
   // detonation sets playerState.pendingDeath), and the PlayerDeathSystem (consumes it)
@@ -431,6 +442,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     spawnDirector,
     collisionSystem,
     scoringSystem,
+    dpsTelemetrySystem,
     blackHoleSystem,
     bombSystem,
     xpOrbSystem,

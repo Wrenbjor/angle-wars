@@ -34,6 +34,23 @@ export const FIXED_STEP_MS = 1000 / 60;
 // into an ever-growing catch-up loop.
 export const MAX_SUB_STEPS = 5;
 
+// --- Player DPS telemetry (Story 9.1 / Epic 9) ------------------------------
+// The DpsTelemetrySystem maintains a rolling estimate of player weapon output
+// (the build-power signal Story 9.2's adaptive spawn director consumes). The
+// estimate is a rolling average over the last DPS_WINDOW_MS of simulated time,
+// advanced ONLY by the fixed step (never wall-clock), so it is frame-rate-
+// independent by construction. Both values are tunable placeholders.
+//
+// Rolling-window length (ms). A single kill contributes only its averaged share
+// (1 / (window in seconds)) so the estimate can never spike on an individual
+// hit, and a sustained change in output tracks in/out gradually over the window.
+export const DPS_WINDOW_MS = 10000;
+// v1 one-shot damage model: one player bullet-kill == one damage unit (every
+// enemy is one-shot today). This is the Story 9.3 refinement seam — armored HP
+// will refine per-kill crediting through this same constant + the `dps` surface
+// without changing the telemetry system's shape.
+export const DPS_DAMAGE_PER_KILL = 1;
+
 // --- Player ship (feel) -----------------------------------------------------
 // Velocity-based movement model. All values are tunable; motion is
 // frame-rate-independent (see PlayerMovementSystem) so these read in real-world

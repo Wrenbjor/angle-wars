@@ -107,7 +107,7 @@ development_status:
 
   # Epic 9 — Adaptive Spawn Director & Armored Threat
   epic-9: backlog
-  9-1-player-dps-telemetry: backlog
+  9-1-player-dps-telemetry: done
   9-2-build-adaptive-spawn-scaling: backlog
   9-3-armored-enemy-archetype: backlog
   9-4-governor-validation-power-spikes: backlog
