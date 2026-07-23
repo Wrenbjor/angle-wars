@@ -10,6 +10,7 @@ import { createBlackHole, blackHoleInstability } from '../entities/BlackHole.js'
 import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createPinwheel } from '../entities/Pinwheel.js';
+import { createArmored } from '../entities/Armored.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createScoreState } from '../state/ScoreState.js';
 import { createPlayerState } from '../state/PlayerState.js';
@@ -36,6 +37,7 @@ import {
   PLAYER_START_LIVES,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
+  ARMORED_HP,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -236,6 +238,42 @@ describe('BlackHoleSystem — enemy absorption GROWS the radius (AC — grow)', 
     expect(hole.radius).toBeCloseTo(startRadius + BLACKHOLE_GROWTH_PER_ABSORB, 9);
     // Absorbed enemy is NOT scored (BlackHoleSystem runs AFTER ScoringSystem).
     expect(scoreState.score).toBe(scoreBefore);
+  });
+
+  it('absorbs an ARMORED enemy in one event regardless of its hp (AoE = full damage, Story 9.3)', () => {
+    // I/O Matrix row 5: a black hole absorbing an armored destroys it in that single
+    // event whatever its remaining hp — hp is only ever decremented in the projectile
+    // seam, and the absorb path releases unconditionally like any other enemy.
+    const bulletPool = new Pool(createBullet);
+    const armoredPool = new Pool(createArmored);
+    const { system } = makeSystem({
+      bulletPool,
+      enemyPools: [armoredPool],
+    });
+    const collision = new CollisionSystem(bulletPool, [armoredPool]);
+    system.collisionSystem = collision;
+
+    const hole = placeHole(system, CENTER_X, CENTER_Y);
+    const startRadius = hole.radius;
+    // An ACTIVE, multi-hit armored overlapping the hole body.
+    const armored = armoredPool.acquire();
+    armored.x = CENTER_X;
+    armored.y = CENTER_Y;
+    armored.telegraphMs = 0;
+    armored.hp = ARMORED_HP;
+    expect(ARMORED_HP).toBeGreaterThan(1); // genuinely multi-hit
+
+    // Mirror the real tick order: Collision (resets its report; no bullets) → BlackHole.
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+
+    // Absorbed in the single event regardless of hp = full damage.
+    expect(armoredPool.activeCount).toBe(0);
+    expect(collision.killedEnemies).toContain(armored);
+    // The absorb grew the hole just like any other enemy — the armored got no hp reprieve.
+    expect(hole.radius).toBeCloseTo(startRadius + BLACKHOLE_GROWTH_PER_ABSORB, 9);
+    // The absorb is not a projectile hit: no build-power credit.
+    expect(collision.bulletDamageCount).toBe(0);
   });
 
   it('does NOT absorb enemies before the collision system is late-bound (guarded); gravity + bullet-shrink still run', () => {

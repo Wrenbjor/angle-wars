@@ -4,6 +4,7 @@ import { Pool } from '../core/Pool.js';
 import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
+import { createArmored } from '../entities/Armored.js';
 import {
   FIXED_STEP_MS,
   BULLET_RADIUS,
@@ -11,6 +12,9 @@ import {
   SEEKER_SCORE,
   SEEKER_XP,
   GREEN_SQUARE_SCORE,
+  ARMORED_HP,
+  ARMORED_SCORE,
+  ARMORED_XP,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -418,6 +422,186 @@ describe('CollisionSystem — multiple archetype pools', () => {
     expect(greenPool.activeCount).toBe(0);
     expect(bulletPool.activeCount).toBe(0);
     expect(system.killedEnemies.length).toBe(2);
+  });
+});
+
+describe('CollisionSystem — armored HP (projectile-only durability, Story 9.3)', () => {
+  // A bullet pool + a dedicated armored pool (its own owning pool so releases route
+  // correctly) + a collision system spanning it. Armored carry an `hp` field; only
+  // the projectile path here decrements it.
+  function makeArmoredSystem() {
+    const bulletPool = new Pool(createBullet);
+    const armoredPool = new Pool(createArmored);
+    const system = new CollisionSystem(bulletPool, [armoredPool]);
+    return { bulletPool, armoredPool, system };
+  }
+
+  function addArmored(pool, x, y, hp = ARMORED_HP) {
+    const s = pool.acquire();
+    s.x = x;
+    s.y = y;
+    s.vx = 0;
+    s.vy = 0;
+    s.hp = hp;
+    return s;
+  }
+
+  it('starts bulletDamageCount at 0 before any tick', () => {
+    const { system } = makeArmoredSystem();
+    expect(system.bulletDamageCount).toBe(0);
+  });
+
+  it('an armored (hp = N) survives N−1 hits then dies on the Nth — each hit credits bulletDamageCount', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const N = ARMORED_HP;
+    expect(N).toBeGreaterThan(1); // the archetype is multi-hit by contract
+    const s = addArmored(armoredPool, 200, 200, N);
+
+    // First N−1 hits: the armored ABSORBS each — hp drops by 1, it is NOT released and
+    // NOT reported as a kill, but each damaging hit credits exactly 1 to bulletDamageCount.
+    for (let hit = 1; hit <= N - 1; hit++) {
+      addBullet(bulletPool, 200, 200); // a fresh bullet overlapping it (last was consumed)
+      system.fixedUpdate(DT);
+      expect(s.hp).toBe(N - hit); // decremented once per hit
+      expect(armoredPool.activeCount).toBe(1); // survived — still active
+      expect(system.killedEnemies).not.toContain(s); // NOT a kill
+      expect(system.killedEnemies.length).toBe(0);
+      expect(system.bulletKillCount).toBe(0); // kill-only latch stays 0 on a survive
+      expect(system.bulletDamageCount).toBe(1); // but damage WAS dealt
+      expect(bulletPool.activeCount).toBe(0); // the bullet was consumed
+    }
+
+    // The Nth hit (hp === 1) runs the UNCHANGED kill path: released, reported, snapshotted.
+    expect(s.hp).toBe(1);
+    addBullet(bulletPool, 200, 200);
+    system.fixedUpdate(DT);
+    expect(armoredPool.activeCount).toBe(0); // killed
+    expect(armoredPool.freeCount).toBe(1); // released to its pool
+    expect(system.killedEnemies).toContain(s);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletDamageCount).toBe(1); // the killing hit also credits 1
+    // Kill snapshots recorded at the kill point (Story 4.2 / 8.1 path unchanged).
+    expect(system.bulletKillX[0]).toBe(200);
+    expect(system.bulletKillY[0]).toBe(200);
+    expect(system.bulletKillXp.length).toBe(1);
+  });
+
+  it('damages an armored AT MOST once per tick — 3 bullets over one armored drop hp by exactly 1, consume exactly 1 bullet', () => {
+    // Pins the deliberate "an enemy is damaged at most once per tick" invariant for
+    // the armored path: three bullets all overlapping ONE armored in the same tick
+    // must still only decrement hp by 1 (not 3) and consume only the first bullet —
+    // pass 1's hitEnemies dedupe is what makes multi-hit HP well-defined per tick.
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 400, 400, 5);
+    addBullet(bulletPool, 400, 400);
+    addBullet(bulletPool, 400, 400);
+    addBullet(bulletPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(s.hp).toBe(4); // dropped by exactly 1, not 3
+    expect(system.bulletDamageCount).toBe(1); // one damaging hit this tick
+    expect(armoredPool.activeCount).toBe(1); // survived
+    expect(system.killedEnemies.length).toBe(0); // not a kill
+    // Exactly one bullet consumed; the other two find no unhit target and stay active.
+    expect(bulletPool.activeCount).toBe(2);
+    expect(bulletPool.freeCount).toBe(1);
+  });
+
+  it('a one-hit enemy (no hp field) still credits bulletDamageCount === 1 on its killing hit', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    addBullet(bulletPool, 100, 100);
+    addSeeker(enemyPool, 100, 100); // one-shot: no hp field
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletDamageCount).toBe(1); // a kill IS a damaging hit
+    expect(enemyPool.activeCount).toBe(0);
+  });
+
+  it('an armored with hp <= 1 is one-shot exactly like a one-hit enemy (never immune)', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 150, 150, 1); // final-hp armored
+
+    addBullet(bulletPool, 150, 150);
+    system.fixedUpdate(DT);
+
+    expect(armoredPool.activeCount).toBe(0); // released on the first hit
+    expect(system.killedEnemies).toContain(s);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletDamageCount).toBe(1);
+  });
+
+  it('a mixed tick (one-shot kill + armored survivor) reports bulletDamageCount 2, bulletKillCount 1', () => {
+    // One bullet pool, two enemy pools: a one-shot seeker and a durable armored, each
+    // overlapped by its own bullet. The seeker dies; the armored survives (hp > 1). Both
+    // are damaging hits, but only the seeker is a kill.
+    const bulletPool = new Pool(createBullet);
+    const seekerPool = new Pool(createSeeker);
+    const armoredPool = new Pool(createArmored);
+    const system = new CollisionSystem(bulletPool, [seekerPool, armoredPool]);
+
+    const seeker = addSeeker(seekerPool, 100, 100);
+    const armored = armoredPool.acquire();
+    armored.x = 500;
+    armored.y = 500;
+    armored.hp = 3;
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 500, 500);
+
+    system.fixedUpdate(DT);
+
+    // Two damaging hits this tick…
+    expect(system.bulletDamageCount).toBe(2);
+    // …but only one KILL (the seeker); the armored absorbed its hit.
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.killedEnemies.length).toBe(1);
+    expect(system.killedEnemies[0]).toBe(seeker);
+    expect(seekerPool.activeCount).toBe(0); // seeker killed
+    expect(armoredPool.activeCount).toBe(1); // armored survived
+    expect(armored.hp).toBe(2); // decremented once
+  });
+
+  it('re-latches bulletDamageCount each tick (a prior tick\'s damage does not carry over)', () => {
+    const { bulletPool, armoredPool, system } = makeArmoredSystem();
+    addArmored(armoredPool, 200, 200, ARMORED_HP);
+    addBullet(bulletPool, 200, 200);
+    system.fixedUpdate(DT);
+    expect(system.bulletDamageCount).toBe(1);
+
+    // Tick B: nothing overlaps (bullet consumed) → count resets to 0.
+    system.fixedUpdate(DT);
+    expect(system.bulletDamageCount).toBe(0);
+  });
+
+  it('a smart-bomb-style unconditional release ignores hp (AoE = full damage) — modeled by the death path, not here', () => {
+    // The CollisionSystem is the ONLY place hp is decremented. The AoE paths
+    // (BombSystem.detonateAt, BlackHoleSystem) release enemies unconditionally, so an
+    // armored with hp > 1 is destroyed in one event regardless of hp. This asserts the
+    // invariant this seam relies on: a direct pool.release() drops the armored whatever
+    // its hp — the collision seam never gets a say in the AoE path.
+    const { armoredPool } = makeArmoredSystem();
+    const s = addArmored(armoredPool, 300, 300, ARMORED_HP);
+    expect(armoredPool.activeCount).toBe(1);
+    armoredPool.release(s); // the unconditional AoE release
+    expect(armoredPool.activeCount).toBe(0); // gone in one event, hp untouched/ignored
+    expect(s.hp).toBe(ARMORED_HP);
+  });
+});
+
+describe('createArmored base values (Story 9.3)', () => {
+  it('gives a fresh armored full hp, base score, and base xp', () => {
+    const a = createArmored();
+    expect(a.hp).toBe(ARMORED_HP);
+    // Distinguished from the one-hit archetypes by carrying a finite hp > 1.
+    expect(Number.isFinite(a.hp)).toBe(true);
+    expect(a.hp).toBeGreaterThan(1);
+    // The per-type economy is carried on each instance (score/xp) — pin both so a
+    // copy-paste swap of the factory's adjacent score/xp lines cannot ship a warped
+    // economy with a green suite.
+    expect(a.score).toBe(ARMORED_SCORE);
+    expect(a.xp).toBe(ARMORED_XP);
   });
 });
 

@@ -16,6 +16,8 @@ import {
   COLOR_PINWHEEL,
   COLOR_SNAKE,
   COLOR_MIRROR_REFLECTOR,
+  COLOR_ARMORED,
+  ARMORED_HP,
   REFLECTOR_BAR_HALF_LENGTH,
   REFLECTOR_BAR_HALF_THICKNESS,
   REFLECTOR_WEIGHT_RADIUS,
@@ -236,6 +238,7 @@ export class ArenaScene extends Phaser.Scene {
     this.pinwheelSystem = arena.pinwheelSystem;
     this.snakeSystem = arena.snakeSystem;
     this.mirrorReflectorSystem = arena.mirrorReflectorSystem;
+    this.armoredSystem = arena.armoredSystem;
     this.spawnDirector = arena.spawnDirector;
     this.collisionSystem = arena.collisionSystem;
     this.scoringSystem = arena.scoringSystem;
@@ -425,6 +428,12 @@ export class ArenaScene extends Phaser.Scene {
     // the drawn bar/weights track the exact geometry the system's collision tests use.
     // Zero per-frame allocation aside from the single endpoints object per reflector.
     this.reflectorGraphics = this.add.graphics();
+    // Armored enemies (Story 9.3) are placeholder filled steel circles, cleared and
+    // redrawn each render frame from the ArmoredSystem's pool. On top of the base
+    // fill an inner durability disc shrinks with remaining hp (s.hp / ARMORED_HP), so
+    // a battered armored reads visibly closer to death. Epic 4 replaces this with the
+    // real armored aesthetic. Zero per-frame allocation (mirrors the seeker render).
+    this.armoredGraphics = this.add.graphics();
     // XP orbs (Story 8.1) are placeholder filled teal dots (one per active orb),
     // cleared and redrawn each render frame from the XpOrbSystem's pool. Drawn above
     // the enemy layers so a dropped pickup reads clearly. Epic 8 later stories own the
@@ -467,6 +476,7 @@ export class ArenaScene extends Phaser.Scene {
         this.snakeGraphics,
         this.blackHoleGraphics,
         this.reflectorGraphics,
+        this.armoredGraphics,
         this.xpOrbGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
@@ -1407,6 +1417,33 @@ export class ArenaScene extends Phaser.Scene {
       rfg.fillStyle(COLOR_MIRROR_REFLECTOR, alpha);
       rfg.fillCircle(ends.ax, ends.ay, REFLECTOR_WEIGHT_RADIUS * scale);
       rfg.fillCircle(ends.bx, ends.by, REFLECTOR_WEIGHT_RADIUS * scale);
+    });
+
+    // Redraw active armored enemies from the ArmoredSystem pool: clear once, then
+    // per live armored a filled steel circle at COLOR_ARMORED, plus an inner disc
+    // whose radius scales with remaining durability (s.hp / ARMORED_HP) so a battered
+    // armored reads visibly closer to death. Story 2.6: a spawning-in armored fades +
+    // scales in from its telegraphMs (same seam as every archetype). Placeholder shape
+    // only (Epic 4 adds the aesthetic). Drawn from each instance's own radius so the
+    // shape tracks the collision value. Zero per-frame allocation (mirrors the seeker).
+    const amg = this.armoredGraphics;
+    amg.clear();
+    this.armoredSystem.enemyPool.forEachActive((s) => {
+      const p = spawnTelegraphProgress(s.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
+      const alpha = telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA);
+      const r = s.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE);
+      // Base plate (dimmer) so the brighter durability core reads on top of it.
+      amg.fillStyle(COLOR_ARMORED, alpha * 0.5);
+      amg.fillCircle(s.x, s.y, r);
+      // Durability core: a brighter inner disc shrinking from full radius to 0 as hp
+      // drops from ARMORED_HP to 0 (guarded to a finite ratio in [0,1]).
+      const hpRatio = Number.isFinite(s.hp)
+        ? Math.min(Math.max(s.hp / ARMORED_HP, 0), 1)
+        : 1;
+      if (hpRatio > 0) {
+        amg.fillStyle(COLOR_ARMORED, alpha);
+        amg.fillCircle(s.x, s.y, r * hpRatio);
+      }
     });
 
     // Redraw the placeholder smart-bomb shockwave: a single stroked ring that

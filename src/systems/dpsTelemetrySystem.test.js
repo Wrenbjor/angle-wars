@@ -6,12 +6,15 @@ import {
   FIXED_STEP_MS,
 } from '../config/constants.js';
 
-// DpsTelemetrySystem coverage (Story 9.1). The system is a pure observer that
-// maintains a rolling ~10s estimate of player weapon output from a single input:
-// collisionSystem.bulletKillCount. These tests drive it over a stub source and
-// pin every I/O Matrix row: zero-tick decay, single-kill non-spike + expiry after
-// N ticks, sustained-rate convergence (with a linear ramp), mid-run tracking, and
-// framerate independence (same dps for the same tick count).
+// DpsTelemetrySystem coverage (Story 9.1, repointed Story 9.3). The system is a
+// pure observer that maintains a rolling ~10s estimate of player weapon output from
+// a single input: collisionSystem.bulletDamageCount (the per-tick count of damaging
+// bullet HITS — kills PLUS non-killing armor hits — repointed from bulletKillCount
+// in Story 9.3). These tests drive it over a stub source and pin every I/O Matrix
+// row: zero-tick decay, single-hit non-spike + expiry after N ticks, sustained-rate
+// convergence (with a linear ramp), mid-run tracking, framerate independence (same
+// dps for the same tick count), and that a non-killing armor hit still credits build
+// power (build stays honest against armor).
 
 // Derived exactly as the system does, so the assertions track the constants.
 const N = Math.max(1, Math.round(DPS_WINDOW_MS / FIXED_STEP_MS));
@@ -21,15 +24,16 @@ const N = Math.max(1, Math.round(DPS_WINDOW_MS / FIXED_STEP_MS));
 // the default constants.
 const WINDOW_SEC = (N * FIXED_STEP_MS) / 1000;
 
-// A minimal stub matching the only field the system reads. `kills` is mutated
-// between ticks to script a bullet-kill sequence.
-function makeSource(kills = 0) {
-  return { bulletKillCount: kills };
+// A minimal stub matching the only field the system reads (Story 9.3: the source is
+// bulletDamageCount, the damaging-HIT count, not bulletKillCount). `hits` is mutated
+// between ticks to script a per-tick damaging-hit sequence.
+function makeSource(hits = 0) {
+  return { bulletDamageCount: hits };
 }
 
-// Drive the system one fixed step with the given per-tick bullet-kill count.
-function tick(sys, src, kills) {
-  src.bulletKillCount = kills;
+// Drive the system one fixed step with the given per-tick damaging-hit count.
+function tick(sys, src, hits) {
+  src.bulletDamageCount = hits;
   sys.fixedUpdate(FIXED_STEP_MS);
 }
 
@@ -153,7 +157,30 @@ describe('DpsTelemetrySystem — rolling player DPS estimate', () => {
     const src = makeSource(5);
     const sys = new DpsTelemetrySystem(src);
     sys.fixedUpdate(FIXED_STEP_MS);
-    // The system only READS bulletKillCount — it must not have changed it.
-    expect(src.bulletKillCount).toBe(5);
+    // The system only READS bulletDamageCount — it must not have changed it.
+    expect(src.bulletDamageCount).toBe(5);
+  });
+
+  it('a non-killing armor hit still advances dps by exactly 1/windowSec (Story 9.3 — build stays honest against armor)', () => {
+    // A single tick with one damaging HIT that killed NOTHING (bulletDamageCount 1,
+    // bulletKillCount 0) must credit build power identically to a kill: the estimator
+    // reads bulletDamageCount, so damage poured into armor is not lost. This is the
+    // whole point of the 9.3 repoint — the governor's build signal cannot sag while
+    // the player pours fire into a wall of armor.
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    const share = DPS_DAMAGE_PER_KILL / WINDOW_SEC; // 0.1 @ default constants
+
+    // One armor-hit tick (no kill), then silence — identical curve to a lone kill.
+    tick(sys, src, 1);
+    expect(sys.dps).toBeCloseTo(share, 12);
+    // Integer credit keeps the estimate exact (no float drift): flat across the window.
+    for (let t = 1; t < N; t++) {
+      tick(sys, src, 0);
+      expect(sys.dps).toBeCloseTo(share, 12);
+    }
+    // Expires cleanly after N ticks — bit-exact 0, proving the ring stayed integer-valued.
+    tick(sys, src, 0);
+    expect(sys.dps).toBe(0);
   });
 });

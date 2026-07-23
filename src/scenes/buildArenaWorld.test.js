@@ -5,6 +5,9 @@ import {
   PARTICLE_MAX,
   SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
   SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
+  SPAWN_DIRECTOR_ARMORED_BASE_WEIGHT,
+  SPAWN_DIRECTOR_ARMORED_PEAK_WEIGHT,
+  ARMORED_MIN_ELAPSED_MS,
   REROLL_INITIAL_CHARGES,
   BANISH_INITIAL_CHARGES,
 } from '../config/constants.js';
@@ -16,12 +19,13 @@ import {
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 24-system registration order (spec Design Notes; Story 6.3 added
+// The canonical 25-system registration order (spec Design Notes; Story 6.3 added
 // MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector;
 // Story 8.1 added XpOrbSystem right after the BombSystem late-bind; Story 8.2 added
 // LevelSystem right after XpOrbSystem; Story 8.3 added LevelUpSystem right after
 // LevelSystem, before PlayerDeathSystem; Story 9.1 added DpsTelemetrySystem right
-// after ScoringSystem, before BlackHoleSystem).
+// after ScoringSystem, before BlackHoleSystem; Story 9.3 added ArmoredSystem in the
+// enemy section, after MirrorReflectorSystem and before SpawnDirector).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -31,6 +35,7 @@ const CANONICAL_ORDER = [
   'PinwheelSystem',
   'SnakeSystem',
   'MirrorReflectorSystem',
+  'ArmoredSystem',
   'SpawnDirector',
   'CollisionSystem',
   'ScoringSystem',
@@ -72,6 +77,7 @@ const RETURN_HANDLES = [
   'pinwheelSystem',
   'snakeSystem',
   'mirrorReflectorSystem',
+  'armoredSystem',
   'spawnDirector',
   'collisionSystem',
   'scoringSystem',
@@ -98,7 +104,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 24 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 25 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -117,13 +123,17 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.highScoreSystem.storage).toBe(ctx.highScoreStorage);
   });
 
-  it('builds enemyPools as the 4 archetype pools, identity-matched to each system', () => {
+  it('builds enemyPools as the 5 archetype pools, identity-matched to each system', () => {
     const ctx = buildArenaWorld();
-    expect(ctx.enemyPools).toHaveLength(4);
+    expect(ctx.enemyPools).toHaveLength(5);
     expect(ctx.enemyPools[0]).toBe(ctx.enemySystem.enemyPool);
     expect(ctx.enemyPools[1]).toBe(ctx.greenSquareSystem.enemyPool);
     expect(ctx.enemyPools[2]).toBe(ctx.pinwheelSystem.enemyPool);
     expect(ctx.enemyPools[3]).toBe(ctx.snakeSystem.enemyPool);
+    // Story 9.3: the armored pool IS a standard circle-collision archetype, so it
+    // joins enemyPools (unlike the reflector) — this single addition wires it into
+    // the collision seam, both AoE paths, and deathPools.
+    expect(ctx.enemyPools[4]).toBe(ctx.armoredSystem.enemyPool);
   });
 
   it('builds deathPools as [...enemyPools, holePool] — the hole pool appended, not inside enemyPools', () => {
@@ -153,7 +163,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // The reflector is the FIFTH governed SpawnDirector spawnable, so it spawns through
     // the same director + telegraph and counts toward the global cap.
     const spawnables = ctx.spawnDirector._spawnables;
-    expect(spawnables).toHaveLength(5);
+    expect(spawnables).toHaveLength(6);
     expect(spawnables[4].system).toBe(ctx.mirrorReflectorSystem);
     // …wired with its centralized base/peak mix weights (so the director interpolates
     // the reflector's share correctly across the difficulty ramp).
@@ -180,6 +190,42 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // Story 9.2 closes the adaptive loop: the SpawnDirector's governor is late-bound
     // to the SAME shared telemetry instance (the director reads its `dps` each tick).
     expect(ctx.spawnDirector.dpsTelemetry).toBe(ctx.dpsTelemetrySystem);
+  });
+
+  it('wires the Armored enemy (Story 9.3): 6th spawnable, pool IN enemyPools/deathPools, back-ref late-bound', () => {
+    const ctx = buildArenaWorld();
+    // Returned as its own handle.
+    expect(ctx.armoredSystem).toBeDefined();
+    // Unlike the reflector, the armored IS a standard circle-collision archetype, so
+    // its pool is in BOTH shared lists (collision one-shots the one-hit archetypes and
+    // decrements the armored's hp; the death seam / AoE paths release it unconditionally).
+    expect(ctx.enemyPools).toContain(ctx.armoredSystem.enemyPool);
+    expect(ctx.deathPools).toContain(ctx.armoredSystem.enemyPool);
+    // The armored is the SIXTH governed SpawnDirector spawnable (spawns through the same
+    // director + telegraph, counts toward the global cap), with its flat mix weights.
+    const spawnables = ctx.spawnDirector._spawnables;
+    expect(spawnables).toHaveLength(6);
+    expect(spawnables[5].system).toBe(ctx.armoredSystem);
+    expect(spawnables[5].baseWeight).toBe(SPAWN_DIRECTOR_ARMORED_BASE_WEIGHT);
+    expect(spawnables[5].peakWeight).toBe(SPAWN_DIRECTOR_ARMORED_PEAK_WEIGHT);
+    // The canSpawn() time/pressure gate reads a LATE-BOUND back-ref to the director —
+    // wired AFTER the director is constructed (the same shared instance).
+    expect(ctx.armoredSystem.spawnDirector).toBe(ctx.spawnDirector);
+    // ship is the SAME shared instance the rest of the world homes/avoids against.
+    expect(ctx.armoredSystem.ship).toBe(ctx.ship);
+  });
+
+  it('canSpawn() reads the REAL SpawnDirector fields: closed at elapsed 0 / pressure 0, opened at the time gate', () => {
+    const ctx = buildArenaWorld();
+    // The stub tests (armoredSystem.test.js) pin the gate LOGIC against a fake director;
+    // this pins it against the ACTUAL SpawnDirector field names (elapsedMs / pressure),
+    // so a future rename of those fields — which the stub would miss — fails HERE.
+    // Fresh build: elapsed 0, pressure 0 → gate closed.
+    expect(ctx.armoredSystem.canSpawn()).toBe(false);
+    // Advance the real director's elapsed clock to the time gate (the getter reads the
+    // private accumulator); the armored is now eligible via the time arm.
+    ctx.spawnDirector._elapsedMs = ARMORED_MIN_ELAPSED_MS;
+    expect(ctx.armoredSystem.canSpawn()).toBe(true);
   });
 
   it('wires the XpOrbSystem (Story 8.1) with the shared drop-report sources + ship + scoreState', () => {

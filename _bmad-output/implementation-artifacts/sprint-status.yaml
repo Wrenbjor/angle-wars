@@ -109,7 +109,7 @@ development_status:
   epic-9: backlog
   9-1-player-dps-telemetry: done
   9-2-build-adaptive-spawn-scaling: done
-  9-3-armored-enemy-archetype: backlog
+  9-3-armored-enemy-archetype: done
   9-4-governor-validation-power-spikes: backlog
   epic-9-retrospective: optional
 

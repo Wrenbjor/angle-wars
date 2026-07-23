@@ -8,6 +8,7 @@ import { InputState } from '../input/InputState.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
 import { createPinwheel } from '../entities/Pinwheel.js';
+import { createArmored } from '../entities/Armored.js';
 import { createBullet } from '../entities/Bullet.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createScoreState } from '../state/ScoreState.js';
@@ -18,6 +19,7 @@ import {
   BOMB_SHOCKWAVE_MS,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SCORE_MULTIPLIER_START,
+  ARMORED_HP,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -151,6 +153,46 @@ describe('BombSystem — detonation clears active enemies (unscored)', () => {
     expect(system.shockwaveMs).toBeCloseTo(BOMB_SHOCKWAVE_MS - DT, 9);
     expect(system.shockwaveX).toBe(321);
     expect(system.shockwaveY).toBe(654);
+  });
+
+  it('kills an ARMORED enemy in one detonation regardless of its hp (AoE = full damage), and does NOT credit bulletDamageCount (Story 9.3)', () => {
+    // I/O Matrix rows 4/5: the smart bomb (an AoE clear) deals FULL damage to the
+    // armored — one detonation destroys it whatever its remaining hp, exactly like
+    // any other enemy — AND, because hp is only ever decremented in the projectile
+    // seam (CollisionSystem), the bomb path never touches bulletDamageCount, so an
+    // AoE kill never inflates the build-power/dps signal. Wire a REAL CollisionSystem
+    // (no bullets) so its per-tick reset makes bulletDamageCount observably 0.
+    const bulletPool = new Pool(createBullet);
+    const armoredPool = new Pool(createArmored);
+    const collision = new CollisionSystem(bulletPool, [armoredPool]);
+    const inputState = new InputState();
+    const { system } = makeSystem({
+      inputState,
+      enemyPools: [armoredPool],
+      collisionSystem: collision,
+    });
+
+    // An ACTIVE armored (telegraph elapsed) with multi-hit durability — it would
+    // survive ARMORED_HP - 1 bullet hits, but the bomb ignores hp entirely.
+    const armored = armoredPool.acquire();
+    armored.x = 300;
+    armored.y = 300;
+    armored.telegraphMs = 0;
+    armored.hp = ARMORED_HP;
+    expect(ARMORED_HP).toBeGreaterThan(1); // it is genuinely multi-hit
+
+    inputState.queueBomb();
+    // Mirror the real tick order: Collision (resets killedEnemies + bulletDamageCount
+    // to 0; no bullets → no hits) → Bomb (the AoE clear).
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+
+    // Destroyed in the single detonation regardless of hp = full damage.
+    expect(armoredPool.activeCount).toBe(0);
+    expect(collision.killedEnemies).toContain(armored);
+    // The AoE kill is NOT a projectile hit: build-power credit stays 0 for the tick.
+    expect(collision.bulletDamageCount).toBe(0);
+    expect(collision.bulletKillCount).toBe(0);
   });
 
   it('clears a telegraphing (still-frozen) enemy too — regardless of spawn-in state', () => {

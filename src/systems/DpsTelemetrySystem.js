@@ -14,11 +14,21 @@ import {
 // story delivers ONLY the telemetry — nothing consumes `dps` yet.
 //
 // It is a PURE observer. Each fixed step it reads exactly one input —
-// collisionSystem.bulletKillCount, the already-latched count of PLAYER bullet
-// kills this tick (bomb clears and black-hole absorptions are excluded, since
-// those are consumables/hazards, not sustained weapon output) — and writes only
-// its own fields. It mutates no pool, score, xp, or player state. It is
-// registered AFTER CollisionSystem so bulletKillCount is final for the tick.
+// collisionSystem.bulletDamageCount, the already-latched count of PLAYER bullet
+// HITS that dealt damage this tick (bomb clears and black-hole absorptions are
+// excluded, since those are consumables/hazards, not sustained weapon output) —
+// and writes only its own fields. It mutates no pool, score, xp, or player state.
+// It is registered AFTER CollisionSystem so bulletDamageCount is final for the tick.
+//
+// Story 9.3 refinement: the source is bulletDamageCount, not bulletKillCount, so
+// crediting is per damaging HIT rather than per KILL. For a one-shot enemy a hit IS
+// a kill (identical to the v1 measure), but a non-killing hit into ARMORED hp still
+// credits 1 — so build power reflects damage POURED INTO armor, not just kills, and
+// the Story 9.2 governor does not sag against a wall of armor. This realizes the
+// refinement the constant comment reserved without changing this system's shape.
+// Crediting an INTEGER per hit (never a fraction per kill) keeps every ring slot an
+// integer, so the estimator stays exact — the deferred-work float-drift risk of
+// fractional per-kill armor crediting is avoided by construction.
 //
 // Frame-rate independence: the estimate advances only on the fixed step, so its
 // value after T simulated seconds depends solely on the tick count, never on the
@@ -34,9 +44,10 @@ import {
 // ever add 1 / (span seconds) to `dps` — it can never spike on an individual hit, and a
 // sustained change in output ramps in/out gradually across the full window. The
 // window itself is the smoother; layering an EMA on top would double-smooth and
-// blur the 10s contract. One kill = one damage unit is the honest v1 measure
-// (all enemies one-shot); Story 9.3's armored HP refines crediting through this
-// same `dps` surface without changing this system's shape.
+// blur the 10s contract. One damaging HIT = one damage unit is the honest measure
+// (== one kill for the one-shot archetypes; a non-killing armor hit still credits
+// 1), crediting build power through this same `dps` surface — the Story 9.3
+// refinement, delivered without changing this system's shape.
 //
 // Zero per-frame allocation: the ring is a single Float64Array allocated ONCE in
 // the constructor; fixedUpdate allocates no arrays/objects/closures — it evicts
@@ -44,7 +55,7 @@ import {
 export class DpsTelemetrySystem extends System {
   /**
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem
-   *   The sibling collision system whose latched per-tick bulletKillCount is the
+   *   The sibling collision system whose latched per-tick bulletDamageCount is the
    *   telemetry source (READ-ONLY here).
    */
   constructor(collisionSystem) {
@@ -77,10 +88,11 @@ export class DpsTelemetrySystem extends System {
    *   per tick, not per dt (one ring slot per fixed step); dt is unused.
    */
   fixedUpdate(_dt) {
-    // This tick's damage: player bullet kills × the per-kill damage unit. The
+    // This tick's damage: player bullet damaging-HITS × the per-hit damage unit
+    // (Story 9.3 — a non-killing armor hit counts as 1 unit, same as a kill). The
     // count is the already-latched bullet-only figure (bomb/black-hole removals
     // excluded), so bomb clears and absorptions never inflate the signal.
-    const dmg = this.collisionSystem.bulletKillCount * DPS_DAMAGE_PER_KILL;
+    const dmg = this.collisionSystem.bulletDamageCount * DPS_DAMAGE_PER_KILL;
     // Evict the slot from ~DPS_WINDOW_MS ago, write this tick's damage in its
     // place, and keep the running sum consistent — all against the same slot.
     this._sum -= this._ring[this._i];

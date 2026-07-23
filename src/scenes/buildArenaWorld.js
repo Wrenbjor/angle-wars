@@ -9,6 +9,8 @@ import {
   SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT,
   SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
   SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
+  SPAWN_DIRECTOR_ARMORED_BASE_WEIGHT,
+  SPAWN_DIRECTOR_ARMORED_PEAK_WEIGHT,
 } from '../config/constants.js';
 import { World } from '../core/World.js';
 import { SimClockSystem } from '../systems/SimClockSystem.js';
@@ -21,6 +23,7 @@ import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
 import { PinwheelSystem } from '../systems/PinwheelSystem.js';
 import { SnakeSystem } from '../systems/SnakeSystem.js';
 import { MirrorReflectorSystem } from '../systems/MirrorReflectorSystem.js';
+import { ArmoredSystem } from '../systems/ArmoredSystem.js';
 import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
@@ -46,11 +49,14 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 23 systems registered in the SAME order (Story 6.3 added
+// state + pools, the SAME 25 systems registered in the SAME order (Story 6.3 added
 // the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
 // after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it;
-// Story 8.3 added the LevelUpSystem right after LevelSystem), the same enemyPools / deathPools
-// composition (the reflector pool is deliberately in NEITHER), and both load-bearing
+// Story 8.3 added the LevelUpSystem right after LevelSystem; Story 9.1 added the
+// DpsTelemetrySystem right after ScoringSystem; Story 9.3 added the ArmoredSystem in
+// the enemy section, after MirrorReflectorSystem and before SpawnDirector), the same
+// enemyPools / deathPools composition (the reflector pool is deliberately in NEITHER;
+// the armored pool IS in both), and both load-bearing
 // late-binds
 // (snakeSystem.collisionSystem and blackHoleSystem.collisionSystem). It imports
 // ZERO Phaser symbols so it runs headlessly in the node vitest env, which is
@@ -161,6 +167,17 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     _rng,
   );
   world.addSystem(mirrorReflectorSystem);
+  // ArmoredSystem (Story 9.3) owns its own armored pool (a uniform {x,y,radius,...}
+  // enemy PLUS an `hp` field). Unlike the reflector it IS a standard circle-collision
+  // enemy: its pool joins enemyPools below, so a single addition wires collision, both
+  // AoE paths, and the death seam. It is a slow homing chaser whose distinction is
+  // projectile-only durability (CollisionSystem decrements hp; the AoE paths ignore
+  // it). It runs after MirrorReflectorSystem and BEFORE the SpawnDirector (so it is a
+  // spawnable) and BEFORE CollisionSystem (so a fresh armored exists for this tick's
+  // collision/death). Its spawn is gated by a late-bound canSpawn() reading the
+  // director's elapsed/pressure (wired after the director is constructed).
+  const armoredSystem = new ArmoredSystem(ship, _rng);
+  world.addSystem(armoredSystem);
   // SpawnDirector is the SOLE spawn authority for the four combat archetypes
   // (each no longer self-spawns). It is added AFTER SnakeSystem and BEFORE
   // CollisionSystem so a fresh enemy exists for this tick's collision/death
@@ -197,6 +214,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         baseWeight: SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
         peakWeight: SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
       },
+      // Sixth governed spawnable (Story 9.3): the Armored enemy. A standard
+      // circle-collision archetype (its pool IS in enemyPools) with flat mix weights
+      // (base === peak) — its temporal/pressure canSpawn() gate, not the 2-minute
+      // weight ramp, holds it back until ~15:00 or a strong build (director pressure).
+      {
+        system: armoredSystem,
+        baseWeight: SPAWN_DIRECTOR_ARMORED_BASE_WEIGHT,
+        peakWeight: SPAWN_DIRECTOR_ARMORED_PEAK_WEIGHT,
+      },
     ],
     // rng (run-scoped randomness); pass the ship so the director keeps every
     // spawn point ≥ SPAWN_SAFE_RADIUS from the player (Story 2.6). The avoid
@@ -206,13 +232,22 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     ship,
   );
   world.addSystem(spawnDirector);
+  // Late-bind the SpawnDirector back-reference into the ArmoredSystem now that the
+  // director exists (Story 9.3): its canSpawn() reads the director's elapsed/pressure
+  // for the time-OR-build-power spawn gate. Mirrors the spawnDirector.dpsTelemetry
+  // late-bind. Until this is set canSpawn() returns false (the armored never spawns
+  // without its gate source).
+  armoredSystem.spawnDirector = spawnDirector;
   // The shared collision seam sees ALL archetype pools as an array, so a bullet
-  // can destroy any enemy through one path (no per-type duplicate).
+  // can destroy any enemy through one path (no per-type duplicate). The armored pool
+  // joins the list too (Story 9.3): this single addition wires it into the collision
+  // seam, the bomb clear, the black-hole absorption, and the deathPools below.
   const enemyPools = [
     enemySystem.enemyPool,
     greenSquareSystem.enemyPool,
     pinwheelSystem.enemyPool,
     snakeSystem.enemyPool,
+    armoredSystem.enemyPool,
   ];
   const collisionSystem = new CollisionSystem(
     firingSystem.bulletPool,
@@ -446,6 +481,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     pinwheelSystem,
     snakeSystem,
     mirrorReflectorSystem,
+    armoredSystem,
     spawnDirector,
     collisionSystem,
     scoringSystem,

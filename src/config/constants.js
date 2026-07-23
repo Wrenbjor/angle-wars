@@ -334,6 +334,50 @@ export const REFLECTOR_MAX_ACTIVE = 3;
 // is defined now so the intent is centralized and discoverable.
 export const REFLECTED_BULLET_HARMS_PLAYER = false;
 
+// --- Armored enemy (feel / durability / spawn gate) (Story 9.3 / Epic 9) -----
+// The Armored enemy is the late-run counter that keeps melee/mine/AoE builds
+// relevant against a pure-projectile build. It is a slow homing chaser (mirrors
+// the Seeker's homing) with multi-hit `hp`: ONLY the projectile path
+// (CollisionSystem) decrements `hp` and releases at 0, so projectiles deal
+// REDUCED effective damage (ARMORED_HP hits to kill) while the AoE/melee paths
+// (smart bomb, black hole) — which release enemies unconditionally regardless of
+// `hp` — deal FULL damage for free. It is NEVER immune to anything. It spawns
+// through the SAME SpawnDirector + telegraph seam as every other archetype, gated
+// to appear only once a run passes ~15:00 OR build power (director `pressure`)
+// crosses a threshold (via the director's late-bound canSpawn() opt-out — the
+// Mirror Reflector cap precedent). All values are tunable placeholders (tuned
+// post-launch), mirroring the SEEKER_*/REFLECTOR_* discipline.
+
+// Collision/half-extent radius (px), also the placeholder shape radius and the
+// spawn inset margin so a fresh armored sits fully inside the drawn border.
+export const ARMORED_RADIUS = 20;
+// Homing speed (px/s). Velocity each tick = unit(ship − armored) × this. Slow
+// (below the Seeker) — it is a durable bruiser, not a fast chaser.
+export const ARMORED_SPEED = 70;
+// Bullet hits to kill: the armored survives (ARMORED_HP − 1) projectile hits and
+// is destroyed on the ARMORED_HP-th. ONLY the CollisionSystem (bullet) path reads
+// this; the AoE/melee paths ignore it (full damage — one hit). Tunable.
+export const ARMORED_HP = 5;
+// Base score awarded per Armored kill, carried on each instance. The ScoringSystem
+// multiplies this base by the run multiplier at the shared per-kill seam; keep this
+// a flat per-type base — never fold the multiplier into it. Higher than the one-hit
+// archetypes (it is a tougher kill).
+export const ARMORED_SCORE = 300;
+// Base per-type XP value dropped as an orb when this armored is bullet-KILLED (the
+// final hit). A non-killing armor hit drops no orb (kill-only economy).
+export const ARMORED_XP = 4;
+// Idle instances prewarmed into the pool at construction so the steady state never
+// allocates (grows lazily beyond it, only on spawn events — mirrors the other pools).
+export const ARMORED_POOL_PREWARM = 8;
+// Spawn gate — TIME arm: the armored becomes eligible once elapsed sim time reaches
+// this (~15:00). Until then (and below the pressure arm) canSpawn() is false so the
+// director never picks it — its share flows to the eligible archetypes. Tunable.
+export const ARMORED_MIN_ELAPSED_MS = 900000; // 15:00
+// Spawn gate — BUILD-POWER arm: the armored is ALSO eligible (even before
+// ARMORED_MIN_ELAPSED_MS) once the director's `pressure` reaches this, so a strong
+// build is answered early with the diversify-or-struggle counter. Tunable.
+export const ARMORED_PRESSURE_THRESHOLD = 1.0;
+
 // --- Spawn Director (escalation / mix / cap) --------------------------------
 // The SpawnDirector is the SOLE spawn authority for the four one-hit combat
 // archetypes (Seeker, Green Square, Pinwheel, Snake). It owns a continuous
@@ -380,6 +424,17 @@ export const SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT = 2;
 // positioning-and-nerve challenge as a run wears on.
 export const SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT = 0;
 export const SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT = 2;
+// The Armored enemy (Story 9.3) is a sixth governed spawnable. Its mix weight is
+// FLAT (base === peak): because base === peak, weightAt() returns the same value at
+// every ramp progress p, so the 2-minute weight ramp is a no-op for the armored in
+// BOTH gate arms — the always-late time arm AND the possibly-early build-power
+// (pressure) arm, which can open the gate before the ramp would even saturate. The
+// flat base===peak (not ramp saturation) is what makes the ramp moot. The real
+// hold-back is the temporal/pressure canSpawn() gate: it zeroes this weight until the
+// run passes ARMORED_MIN_ELAPSED_MS OR pressure crosses ARMORED_PRESSURE_THRESHOLD.
+// Tunable placeholders.
+export const SPAWN_DIRECTOR_ARMORED_BASE_WEIGHT = 3;
+export const SPAWN_DIRECTOR_ARMORED_PEAK_WEIGHT = 3;
 
 // --- Build-adaptive spawn governor (Story 9.2 / Epic 9) ---------------------
 // The damped adaptive rate lever layered onto the v1 time ramp above. The
@@ -810,6 +865,10 @@ export const COLOR_SNAKE = 0xffaa33;
 // mirror-metal dumbbell once the camera bloom bleeds it — distinct from the pink
 // Pinwheel and the purple Black Hole. Used for both the bar line and the two weights.
 export const COLOR_MIRROR_REFLECTOR = 0xccddff;
+// Armored enemy (Story 9.3): a cold steel-grey that reads as heavy plate armor once
+// the camera bloom bleeds it — distinct from the blue Seeker and chrome Reflector.
+// The render draws a remaining-durability cue on top of this base fill.
+export const COLOR_ARMORED = 0x9aa4b2;
 // Placeholder fill for the Black Hole body at rest (instability 0). The grid-warp
 // visual is Epic 4 / Story 4.2; Story 6.2 lerps this toward COLOR_BLACK_HOLE_UNSTABLE
 // and pulses its alpha as the hole nears detonation.

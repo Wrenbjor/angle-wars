@@ -81,6 +81,19 @@ export class CollisionSystem extends System {
     // Purely observational — it never affects kills, scoring, lives, or any pool.
     this.bulletKillCount = 0;
 
+    // Public read-only observability latch (Story 9.3): the per-tick count of
+    // player-bullet hits that DEALT DAMAGE this tick — every hit that landed,
+    // whether it KILLED (one-shot enemy, or an armored's final hit) OR only
+    // decremented an armored survivor's hp. This is the HONEST build-power figure
+    // (damage output, not just kills) that DpsTelemetrySystem reads: pouring fire
+    // into armor still registers as build power, so the Story 9.2 governor stays
+    // honest. Each hit credits exactly 1 (integer), so the DPS ring stays integer-
+    // valued (no float drift — the deferred-work fractional-per-kill risk avoided).
+    // Reset to 0 at the top of every fixedUpdate, then set at the end of pass 2.
+    // A non-killing armor hit increments THIS but NOT bulletKillCount (which keeps
+    // its kill-only semantics — score/XP orbs/grid ripples stay kill-only).
+    this.bulletDamageCount = 0;
+
     // Public read-only coordinate SNAPSHOTS (Story 4.2), parallel to the first
     // bulletKillCount entries of killedEnemies: bulletKillX[k]/bulletKillY[k] are the
     // position of the k-th bullet kill, captured AT KILL TIME. Snapshots are load-
@@ -134,6 +147,9 @@ export class CollisionSystem extends System {
     // previous tick's kills are never re-counted (length reset, no alloc).
     const killedEnemies = this.killedEnemies;
     killedEnemies.length = 0;
+    // Reset the per-tick damage-hit count (Story 9.3) so a tick with no hits reports
+    // 0 and a prior tick's count never carries over. Refilled at the end of pass 2.
+    this.bulletDamageCount = 0;
     // Reset the parallel bullet-kill coordinate snapshots too (Story 4.2), and the
     // parallel XP snapshot (Story 8.1).
     const bulletKillX = this.bulletKillX;
@@ -164,13 +180,25 @@ export class CollisionSystem extends System {
       }
     }
 
-    // Pass 2: release marked instances to their OWNING pool (safe to mutate the
-    // pools now) and record each released enemy in the public kill report for
-    // the ScoringSystem. Iterate the parallel arrays so each release routes to
-    // the pool that owns that instance.
+    // Pass 2: resolve each marked hit (safe to mutate the pools now). Every hit
+    // credits ONE integer damage-unit to `damageCount` (the honest per-hit build-
+    // power figure — Story 9.3). An ARMORED survivor (a finite hp > 1) ABSORBS the
+    // hit: hp is decremented and the enemy is NOT released and NOT reported as a
+    // kill (drops no orb / no score / no kill-ripple — a non-killing armor hit). A
+    // one-hit enemy (no hp field, or hp <= 1 — the armored's final hit) runs the
+    // existing kill path UNCHANGED: record it in the public kill report + snapshots
+    // for the ScoringSystem/grid/XP and release it to its OWNING pool. Iterate the
+    // parallel arrays so each release routes to the pool that owns that instance.
+    let damageCount = 0;
     for (let j = 0; j < enemies.length; j++) {
       const s = enemies[j];
       if (hitEnemies.has(s)) {
+        damageCount++; // every hit = 1 integer damage-unit (armor survivor OR kill)
+        if (Number.isFinite(s.hp) && s.hp > 1) {
+          // Armored survivor: absorb one hit and live. NOT released, NOT a kill.
+          s.hp -= 1;
+          continue;
+        }
         killedEnemies.push(s);
         // Snapshot the kill coordinates NOW, before releasing the object to its
         // pool — a later same-tick acquire() could overwrite s.x/s.y (Story 4.2).
@@ -186,6 +214,10 @@ export class CollisionSystem extends System {
     for (const b of hitBullets) {
       this.bulletPool.release(b);
     }
+    // Latch this tick's damage-hit count (Story 9.3): kills PLUS non-killing armor
+    // hits, each 1 integer damage-unit. DpsTelemetrySystem reads this (not the
+    // kill-only bulletKillCount) so build power reflects damage dealt, not just kills.
+    this.bulletDamageCount = damageCount;
 
     // Latch this tick's bullet-kill count (Story 4.2). Captured here, at the end of
     // pass 2, so it reflects ONLY the enemies bullets destroyed this tick — before
