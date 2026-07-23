@@ -42,29 +42,29 @@ describe('mobileLayout — parseInsetPx', () => {
 
 describe('mobileLayout — logicalSafeInsets (letterbox conversion)', () => {
   it('row: notch intrudes PAST the letterbox bar → positive logical inset', () => {
-    // Pillarboxed: parentW 1480 @ parentH 720 → s = 1, barX = (1480 − 1280)/2 = 100.
+    // Pillarboxed: parentW 1760 @ parentH 720 → s = 1, barX = (1760 − 1560)/2 = 100.
     // A left inset of 144 CSS px intrudes 44 px past the 100 px bar → 44/1 logical.
-    const out = logicalSafeInsets({ ...NO_INSETS, left: 144 }, 1480, 720, ARENA_WIDTH, ARENA_HEIGHT);
+    const out = logicalSafeInsets({ ...NO_INSETS, left: 144 }, 1760, 720, ARENA_WIDTH, ARENA_HEIGHT);
     expect(out.left).toBeCloseTo(44, 6);
   });
 
   it('row: notch sits INSIDE the letterbox bar → clamped to zero logical inset', () => {
     // Same geometry (barX = 100); a left inset of 44 lands entirely in the bar → 0.
-    const out = logicalSafeInsets({ ...NO_INSETS, left: 44 }, 1480, 720, ARENA_WIDTH, ARENA_HEIGHT);
+    const out = logicalSafeInsets({ ...NO_INSETS, left: 44 }, 1760, 720, ARENA_WIDTH, ARENA_HEIGHT);
     expect(out.left).toBe(0);
   });
 
   it('divides the intruding part by the FIT scale (s ≠ 1)', () => {
-    // parentW 2960 @ parentH 1440 → s = min(2.3125, 2) = 2, barX = (2960 − 2560)/2 = 200.
+    // parentW 3520 @ parentH 1440 → s = min(2.256, 2) = 2, barX = (3520 − 3120)/2 = 200.
     // A left inset of 344 intrudes 144 past the bar → 144/2 = 72 logical.
-    const out = logicalSafeInsets({ ...NO_INSETS, left: 344 }, 2960, 1440, ARENA_WIDTH, ARENA_HEIGHT);
+    const out = logicalSafeInsets({ ...NO_INSETS, left: 344 }, 3520, 1440, ARENA_WIDTH, ARENA_HEIGHT);
     expect(out.left).toBeCloseTo(72, 6);
   });
 
   it('row: home indicator (bottom) intrudes with a zero bottom bar', () => {
-    // Letterboxed (bars on top/bottom): parentW 1280 @ parentH 800 → s = min(1, 1.111) = 1,
+    // Letterboxed (bars on top/bottom): parentW 1560 @ parentH 800 → s = min(1, 1.111) = 1,
     // barY = (800 − 720)/2 = 40. A bottom inset of 61 intrudes 21 past the 40 bar → 21 logical.
-    const out = logicalSafeInsets({ ...NO_INSETS, bottom: 61 }, 1280, 800, ARENA_WIDTH, ARENA_HEIGHT);
+    const out = logicalSafeInsets({ ...NO_INSETS, bottom: 61 }, 1560, 800, ARENA_WIDTH, ARENA_HEIGHT);
     expect(out.bottom).toBeCloseTo(21, 6);
   });
 

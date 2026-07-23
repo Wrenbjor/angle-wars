@@ -188,6 +188,32 @@ Both platforms are locked to landscape to match the game: Android
 `MainActivity` sets `android:screenOrientation="sensorLandscape"` and the iOS
 `Info.plist` advertises only `LandscapeLeft` / `LandscapeRight` for iPhone.
 
+## Full-bleed display on tall phones
+
+Two decisions make the game fill a modern phone screen with no black bars:
+
+- **Arena aspect = phone aspect.** The logical arena (`ARENA_WIDTH` / `ARENA_HEIGHT`
+  in `src/config/constants.js`) is **1560×720 (19.5:9)**, not the classic 16:9
+  1280×720. Phaser's `Scale.FIT` letterboxes a fixed 16:9 arena on a ~19.5:9
+  phone (e.g. Galaxy S25 Ultra, 2340×1080) — a large side bar. Matching the
+  design resolution to the device aspect makes `FIT` scale to the full width with
+  zero bars. On a 16:9 display this trades to thin top/bottom bars instead. (A
+  fully per-device-adaptive width is possible but fights the headless-sim/test
+  determinism, so the design resolution is fixed.)
+- **Edge-to-edge + immersive fullscreen.** `capacitor.config.json` sets
+  `android.adjustMarginsForEdgeToEdge: "disable"` so Capacitor does **not** inset
+  the WebView to clear the system bars/cutout — the game renders full-bleed and
+  handles its own insets via `env(safe-area-inset-*)` (Story 7.2). `MainActivity`
+  then hides the status + navigation bars via the androidx
+  `WindowInsetsController` (immersive-sticky: bars return transiently on an edge
+  swipe, re-hidden on focus change) so they never overlay the play area.
+
+> The camera cutout is **not** a special case here: with the WebView full-bleed,
+> the arena background draws under the punch-hole while the safe-area inset math
+> keeps the HUD / touch controls clear of it. Do not re-add
+> `android:windowLayoutInDisplayCutoutMode` / manual margin hacks — they fight
+> Capacitor's edge-to-edge handling and were the wrong layer.
+
 ## Manual end-to-end acceptance
 
 The automated Vitest gate (`src/build/capacitorConfig.test.js`) proves the shell

@@ -8,7 +8,15 @@
 // The fixed logical size the game is authored against. Phaser's Scale.FIT
 // mode scales this to the window while CENTER_BOTH letterboxes it, so the
 // aspect ratio is preserved at any window size.
-export const ARENA_WIDTH = 1280;
+//
+// Width is 1560 (not 1280): a 1560×720 arena is 19.5:9, matching modern tall
+// phones (e.g. Galaxy S25 Ultra, 2340×1080) so Scale.FIT fills the screen edge-
+// to-edge with no letterbox bars. Height stays 720. On a classic 16:9 display
+// this letterboxes with thin top/bottom bars instead — an accepted trade for a
+// full-bleed phone experience. (Fully per-device-adaptive width is a possible
+// future refinement; a fixed design resolution keeps the headless sim + tests
+// deterministic.)
+export const ARENA_WIDTH = 1560;
 export const ARENA_HEIGHT = 720;
 
 // Border inset (px, logical) and thickness for the drawn arena boundary.
