@@ -110,7 +110,7 @@ development_status:
   9-1-player-dps-telemetry: done
   9-2-build-adaptive-spawn-scaling: done
   9-3-armored-enemy-archetype: done
-  9-4-governor-validation-power-spikes: backlog
+  9-4-governor-validation-power-spikes: done
   epic-9-retrospective: optional
 
   # Epic 10 — Core Arsenal (Stat-Stackers)

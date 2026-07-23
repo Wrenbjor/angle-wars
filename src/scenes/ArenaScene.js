@@ -83,6 +83,8 @@ import {
   COLOR_BOMB_SHOCKWAVE,
   SCREEN_FLASH_MS,
   COLOR_SCREEN_FLASH,
+  GOVERNOR_BOOST_DPS,
+  GOVERNOR_BOOST_DURATION_MS,
 } from '../config/constants.js';
 import { FixedTimestep } from '../core/FixedTimestep.js';
 import { SimRateSampler } from '../core/SimRateSampler.js';
@@ -540,6 +542,22 @@ export class ArenaScene extends Phaser.Scene {
       // the UI screen-fixed is readability over juice — the shake belongs to the
       // gameplay world, not the score/debug text.
       this.debugText.setScrollFactor(0);
+
+      // --- Governor boost trigger (Story 9.4, DEV-only) --------------------
+      // Press G to fire a large transient power spike into the SAME `dps` signal
+      // the governor consumes (the reusable applyBoost hook Epic 13 will drive):
+      // the DEV `dps`/`boost`/`pressure` readout climbs then re-settles over the
+      // fade window, so the spike is observable live. Inside import.meta.env.DEV
+      // so a production build statically drops both the handler and the readout.
+      this.input.keyboard.on('keydown-G', (event) => {
+        // Ignore OS key auto-repeat (Story 5.2 held-key lesson) so holding G does
+        // not stack a fresh boost every repeat frame — one press, one spike.
+        if (event && event.repeat) return;
+        this.dpsTelemetrySystem.applyBoost(
+          GOVERNOR_BOOST_DPS,
+          GOVERNOR_BOOST_DURATION_MS,
+        );
+      });
     }
 
     // --- HUD (score + lives) ------------------------------------------------
@@ -1691,6 +1709,7 @@ export class ArenaScene extends Phaser.Scene {
           `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
           `cards      : ${Object.keys(this.progressionState.ownedCards).length}  stat ${this.progressionState.debugStat}`,
           `dps        : ${this.dpsTelemetrySystem.dps.toFixed(1)}`,
+          `boost      : ${this.dpsTelemetrySystem.boostDps.toFixed(1)}`,
           `pressure   : ${this.spawnDirector.pressure.toFixed(2)}`,
         ].join('\n'),
       );

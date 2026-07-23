@@ -10,8 +10,19 @@ import {
 //
 // This is the PRODUCER of the build-power signal: how much damage the player is
 // actually dealing, measured live so Story 9.2's adaptive spawn director can
-// answer a strong build instead of letting it trivialize the late game. This
-// story delivers ONLY the telemetry — nothing consumes `dps` yet.
+// answer a strong build instead of letting it trivialize the late game.
+//
+// Story 9.4 transient-boost seam: applyBoost(magnitude, durationMs) folds a
+// linearly-decaying transient into `dps` — the SINGLE signal the governor
+// consumes — so a sudden power spike (Epic 13's cheat-code rewards) routes
+// through the already-validated 9.2 slew limiter + 9.3 armored gating with NO
+// new director input and NO second balancing surface (epic + NFR8: "no new
+// balancing surface"). The boost is expressed in the governor's native units
+// (damage/sec), added on TOP of the pure rolling estimate: with no boost applied
+// `dps` is byte-identical to the 9.1 signal. The transient drains by SIM TIME
+// (dt), reaching 0 at exactly `durationMs` for any tick size (frame-rate-
+// independent), and is allocation-free (scalar fields only). Epic 13 calls this
+// same method with the GOVERNOR_BOOST_* defaults — the hook is its whole footprint.
 //
 // It is a PURE observer. Each fixed step it reads exactly one input —
 // collisionSystem.bulletDamageCount, the already-latched count of PLAYER bullet
@@ -77,17 +88,68 @@ export class DpsTelemetrySystem extends System {
     // Window length, exposed read-only for a consumer/debug readout.
     this.windowMs = DPS_WINDOW_MS;
     // Public read-only estimate: player damage-units per second, averaged over
-    // the window. Starts at 0 (empty window) and is recomputed each tick.
+    // the window PLUS any live transient boost (Story 9.4). Starts at 0 (empty
+    // window, no boost) and is recomputed each tick.
     this.dps = 0;
+
+    // --- Story 9.4 transient-boost seam -----------------------------------
+    // Public: the live boost component currently folded into `dps` (in the same
+    // damage/sec units). Mirrors `this.dps` so a DEV readout can show the spike
+    // and its fade. 0 == no boost, so `dps` == the pure rolling estimate.
+    this.boostDps = 0;
+    // Private: how fast the reservoir drains, in boost-units per ms of sim time.
+    // Re-derived on every applyBoost() so the CURRENT reservoir empties over the
+    // NEW durationMs (drain × dur == reservoir ⇒ reaches 0 at exactly durationMs).
+    this._boostDrainPerMs = 0;
   }
 
   /**
-   * Advance one fixed step: fold this tick's bullet-kill damage into the rolling
-   * window and recompute `dps`. O(1), zero allocation.
-   * @param {number} _dt Constant fixed-step delta (ms) — the telemetry advances
-   *   per tick, not per dt (one ring slot per fixed step); dt is unused.
+   * Apply a transient power boost (Story 9.4) — the single reusable entry point
+   * Epic 13's Generosity Engine calls with the GOVERNOR_BOOST_* defaults. The
+   * magnitude is added to `boostDps` (which folds into `dps`), so the governor's
+   * 9.2 slew response + 9.3 gating answer it with no new balancing surface.
+   * Stacking is additive: the drain rate is re-derived so the COMBINED reservoir
+   * empties over the new `durationMs`. Invalid input (magnitude/durationMs ≤ 0 or
+   * non-finite) is a silent no-op — the hook never reduces or poisons `dps`.
+   * @param {number} magnitude Boost size in damage-units/sec (> 0).
+   * @param {number} durationMs Linear fade time in sim ms (> 0).
    */
-  fixedUpdate(_dt) {
+  applyBoost(magnitude, durationMs) {
+    // Require FINITE positive values. This rejects NaN/undefined/negatives/zero AND
+    // +Infinity in one guard: a `+Infinity` magnitude would make `boostDps` Infinity
+    // and next tick `Infinity − Infinity = NaN` would stick `dps` at NaN forever
+    // (the decay is gated on `boostDps > 0`, and `NaN > 0` is false, so nothing
+    // recovers it); an infinite `durationMs` would give a 0 drain that never fades.
+    // So a bad call can never poison `dps` with NaN/Infinity nor drive `boostDps`
+    // negative — it is a silent no-op.
+    if (
+      !Number.isFinite(magnitude) ||
+      magnitude <= 0 ||
+      !Number.isFinite(durationMs) ||
+      durationMs <= 0
+    ) {
+      return;
+    }
+    this.boostDps += magnitude; // stack additively
+    this._boostDrainPerMs = this.boostDps / durationMs; // empties over durationMs
+  }
+
+  /**
+   * Advance one fixed step: decay any live boost by sim time, fold this tick's
+   * bullet-kill damage into the rolling window, and recompute `dps`. O(1), zero
+   * allocation.
+   * @param {number} dt Constant fixed-step delta (ms). The rolling window advances
+   *   per TICK (one ring slot per fixed step, dt-independent); the Story 9.4 boost
+   *   drains per dt of SIM TIME so it fades in exactly durationMs at any tick size.
+   */
+  fixedUpdate(dt) {
+    // Story 9.4: drain the transient boost by SIM TIME (frame-rate-independent).
+    // Total drain over durationMs is _boostDrainPerMs × durationMs == boostDps₀,
+    // so it reaches 0 at exactly durationMs; the clamp stops it going negative.
+    if (this.boostDps > 0) {
+      this.boostDps -= this._boostDrainPerMs * dt;
+      if (this.boostDps < 0) this.boostDps = 0;
+    }
     // This tick's damage: player bullet damaging-HITS × the per-hit damage unit
     // (Story 9.3 — a non-killing armor hit counts as 1 unit, same as a kill). The
     // count is the already-latched bullet-only figure (bomb/black-hole removals
@@ -108,6 +170,8 @@ export class DpsTelemetrySystem extends System {
     // always > 0, so the divisor can never go 0/negative → dps stays finite. A
     // single kill contributes 1 / (span seconds) → never a spike.
     const windowSec = (this._ring.length * FIXED_STEP_MS) / 1000;
-    this.dps = this._sum / windowSec;
+    // Fold the live boost (Story 9.4) on TOP of the pure rolling estimate — the
+    // governor already reads `.dps`. With boostDps 0 this is byte-identical to 9.1.
+    this.dps = this._sum / windowSec + this.boostDps;
   }
 }

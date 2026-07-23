@@ -184,3 +184,175 @@ describe('DpsTelemetrySystem — rolling player DPS estimate', () => {
     expect(sys.dps).toBe(0);
   });
 });
+
+// --- Story 9.4 transient-boost seam ------------------------------------------
+// applyBoost(magnitude, durationMs) folds a linearly-decaying transient into the
+// SAME `dps` the governor consumes, so the 9.2/9.3 response answers with no new
+// balancing surface. These pin the I/O Matrix rows for the hook: rise, linear
+// decay to exactly 0 at durationMs, frame-rate independence of the decay,
+// additive stacking with a re-derived drain, invalid-input silent no-op, and
+// zero-allocation with a boost live. Power-of-two magnitudes/durations/dt are
+// used so the drain arithmetic is exact in binary float (=== 0 assertions hold).
+describe('DpsTelemetrySystem — Story 9.4 boost hook', () => {
+  it('starts with no boost (boostDps 0) — dps is the pure rolling estimate', () => {
+    const sys = new DpsTelemetrySystem(makeSource());
+    expect(sys.boostDps).toBe(0);
+  });
+
+  it('a boost immediately raises boostDps by the magnitude and folds into dps on the next tick', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    // Exact-in-float: drain = 16/1024 = 0.015625, drain/tick @ dt 64 = 1.0.
+    sys.applyBoost(16, 1024);
+    // The reservoir jumps immediately; dps is not recomputed until fixedUpdate.
+    expect(sys.boostDps).toBe(16);
+    // One tick with zero hits: rolling estimate stays 0, so dps == the boost after
+    // one tick's decay (16 − 1 = 15) — a clear rise above 0.
+    src.bulletDamageCount = 0;
+    sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(15);
+    expect(sys.dps).toBe(15);
+    expect(sys.dps).toBeGreaterThan(0);
+  });
+
+  it('decays linearly to EXACTLY 0 at durationMs (then holds at 0)', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    sys.applyBoost(16, 1024); // 16 ticks @ dt 64 (1024 ms), 1.0 drained per tick
+    // Just before the fade completes it is still positive (linear, no early clamp).
+    for (let t = 0; t < 15; t++) sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(1);
+    // The 16th tick lands exactly on durationMs → bit-exact 0.
+    sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(0);
+    expect(sys.dps).toBe(0);
+    // Held at 0 — no undershoot, no negative reservoir poisoning dps.
+    for (let t = 0; t < 10; t++) sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(0);
+  });
+
+  it('the decay is frame-rate independent — same boostDps for the same sim time at any dt', () => {
+    // Same boost, two different tick cadences, compared at the SAME elapsed sim time.
+    const srcA = makeSource();
+    const sysA = new DpsTelemetrySystem(srcA);
+    sysA.applyBoost(16, 1024);
+    for (let t = 0; t < 8; t++) sysA.fixedUpdate(64); // 8 × 64 = 512 ms
+
+    const srcB = makeSource();
+    const sysB = new DpsTelemetrySystem(srcB);
+    sysB.applyBoost(16, 1024);
+    for (let t = 0; t < 4; t++) sysB.fixedUpdate(128); // 4 × 128 = 512 ms
+
+    // Half the fade elapsed either way → half the reservoir drained, bit-identical.
+    expect(sysA.boostDps).toBe(8);
+    expect(sysB.boostDps).toBe(sysA.boostDps);
+  });
+
+  it('stacks additively and re-derives the drain so the COMBINED reservoir empties over the new duration', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    sys.applyBoost(8, 1024);
+    // A second boost before the first fades: reservoir accumulates, drain re-derived
+    // from the CURRENT total so the whole 16 empties over the new 1024 ms.
+    sys.applyBoost(8, 1024);
+    expect(sys.boostDps).toBe(16);
+    expect(sys._boostDrainPerMs).toBe(16 / 1024);
+    // 16 ticks @ dt 64 == 1024 ms of sim → the combined reservoir reaches exactly 0.
+    for (let t = 0; t < 16; t++) sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(0);
+  });
+
+  it('re-derives the drain from the CURRENT reservoir over the NEW duration when stacked mid-decay (not accumulating per-boost rates)', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    src.bulletDamageCount = 0;
+    // First boost, then let it PARTIALLY decay before stacking — the equal-duration,
+    // no-decay-between stack above cannot tell re-derivation apart from a wrong impl
+    // that accumulates per-boost rates (both give identical numbers). Decaying first
+    // AND stacking a DIFFERENT duration makes the two diverge, pinning the I/O-matrix
+    // contract: the drain empties the COMBINED reservoir over the NEW duration.
+    sys.applyBoost(8, 1024); // drain 8/1024 = 0.0078125/ms (exact in float)
+    for (let t = 0; t < 4; t++) sys.fixedUpdate(64); // 256 ms → drained 2, boostDps 6
+    expect(sys.boostDps).toBe(6);
+    // Stack a second boost with a SHORTER duration. Re-derivation sets the drain from
+    // the current total (14) over the new 512 ms: 14/512 = 0.02734375/ms (exact).
+    sys.applyBoost(8, 512);
+    expect(sys.boostDps).toBe(14);
+    expect(sys._boostDrainPerMs).toBe(14 / 512);
+    // 8 ticks @ 64 == 512 ms → the combined reservoir empties to EXACTLY 0 at the new
+    // duration. A rate-accumulating regression (drain 0.0078125 + 8/512 = 0.0234375)
+    // would leave 2 here, so this assertion discriminates it.
+    for (let t = 0; t < 8; t++) sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(0);
+  });
+
+  it('ignores invalid boosts (silent no-op) — never reduces or poisons dps', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    // From a clean state, every invalid form leaves boostDps untouched. +Infinity is
+    // rejected too: an infinite magnitude would make boostDps Infinity and next tick
+    // `Infinity − Infinity = NaN` stick dps at NaN forever; an infinite durationMs
+    // gives a 0 drain that never fades — both are silent no-ops.
+    sys.applyBoost(0, 1000);
+    sys.applyBoost(-5, 1000);
+    sys.applyBoost(NaN, 1000);
+    sys.applyBoost(Infinity, 1000);
+    sys.applyBoost(10, 0);
+    sys.applyBoost(10, -100);
+    sys.applyBoost(10, NaN);
+    sys.applyBoost(10, Infinity);
+    expect(sys.boostDps).toBe(0);
+    // dps is not poisoned by the rejected non-finite inputs.
+    src.bulletDamageCount = 0;
+    sys.fixedUpdate(FIXED_STEP_MS);
+    expect(Number.isFinite(sys.dps)).toBe(true);
+    expect(sys.dps).toBe(0);
+    // A valid boost then invalid follow-ups must not REDUCE the reservoir nor make
+    // it non-finite (the hook only ever adds a positive, finite magnitude).
+    sys.applyBoost(10, 1000);
+    sys.applyBoost(-999, 1000);
+    sys.applyBoost(NaN, 1000);
+    sys.applyBoost(Infinity, 1000);
+    sys.applyBoost(5, 0);
+    sys.applyBoost(5, Infinity);
+    expect(sys.boostDps).toBe(10);
+    src.bulletDamageCount = 0;
+    sys.fixedUpdate(FIXED_STEP_MS);
+    expect(Number.isFinite(sys.dps)).toBe(true);
+    expect(sys.dps).toBeGreaterThan(0);
+  });
+
+  it('ADDS the boost to a non-zero rolling estimate (not replace) — dps === rolling + boost', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    // Fill the whole window at a steady 2 hits/tick so the rolling estimate is a
+    // known R > 0 (== 2 × 1000/FIXED_STEP_MS == 120 @ default constants). With no
+    // boost yet, this tick's dps IS the pure rolling value — capture it.
+    for (let t = 0; t < N; t++) tick(sys, src, 2);
+    const R = sys.dps;
+    expect(R).toBeGreaterThan(0);
+    expect(R).toBeCloseTo(120, 6);
+
+    // Now apply a boost and tick ONCE more at the SAME 2 hits/tick: the window slides
+    // by one identical slot so _sum (and thus the rolling value) is bit-identical to
+    // R, while the boost drains one tick. Power-of-two boost + dt: drain = 16/1024 ×
+    // 64 = 1.0 exact, so boostDps = 15. dps must equal R + 15 EXACTLY — proving the
+    // boost sums with the live rolling estimate; a regression to replace-semantics
+    // (boost masking real dps) would yield 15 (≠ R + 15) and fail here.
+    sys.applyBoost(16, 1024);
+    src.bulletDamageCount = 2;
+    sys.fixedUpdate(64);
+    expect(sys.boostDps).toBe(15);
+    expect(sys.dps).toBe(R + 15);
+  });
+
+  it('allocates nothing in the hot loop while a boost is live (same ring instance)', () => {
+    const src = makeSource();
+    const sys = new DpsTelemetrySystem(src);
+    const ring = sys._ring;
+    sys.applyBoost(16, 1024);
+    for (let i = 0; i < 40; i++) tick(sys, src, i % 3);
+    // The boost decays via scalar fields only — the ring is never re-allocated.
+    expect(sys._ring).toBe(ring);
+  });
+});

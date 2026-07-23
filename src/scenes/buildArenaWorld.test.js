@@ -10,6 +10,9 @@ import {
   ARMORED_MIN_ELAPSED_MS,
   REROLL_INITIAL_CHARGES,
   BANISH_INITIAL_CHARGES,
+  GOVERNOR_BOOST_DPS,
+  GOVERNOR_BOOST_DURATION_MS,
+  SPAWN_DIRECTOR_MAX_PRESSURE,
 } from '../config/constants.js';
 
 // buildArenaWorld wiring coverage. The scene's create() inlines this exact build
@@ -357,5 +360,61 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.highScoreSystem.storage).toBe(highScoreStorage);
     // The system seeded its display from the injected port's stored high.
     expect(ctx.highScoreSystem.highScore).toBe(1234);
+  });
+
+  // --- Story 9.4: governor answers a transient power spike end-to-end (DW-368) ---
+  // This is the load-bearing integration proof: build the ACTUAL assembled world,
+  // fire a large boost through the reusable applyBoost hook, and step the WHOLE
+  // world.fixedUpdate loop. Because the boost enters the SAME `dps` the governor
+  // already consumes, the telemetry→director loop answers automatically — and a
+  // stuck-at-zero governor (the DW-368 risk of the loop never being stepped
+  // end-to-end) would fail here instead of shipping green.
+  it('answers a transient boost end-to-end then re-settles (Story 9.4 governor validation)', () => {
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    const { world, spawnDirector, dpsTelemetrySystem } = ctx;
+
+    // Fresh build: the assembled loop is at rest — v1 floor, no boost.
+    expect(spawnDirector.pressure).toBe(0);
+    expect(dpsTelemetrySystem.boostDps).toBe(0);
+
+    // Fire a large transient spike into the SAME dps signal the governor consumes
+    // (the reusable hook Epic 13 will drive with these same defaults) — no new
+    // director input, no second pressure knob.
+    dpsTelemetrySystem.applyBoost(GOVERNOR_BOOST_DPS, GOVERNOR_BOOST_DURATION_MS);
+
+    // Step the WHOLE assembled world across the fade window, tracking peak pressure.
+    // Stepping ctx.world.fixedUpdate (not a hand-picked subset) is the whole point:
+    // it proves the real telemetry→director wiring is live, not stuck at zero.
+    const fadeTicks = Math.ceil(GOVERNOR_BOOST_DURATION_MS / FIXED_STEP_MS);
+    let peakPressure = 0;
+    for (let t = 0; t < fadeTicks; t++) {
+      world.fixedUpdate(FIXED_STEP_MS);
+      if (spawnDirector.pressure > peakPressure) {
+        peakPressure = spawnDirector.pressure;
+      }
+    }
+
+    // The director ANSWERED the spike SUBSTANTIVELY: with the shipped
+    // GOVERNOR_BOOST_DPS/DURATION over this fade window the observed peak is ≈1.043
+    // (≈half of MAX_PRESSURE=2), reached ~tick 313. Assert a robust lower bound well
+    // off the floor (0.75) so a stuck/barely-moving governor fails — `> 0` would let
+    // a 0.001 twitch pass. Still bounded by the MAX clamp (never unbounded).
+    expect(peakPressure).toBeGreaterThan(0.75);
+    expect(peakPressure).toBeLessThanOrEqual(SPAWN_DIRECTOR_MAX_PRESSURE);
+
+    // Exactly durationMs of sim time has elapsed → the boost is fully faded, no
+    // residue folded into dps.
+    expect(dpsTelemetrySystem.boostDps).toBe(0);
+
+    // Let the symmetric slew relax now the boost is gone.
+    for (let t = 0; t < fadeTicks; t++) world.fixedUpdate(FIXED_STEP_MS);
+
+    // Re-settled TOWARD THE FLOOR, not merely "dropped a hair": with no residual dps
+    // the observed final pressure is exactly 0. Assert it fell well below half the
+    // peak AND is approaching the floor (< 0.05) — proving the spike read as a thrill
+    // that passed, not a permanent difficulty step. A governor that answered but
+    // never relaxed (asymmetric/stuck-high) fails here.
+    expect(spawnDirector.pressure).toBeLessThan(peakPressure * 0.5);
+    expect(spawnDirector.pressure).toBeLessThan(0.05);
   });
 });

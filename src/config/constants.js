@@ -460,6 +460,27 @@ export const SPAWN_DIRECTOR_MAX_PRESSURE = 2;
 // oscillate toward a constant target (monotonic by construction).
 export const SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS = 0.0002;
 
+// --- Governor boost hook (Story 9.4) ----------------------------------------
+// The single reusable transient-boost seam that proves the Epic 9 governor
+// answers a sudden power spike (power-in → threat-out) and re-settles as it
+// fades. A boost is folded into the SAME `dps` signal the governor already
+// consumes (DpsTelemetrySystem.applyBoost), so the whole 9.2 slew response +
+// 9.3 armored gating answer with NO new balancing surface — no new director
+// input, no second pressure knob. Both values are tunable placeholders (tuned
+// post-launch), mirroring the SPAWN_DIRECTOR_* discipline. Epic 13's Generosity
+// Engine wires its real cheat-code rewards to applyBoost() with THESE defaults,
+// reusing the identical, already-validated governor path.
+
+// Boost magnitude in damage-units/sec — the cheat-code stand-in. The boost ADDS
+// to the live rolling dps, so at SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE=8 the
+// pressure target is (dps + 24)/8 ≥ 24/8 = 3 — always at least 3, clamped to
+// SPAWN_DIRECTOR_MAX_PRESSURE=2: a clear, bounded, saturating spike (it saturates
+// at least as hard as the standalone figure, harder still atop existing output).
+export const GOVERNOR_BOOST_DPS = 24;
+// Boost fade time (ms): the transient decays linearly to 0 over this span of sim
+// time (frame-rate-independent). ~run-length, comparable to the 10s DPS window.
+export const GOVERNOR_BOOST_DURATION_MS = 8000;
+
 // --- Enemy spawn telegraph / spawn-point safety (Story 2.6) ------------------
 // Every freshly spawned enemy of every archetype (Seeker, Green Square,
 // Pinwheel, Snake segments, Black Hole, and Black-Hole-fed seekers) carries a
