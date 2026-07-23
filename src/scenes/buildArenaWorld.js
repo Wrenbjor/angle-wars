@@ -307,8 +307,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // --- Level-up moment & card draft (Story 8.3 / Epic 8 progression) -------
   // The level-up state machine: edge-detects LevelSystem.levelsGainedThisTick,
   // enqueues one owed selection per level crossed, holds the player invulnerable
-  // while any selection is pending, and offers the fixed placeholder trio. Runs
-  // AFTER LevelSystem so it reads THIS tick's levelsGainedThisTick, and BEFORE
+  // while any selection is pending, and offers a weighted seeded trio (Story 8.4's
+  // deterministic weighted-without-replacement draw, routed through the shared `_rng`).
+  // Runs AFTER LevelSystem so it reads THIS tick's levelsGainedThisTick, and BEFORE
   // PlayerDeathSystem so its invuln top-up gates death the SAME tick (reusing the
   // existing i-frame gate — no death/collision edit). Writes only its own fields +
   // playerState.invulnMs + (on a pick) progressionState.
@@ -316,6 +317,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     levelSystem,
     playerState,
     progressionState,
+    _rng,
   );
   world.addSystem(levelUpSystem);
 

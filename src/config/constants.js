@@ -658,6 +658,38 @@ export const LEVELUP_CARD_WIDTH = 300;
 export const LEVELUP_CARD_HEIGHT = 200;
 export const LEVELUP_CARD_GAP = 40;
 
+// --- Weighted card offer & slot limits (Story 8.4 / Epic 8 progression) ------
+// The level-up offer is a deterministic weighted-without-replacement draw of
+// CARD_OFFER_SIZE distinct cards from the placeholder pool, routed through the
+// same injected `_rng` stream the spawn systems use. Each candidate's weight is
+// `rarity × (owned ? OWNED : UNOWNED) × (level===1 ? LEVEL1 : MIDTIER) × (trackFull
+// && !owned ? 0 : 1) × banishMultiplier`, so the offer favors finishing owned
+// builds (and mid-tier upgrades) over starting new ones, and a full track stops
+// offering fresh cards in it. All values are tunable placeholders (tuned post-
+// launch; Epic 10 owns the real registry) — no inline magic numbers in the draw.
+
+// Per-track distinct-owned slot limits: once this many DISTINCT cards in a track
+// are owned, no UNOWNED card in that track is offered (its weight zeroes). Offense
+// caps at 5, defense at 4 — the Epic-8 "a run commits to a build" ceiling.
+export const SLOT_LIMIT_OFFENSE = 5;
+export const SLOT_LIMIT_DEFENSE = 4;
+// The offer is exactly this many distinct cards ("exactly three" is a firm Epic-8
+// contract). NOTE: this value is MIRRORED as a literal `3` in LevelUpSystem's selection
+// latch (`currentOffer.length === 3`, `index < 3`) and the ArenaScene card overlay — it
+// is not imported there — so it must not be changed without updating those call sites.
+export const CARD_OFFER_SIZE = 3;
+// Ownership weight factor: an already-owned card is this much more likely than an
+// unowned one (favors finishing owned builds over starting new ones).
+export const CARD_WEIGHT_OWNED_MULT = 2.2;
+// Ownership weight factor for an unowned (level 0) card — the neutral baseline.
+export const CARD_WEIGHT_UNOWNED_MULT = 1.0;
+// Level factor for a just-started card (level === 1): the neutral rung, so a
+// freshly-owned card is favored by ownership but not yet by the mid-tier bump.
+export const CARD_WEIGHT_LEVEL1_MULT = 1.0;
+// Level factor for any card NOT at level 1 (unowned level 0 or mid-tier levels
+// 2+): the bump that, combined with ownership, favors finishing mid-tier builds.
+export const CARD_WEIGHT_MIDTIER_MULT = 1.4;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;

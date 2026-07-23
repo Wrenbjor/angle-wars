@@ -5,6 +5,7 @@ import {
   LEVELUP_LANDING_INVULN_MS,
 } from '../config/constants.js';
 import { applyCard } from '../state/ProgressionState.js';
+import { drawCardOffer } from './cardOffer.js';
 
 // LevelUpSystem — the sim-side state machine of the Epic 8 level-up moment (Story 8.3,
 // Phaser-free).
@@ -20,7 +21,10 @@ import { applyCard } from '../state/ProgressionState.js';
 // existing i-frame gate — no death/collision edit, no new PlayerState field). It is
 // strictly additive: it reads levelSystem.levelsGainedThisTick + playerState.invulnMs,
 // and writes only pendingSelections / currentOffer / playerState.invulnMs / (on a pick)
-// progressionState. No RNG (Story 8.4's weighted-draw seam replaces the fixed trio).
+// progressionState. On each offer (re)build it performs Story 8.4's deterministic
+// weighted-without-replacement draw (drawCardOffer) through the injected `_rng` stream
+// — favoring owned builds / mid-tier upgrades and honoring per-track slot limits —
+// instead of the old fixed placeholder trio.
 //
 // The choice is LATCHED, not applied directly: the overlay (render loop) calls
 // queueSelection(index); fixedUpdate consumes the latch and applies the card — mirroring
@@ -39,16 +43,23 @@ export class LevelUpSystem extends System {
    * @param {{invulnMs:number}} playerState Shared player lifecycle state — its invuln
    *   window is re-armed each pending tick (reusing PlayerDeathSystem's i-frame gate).
    * @param {{ownedCards:Object<string,number>, debugStat:number}} progressionState
-   *   Shared run-scoped card progression — a selection applies its card here.
+   *   Shared run-scoped card progression — a selection applies its card here, and its
+   *   ownership drives the weighted offer draw.
+   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the weighted
+   *   offer draw (Story 8.4). Threaded from buildArenaWorld so the offer routes through
+   *   the SAME seedable stream the spawn systems use; injectable so the draw is
+   *   deterministic and unit-testable.
    */
-  constructor(levelSystem, playerState, progressionState) {
+  constructor(levelSystem, playerState, progressionState, rng = Math.random) {
     super();
     this.levelSystem = levelSystem;
     this.playerState = playerState;
     this.progressionState = progressionState;
+    this._rng = rng;
     // Number of owed selections not yet drained (a COUNT, not a bool).
     this.pendingSelections = 0;
-    // The three placeholder cards currently offered (empty while none pending).
+    // The three cards currently offered (empty while none pending), rebuilt by the
+    // Story 8.4 weighted draw on each crossing/post-pick tick.
     this.currentOffer = [];
     // One-slot choice latch (mirrors the bomb latch): the overlay writes an index;
     // fixedUpdate reads-and-clears it. null = no choice queued.
@@ -127,7 +138,15 @@ export class LevelUpSystem extends System {
     // is pending, clear the offer (overlay closed, time restored).
     if (this.pendingSelections > 0) {
       if (this.currentOffer.length === 0) {
-        this.currentOffer = PLACEHOLDER_CARDS.slice(0, 3);
+        // Story 8.4: a fresh weighted-without-replacement draw through the injected
+        // `_rng`, reflecting the just-updated ownership (a post-pick tick of a
+        // multi-level jump re-draws against the newly owned card). Returns a NEW array
+        // per call, preserving the 8.3 freshOffer focus-reset (keyed on array identity).
+        this.currentOffer = drawCardOffer({
+          pool: PLACEHOLDER_CARDS,
+          progressionState: this.progressionState,
+          rng: this._rng,
+        });
       }
       if (this.playerState.invulnMs < LEVELUP_INVULN_FLOOR) {
         this.playerState.invulnMs = LEVELUP_INVULN_FLOOR;

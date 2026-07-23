@@ -259,6 +259,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.spawnDirector._rng).toBe(rng);
     expect(ctx.blackHoleSystem._rng).toBe(rng);
     expect(ctx.particleSystem.rng).toBe(rng);
+    expect(ctx.levelUpSystem._rng).toBe(rng);
   });
 
   it('survives a headless run — ticking the assembled world does not throw', () => {

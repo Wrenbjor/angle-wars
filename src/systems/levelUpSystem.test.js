@@ -1,24 +1,46 @@
 import { describe, it, expect } from 'vitest';
 import { LevelUpSystem } from './LevelUpSystem.js';
 import { createProgressionState } from '../state/ProgressionState.js';
+import { PLACEHOLDER_CARDS } from '../config/cards.js';
 import {
   FIXED_STEP_MS,
   LEVELUP_INVULN_FLOOR,
   LEVELUP_LANDING_INVULN_MS,
 } from '../config/constants.js';
 
-// Story 8.3 — the level-up state machine. LevelUpSystem edge-detects the level-up
+// Story 8.3/8.4 — the level-up state machine. LevelUpSystem edge-detects the level-up
 // from levelSystem.levelsGainedThisTick, enqueues owed selections, holds invuln, and
-// offers a fixed placeholder trio; a latched choice is drained + applied in the tick.
-// Every case drives plain stubs ({levelsGainedThisTick} level stub, {invulnMs} player
-// stub, a real createProgressionState()) and asserts the public fields after ticks.
+// offers a weighted seeded trio (Story 8.4's drawCardOffer, routed through the injected
+// `_rng`); a latched choice is drained + applied in the tick. Every case drives plain
+// stubs ({levelsGainedThisTick} level stub, {invulnMs} player stub, a real
+// createProgressionState()) + a deterministic stub rng, asserting the public fields.
 
-function build({ invulnMs = 0 } = {}) {
+// A stub rng replaying a fixed sequence (looping) — deterministic and injectable, so
+// the weighted draw is repeatable across ticks.
+function seqRng(values = [0.13, 0.47, 0.81, 0.29, 0.63]) {
+  let i = 0;
+  return () => {
+    const v = values[i % values.length];
+    i++;
+    return v;
+  };
+}
+
+function build({ invulnMs = 0, rng = seqRng() } = {}) {
   const levelStub = { levelsGainedThisTick: 0 };
   const playerStub = { invulnMs };
   const prog = createProgressionState();
-  const sys = new LevelUpSystem(levelStub, playerStub, prog);
-  return { sys, levelStub, playerStub, prog };
+  const sys = new LevelUpSystem(levelStub, playerStub, prog, rng);
+  return { sys, levelStub, playerStub, prog, rng };
+}
+
+// The three offered cards must be exactly CARD_OFFER_SIZE (3), pairwise distinct, and
+// every one a member of PLACEHOLDER_CARDS.
+function expectValidOffer(offer) {
+  expect(offer).toHaveLength(3);
+  const ids = offer.map((c) => c.id);
+  expect(new Set(ids).size).toBe(ids.length);
+  for (const c of offer) expect(PLACEHOLDER_CARDS).toContain(c);
 }
 
 describe('LevelUpSystem — level-up moment state machine', () => {
@@ -31,21 +53,52 @@ describe('LevelUpSystem — level-up moment state machine', () => {
     expect(playerStub.invulnMs).toBe(0);
   });
 
-  it('level-up fires (levelsGainedThisTick 1): pending 1, offer of 3, active, invuln armed', () => {
+  it('level-up fires (levelsGainedThisTick 1): pending 1, offer of 3 distinct pool cards, active, invuln armed', () => {
     const { sys, levelStub, playerStub } = build({ invulnMs: 0 });
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.pendingSelections).toBe(1);
-    expect(sys.currentOffer).toHaveLength(3);
+    expectValidOffer(sys.currentOffer);
     expect(sys.selectionActive).toBe(true);
     expect(playerStub.invulnMs).toBeGreaterThanOrEqual(LEVELUP_INVULN_FLOOR);
   });
 
-  it('multi-level jump (levelsGainedThisTick 3): owes three picks', () => {
+  it('the weighted draw is deterministic under a fixed-sequence stub rng (same crossing twice → identical trio)', () => {
+    const seq = [0.17, 0.53, 0.88, 0.31, 0.72];
+    const a = build({ rng: seqRng(seq) });
+    a.levelStub.levelsGainedThisTick = 1;
+    a.sys.fixedUpdate();
+    const b = build({ rng: seqRng(seq) });
+    b.levelStub.levelsGainedThisTick = 1;
+    b.sys.fixedUpdate();
+    expect(a.sys.currentOffer.map((c) => c.id)).toEqual(
+      b.sys.currentOffer.map((c) => c.id),
+    );
+  });
+
+  it('multi-level jump (levelsGainedThisTick 3): owes three picks, offer of 3 distinct pool cards', () => {
     const { sys, levelStub } = build();
     levelStub.levelsGainedThisTick = 3;
     sys.fixedUpdate();
     expect(sys.pendingSelections).toBe(3);
+    expectValidOffer(sys.currentOffer);
+  });
+
+  it('multi-level jump: after a pick drains, the fresh post-pick offer reflects the updated ownership and is still three distinct', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.levelsGainedThisTick = 2;
+    sys.fixedUpdate(); // pending 2, first offer built
+    levelStub.levelsGainedThisTick = 0;
+    const picked = sys.currentOffer[0];
+    sys.queueSelection(0);
+    sys.fixedUpdate(); // pick one → pending 1, fresh offer drawn against new ownership
+    // Ownership now records the picked card.
+    expect(prog.ownedCards[picked.id]).toBe(1);
+    // The fresh offer is still exactly three distinct pool cards (drawn against the
+    // just-updated ownership — the picked card now weighs as an owned card).
+    expectValidOffer(sys.currentOffer);
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.selectionActive).toBe(true);
   });
 
   it('invuln held: re-armed ≥ FLOOR each pending tick, never drains to 0 (simulated per-tick drain)', () => {
