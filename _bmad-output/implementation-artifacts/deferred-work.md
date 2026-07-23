@@ -153,7 +153,9 @@ origin: migrated from legacy ledger (review of spec-2-3-snake-enemy.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-3-snake-enemy.md`
 location: `SnakeSystem._spawnOne` (off-border body tail on spawn)
 reason: Adversarial layer flagged the off-border spawn tail; it is the explicitly-documented, intended spawn geometry (the snake "emerges from the edge"), acknowledged in the spec's Design Notes as acceptable because the ship is border-clamped. Cleaning it up (spawn wholly inside, cull/hold off-border segments) overlaps the safe-spawn/telegraph work the epic assigns to Story 2.6 and the aesthetic pass in Epic 4 — deferred there rather than reshaping spawn geometry now.
-status: open
+status: done 2026-07-23
+resolution: closed by human decision: The off-border spawn tail is explicitly documented in the spec Design Notes as intended and acceptable (ship is border-clamped); no defect against the ACs.
+decision: 2026-07-23 Close (intended geometry) — The off-border spawn tail is explicitly documented in the spec Design Notes as intended and acceptable (ship is border-clamped); no defect against the ACs.
 
 ### DW-18: The `ArenaScene` snake wiring/render surface — the `world.addSystem(snakeSystem)` registration BEFORE `CollisionSystem`, the composition of `snakeSystem.enemyPool` into the shared `enemyPools` array (so segments are killable/scored and lethal, FR6), the late-bind `snakeSystem.collisionSystem = this.collisionSystem` (without which the split reap is a permanent no-op), and the segment render pass — has no automated coverage; consider the same headless wiring harness proposed for Stories 1.4–2.2, extended to assert snakes route through world-tick, collision, death, split, and render.
 
