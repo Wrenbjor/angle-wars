@@ -199,7 +199,9 @@ origin: migrated from legacy ledger (review of spec-2-4-black-hole-hazard.md), 2
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-4-black-hole-hazard.md`
 location: `BlackHoleSystem` tick placement relative to `PlayerDeathSystem` (`src/scenes/ArenaScene.js`)
 reason: Adversarial layer flagged near-well fairness. The ship is also pulled and the player retains control (`SHIP_MAX_SPEED` 520 >> peak pull 300 px/s), so it is chaotic-hazard feel rather than a guaranteed death, and it is the same "unavoidable-contact near an uncontrolled event" family as the spawn-safety vectors already deferred to Story 2.6 for every archetype. Not an AC violation (AC1 wants the attractive force; AC3 wants contact to be lethal) — a tuning/telegraph item for 2.5/2.6.
-status: open
+status: done 2026-07-23
+resolution: closed by human decision: By-design hazard pressure, not an AC defect; the ship is player-controlled and out-accelerates the pull. Accept as shipped.
+decision: 2026-07-23 Accept as chaotic-hazard-by-design — By-design hazard pressure, not an AC defect; the ship is player-controlled and out-accelerates the pull. Accept as shipped.
 
 ### DW-23: `BlackHoleSystem._spawnOne` places a hole at a random interior point (whose range spans the arena-center respawn point) with no ship/respawn-proximity check, and gravity ignores the respawn invulnerability window, so a hole can appear on/near the ship or the respawn point and a fresh respawn can land inside the well.
 
