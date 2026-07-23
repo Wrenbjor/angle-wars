@@ -1,4 +1,13 @@
 {
+  "DW-12": {
+    "answered_at": "2026-07-23",
+    "bundle_name": "",
+    "effect": "build",
+    "intent": "On a wall bounce, nudge the pinwheel's base heading toward the arena interior (or bias the next wander re-roll inward) so a grazing pinwheel peels off the border promptly instead of sliding along it until the next wander turn. Keep the reflection magnitude-preserving and the wander cadence otherwise intact.",
+    "key": "2",
+    "label": "Build graze-redirect",
+    "resolution": ""
+  },
   "DW-9": {
     "answered_at": "2026-07-23",
     "bundle_name": "",
