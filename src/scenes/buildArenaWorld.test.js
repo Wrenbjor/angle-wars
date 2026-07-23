@@ -14,9 +14,10 @@ import {
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 21-system registration order (spec Design Notes; Story 6.3 added
+// The canonical 22-system registration order (spec Design Notes; Story 6.3 added
 // MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector;
-// Story 8.1 added XpOrbSystem right after the BombSystem late-bind).
+// Story 8.1 added XpOrbSystem right after the BombSystem late-bind; Story 8.2 added
+// LevelSystem right after XpOrbSystem).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -32,6 +33,7 @@ const CANONICAL_ORDER = [
   'BlackHoleSystem',
   'BombSystem',
   'XpOrbSystem',
+  'LevelSystem',
   'ExtraLifeSystem',
   'PlayerDeathSystem',
   'HighScoreSystem',
@@ -69,6 +71,7 @@ const RETURN_HANDLES = [
   'blackHoleSystem',
   'bombSystem',
   'xpOrbSystem',
+  'levelSystem',
   'extraLifeSystem',
   'playerDeathSystem',
   'highScoreSystem',
@@ -86,7 +89,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 21 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 22 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -170,6 +173,17 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // ship; a collect credits scoreState.xp).
     expect(ctx.xpOrbSystem.ship).toBe(ctx.ship);
     expect(ctx.xpOrbSystem.scoreState).toBe(ctx.scoreState);
+  });
+
+  it('wires the LevelSystem (Story 8.2) with the shared scoreState, starting at level 1', () => {
+    const ctx = buildArenaWorld();
+    // Returned as its own handle.
+    expect(ctx.levelSystem).toBeDefined();
+    // It derives the level from the SAME shared scoreState the rest of the world's
+    // XP economy writes (read-only here — no scoreState.level field).
+    expect(ctx.levelSystem.scoreState).toBe(ctx.scoreState);
+    // Fresh run starts at level 1.
+    expect(ctx.levelSystem.level).toBe(1);
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {

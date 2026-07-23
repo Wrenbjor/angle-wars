@@ -205,6 +205,7 @@ export class ArenaScene extends Phaser.Scene {
     this.blackHoleSystem = arena.blackHoleSystem;
     this.bombSystem = arena.bombSystem;
     this.xpOrbSystem = arena.xpOrbSystem;
+    this.levelSystem = arena.levelSystem;
     this.extraLifeSystem = arena.extraLifeSystem;
     this.playerDeathSystem = arena.playerDeathSystem;
     this.highScoreSystem = arena.highScoreSystem;
@@ -1090,7 +1091,7 @@ export class ArenaScene extends Phaser.Scene {
     // Read fresh each frame so a kill (score) or a death (lives) shows on the
     // very next frame.
     this.hudText.setText(
-      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}\nHIGH ${this.highScoreSystem.highScore}\nXP ${Math.floor(this.scoreState.xp)}`,
+      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}\nHIGH ${this.highScoreSystem.highScore}\nXP ${Math.floor(this.scoreState.xp)}\nLV ${this.levelSystem.level}${this.levelSystem.atCap ? ' MAX' : ` ${Math.floor(this.levelSystem.xpIntoLevel)}/${Math.ceil(this.levelSystem.xpToNext)}`}`,
     );
 
     const over = this.playerState.gameOver;

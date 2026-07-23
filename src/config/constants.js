@@ -586,6 +586,18 @@ export const XP_MULTIPLIER_DIVISOR = 20;
 // bloom bleeds it — distinct from the warm particle sparks and the enemy hues.
 export const COLOR_XP_ORB = 0x00ffaa;
 
+// --- Leveling (Story 8.2 / Epic 8 progression) ------------------------------
+// Hard level cap — a full build. Leveling stops at this level; XP earned past it
+// is inert (level never exceeds LEVEL_MAX, no further threshold consumed).
+export const LEVEL_MAX = 30;
+// Per-level XP curve coefficients: XP_to_next(n) = BASE + LINEAR·n + QUAD·n²,
+// where n is the current level being leveled FROM (run starts at level 1). The
+// quadratic term makes each successive level cost progressively more; the base +
+// linear terms keep the early levels quick. e.g. need(1)=14.55, need(2)=22.2.
+export const XP_CURVE_BASE = 8;
+export const XP_CURVE_LINEAR = 6;
+export const XP_CURVE_QUAD = 0.55;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
