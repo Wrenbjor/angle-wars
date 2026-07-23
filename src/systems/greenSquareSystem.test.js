@@ -14,6 +14,7 @@ import {
   GREEN_SQUARE_THREAT_RADIUS,
   GREEN_SQUARE_POOL_PREWARM,
   GREEN_SQUARE_SCORE,
+  GREEN_SQUARE_XP,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
@@ -455,6 +456,7 @@ describe('createGreenSquare factory', () => {
     expect(s.vy).toBe(0);
     expect(s.radius).toBe(GREEN_SQUARE_RADIUS);
     expect(s.score).toBe(GREEN_SQUARE_SCORE);
+    expect(s.xp).toBe(GREEN_SQUARE_XP); // base per-type XP (Story 8.1)
     expect(s.aggro).toBe(false);
     expect(s.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
   });

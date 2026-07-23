@@ -539,6 +539,53 @@ export const LIFE_AWARD_SCORE_THRESHOLDS = [100000, 250000, 500000, 1000000];
 // the same slot. Namespaced so it never collides with unrelated app storage.
 export const HIGH_SCORE_STORAGE_KEY = 'angleWars.highScore';
 
+// --- XP economy / orbs (Story 8.1 / Epic 8 progression) ---------------------
+// The level-up loop's first brick: a SEPARATE economy from `score`. Every enemy
+// death that credits score today ALSO drops one pooled XP orb carrying a small
+// per-type XP value; the orb drifts to the ship only within a pickup radius,
+// collects on contact, and credits the run's XP total scaled by the current
+// multiplier. Purely additive to the v1 loop. XpOrbSystem (the Phaser-free sim
+// seam) owns a Pool of plain orb objects, advances/drifts/collects them each
+// fixed step with zero steady-state allocation, and is bounded by XP_ORB_MAX
+// (a spawn that would exceed the cap is skipped — the ParticleSystem precedent).
+// Every value here is a documented post-launch placeholder (tuned later),
+// mirroring the SCORE_* / PARTICLE_* discipline — no inline magic numbers.
+
+// Per-type base XP values (NEVER derived from `score`). Carried on each enemy
+// instance (bullet-kill archetypes) or supplied as an event value (black-hole
+// defuse / mirror center-kill). Small integers so leaving orbs behind is a real
+// choice. One orb per scored death, carrying that death's full per-type value.
+export const SEEKER_XP = 1;
+export const GREEN_SQUARE_XP = 2;
+export const PINWHEEL_XP = 2;
+export const SNAKE_SEGMENT_XP = 1;
+export const SNAKE_HEAD_XP = 3;
+// Event-payout XP: the Black Hole safe IMPLOSION ("defused") and the Mirror
+// Reflector CENTER-KILL each drop one orb of this value (mirroring their flat
+// direct-to-score payouts). A bomb-cleared or black-hole-ABSORBED enemy credits
+// no score today and therefore drops NO XP (economy parity).
+export const BLACKHOLE_DEFUSED_XP = 25;
+export const MIRROR_CENTER_KILL_XP = 15;
+
+// Hard cap on simultaneously-live orbs. A spawn that would exceed this is skipped
+// this tick (the ParticleSystem precedent), so the pool + per-frame render cost is
+// bounded. Orbs on the floor NEVER time out — the cap is the only bound.
+export const XP_ORB_MAX = 512;
+// Orb draw / collision radius (px) for the additive neon dot and the contact test.
+export const XP_ORB_RADIUS = 4;
+// Pickup radius (px): an orb within this distance of the ship drifts toward it;
+// outside it the orb stays put (persists indefinitely). A per-tick distance gate,
+// not a magnet latch — an orb the ship approaches then leaves stops drifting.
+export const XP_PICKUP_RADIUS = 120;
+// Orb drift speed (px/s) toward the ship while within the pickup radius.
+export const XP_ORB_DRIFT_SPEED = 320;
+// Multiplier scaling divisor: on collect, XP credited is
+// value × (1 + multiplier / this), using the multiplier at collect time.
+export const XP_MULTIPLIER_DIVISOR = 20;
+// Orb fill color (0xRRGGBB): a teal/green neon that reads as XP once the camera
+// bloom bleeds it — distinct from the warm particle sparks and the enemy hues.
+export const COLOR_XP_ORB = 0x00ffaa;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;

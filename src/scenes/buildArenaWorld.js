@@ -34,6 +34,7 @@ import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
 import { GridFieldSystem } from '../systems/GridFieldSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
+import { XpOrbSystem } from '../systems/XpOrbSystem.js';
 import { ScreenFeedbackSystem } from '../systems/ScreenFeedbackSystem.js';
 import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 
@@ -41,8 +42,9 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 20 systems registered in the SAME order (Story 6.3 added
-// the MirrorReflectorSystem in the enemy section), the same enemyPools / deathPools
+// state + pools, the SAME 21 systems registered in the SAME order (Story 6.3 added
+// the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
+// after the BombSystem late-bind), the same enemyPools / deathPools
 // composition (the reflector pool is deliberately in NEITHER), and both load-bearing
 // late-binds
 // (snakeSystem.collisionSystem and blackHoleSystem.collisionSystem). It imports
@@ -265,6 +267,24 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // hole; only its screen clear is a guarded no-op. Mirrors the collisionSystem late-bind.
   blackHoleSystem.bombSystem = bombSystem;
 
+  // --- XP orbs (Story 8.1 / Epic 8 progression) ---------------------------
+  // The level-up loop's first brick: a SEPARATE economy from `score`. Constructed
+  // AFTER the bombSystem late-bind so all three of its drop-report sources already
+  // exist and have run THIS tick by the time it ticks — the CollisionSystem's
+  // bulletKillX/Y/Xp snapshots, the BlackHoleSystem's defusedX/Y report, and the
+  // MirrorReflectorSystem's centerKillX/Y report (all populated earlier in the same
+  // fixed tick). It owns its own orb Pool and mutates ONLY that pool + scoreState.xp
+  // (a near read-only observer); it drops no XP for bomb-cleared / black-hole-absorbed
+  // removals (economy parity). Shares the one ship + scoreState the rest of the world uses.
+  const xpOrbSystem = new XpOrbSystem(
+    collisionSystem,
+    blackHoleSystem,
+    mirrorReflectorSystem,
+    ship,
+    scoreState,
+  );
+  world.addSystem(xpOrbSystem);
+
   // --- Player death / lives -----------------------------------------------
   // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
   // bullet this tick is already released and cannot also kill the player. The
@@ -376,6 +396,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     scoringSystem,
     blackHoleSystem,
     bombSystem,
+    xpOrbSystem,
     extraLifeSystem,
     playerDeathSystem,
     highScoreSystem,

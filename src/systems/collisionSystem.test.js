@@ -9,6 +9,7 @@ import {
   BULLET_RADIUS,
   SEEKER_RADIUS,
   SEEKER_SCORE,
+  SEEKER_XP,
   GREEN_SQUARE_SCORE,
 } from '../config/constants.js';
 
@@ -243,6 +244,49 @@ describe('CollisionSystem.bulletKillCount latch (Story 4.2)', () => {
     expect(coords).toEqual(['100,100', '400,400']);
   });
 
+  it('snapshots each bullet kill xp into bulletKillXp, parallel to bulletKillX/Y (Story 8.1)', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    // Two overlapping bullet↔seeker pairs → two bullet kills. Give each seeker a
+    // DISTINCT xp so the parallel mapping is provable regardless of Set-iteration order.
+    const s1 = addSeeker(enemyPool, 100, 100);
+    s1.xp = 4;
+    const s2 = addSeeker(enemyPool, 400, 400);
+    s2.xp = 9;
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletKillCount).toBe(2);
+    // One xp entry per bullet kill, the same length as the coordinate snapshots.
+    expect(system.bulletKillXp.length).toBe(2);
+    expect(system.bulletKillXp.length).toBe(system.bulletKillX.length);
+    // bulletKillXp[k] equals the killed enemy's xp — verified per-kill against the
+    // parallel coordinate snapshot (100→4, 400→9), so order cannot mask a mismatch.
+    for (let k = 0; k < system.bulletKillCount; k++) {
+      expect(system.bulletKillXp[k]).toBe(system.killedEnemies[k].xp);
+      const expected = system.bulletKillX[k] === 100 ? 4 : 9;
+      expect(system.bulletKillXp[k]).toBe(expected);
+    }
+  });
+
+  it('guards a non-finite killed-enemy xp to 0 in bulletKillXp (undefined / NaN)', () => {
+    const { bulletPool, enemyPool, system } = makeSystem();
+    // A pooled/malformed instance whose xp is not a finite number must snapshot as 0
+    // (the Number.isFinite(s.xp) ? s.xp : 0 guard), never propagate undefined/NaN.
+    const s1 = addSeeker(enemyPool, 100, 100);
+    s1.xp = undefined;
+    const s2 = addSeeker(enemyPool, 400, 400);
+    s2.xp = NaN;
+    addBullet(bulletPool, 100, 100);
+    addBullet(bulletPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(system.bulletKillCount).toBe(2);
+    expect(system.bulletKillXp).toEqual([0, 0]);
+  });
+
   it('snapshots survive a later recycle of the killed enemy object (Story 4.2)', () => {
     const { bulletPool, enemyPool, system } = makeSystem();
     addBullet(bulletPool, 250, 175);
@@ -380,6 +424,10 @@ describe('CollisionSystem — multiple archetype pools', () => {
 describe('createSeeker base value', () => {
   it('gives a fresh seeker the base SEEKER_SCORE value', () => {
     expect(createSeeker().score).toBe(SEEKER_SCORE);
+  });
+
+  it('gives a fresh seeker the base SEEKER_XP value (Story 8.1)', () => {
+    expect(createSeeker().xp).toBe(SEEKER_XP);
   });
 
   it('gives a fresh green square the base GREEN_SQUARE_SCORE value', () => {

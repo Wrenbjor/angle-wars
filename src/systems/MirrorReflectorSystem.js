@@ -117,6 +117,16 @@ export class MirrorReflectorSystem extends System {
     this._closest = { x: 0, y: 0 };
     this._rv = { vx: 0, vy: 0 };
 
+    // Public per-tick CENTER-KILL report (Story 8.1): the center positions of
+    // reflectors destroyed by threading their center this tick, parallel arrays
+    // centerKillX[k]/centerKillY[k]. Reset to empty each tick (alongside the
+    // deferred-release list) and pushed at center-destroy (primitive coords pushed
+    // before the pool release, so recycle-safe). The XpOrbSystem reads this to drop
+    // one MIRROR_CENTER_KILL_XP orb per center-kill (parallel to the flat score
+    // payout). A weight-kill credits nothing and is NOT reported. Reused arrays.
+    this.centerKillX = [];
+    this.centerKillY = [];
+
     // Hoisted per-reflector callbacks so the two forEachActive passes reuse one
     // closure each instead of allocating a fresh arrow per reflector per tick. The
     // per-tick dt (ms) is stashed on `this` for the motion pass to read.
@@ -156,6 +166,10 @@ export class MirrorReflectorSystem extends System {
     this.bulletPool.forEachActive(this._collectBullet);
     this._reflected.clear();
     this._releaseReflectors.length = 0;
+    // Reset the per-tick center-kill report (Story 8.1) so a tick with no center-kill
+    // reports [] and a prior tick's kill is never re-read.
+    this.centerKillX.length = 0;
+    this.centerKillY.length = 0;
 
     // Pass 2: bullet reflect + ship interactions, collecting reflectors to release.
     this.enemyPool.forEachActive(this._stepInteract);
@@ -268,6 +282,10 @@ export class MirrorReflectorSystem extends System {
       // directly to the shared score surface. pendingDeath is NOT set (center wins).
       this._releaseReflectors.push(r);
       this.scoreState.score += REFLECTOR_SCORE;
+      // Story 8.1: report the center-kill position NOW (primitive coords, before the
+      // deferred pool release) so the XpOrbSystem can drop one orb at the center.
+      this.centerKillX.push(r.x);
+      this.centerKillY.push(r.y);
       return;
     }
     // Else weight-kill: ship overlapping EITHER weight circle sets the shared

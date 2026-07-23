@@ -22,6 +22,8 @@ import {
   SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC,
   SNAKE_SEGMENT_POOL_PREWARM,
   SNAKE_SEGMENT_SCORE,
+  SNAKE_HEAD_XP,
+  SNAKE_SEGMENT_XP,
   PLAYER_INVULN_MS,
   PLAYER_START_LIVES,
   ENEMY_SPAWN_TELEGRAPH_MS,
@@ -601,6 +603,50 @@ describe('SnakeSystem — spawn telegraph (whole-chain, Story 2.6)', () => {
     const system = makeSystem();
     system.spawn(100, 100);
     expect(system.ship).toBeUndefined();
+  });
+});
+
+describe('SnakeSystem — per-segment XP drop values (Story 8.1)', () => {
+  it('spawn() sets the head to SNAKE_HEAD_XP and every body segment to SNAKE_SEGMENT_XP', () => {
+    const system = makeSystem(seqRng([0.0, 0.5]));
+    system.spawn();
+    const snake = system.snakes[0];
+    expect(snake.segments.length).toBe(SNAKE_SEGMENT_COUNT);
+    // Head (segments[0]) is worth the head value…
+    expect(snake.segments[0].xp).toBe(SNAKE_HEAD_XP);
+    // …and every following segment the body value.
+    for (let i = 1; i < snake.segments.length; i++) {
+      expect(snake.segments[i].xp).toBe(SNAKE_SEGMENT_XP);
+    }
+  });
+
+  it('resets a recycled ex-head segment to the body xp when it lands at a body index', () => {
+    // Error-handling cell: a pooled segment reused ACROSS snakes. Take deterministic
+    // control of the free list so a stale EX-HEAD (xp === SNAKE_HEAD_XP, its value from
+    // a prior life as segments[0]) is reused at a BODY index on the next spawn. Pool
+    // acquire() is LIFO (pops the last element), so the ex-head pushed FIRST is popped
+    // LAST → the final (body) segment of the chain. spawn() must overwrite EVERY
+    // segment's xp (not just the head), so the reused ex-head is reset to the body value.
+    const system = makeSystem(seqRng([0.0, 0.5]));
+    const pool = system.enemyPool;
+    pool._free.length = 0;
+    const exHead = createSnakeSegment();
+    exHead.xp = SNAKE_HEAD_XP; // stale head value carried by the freed instance
+    pool._free.push(exHead); // popped LAST → a body index
+    for (let i = 1; i < SNAKE_SEGMENT_COUNT; i++) {
+      pool._free.push(createSnakeSegment());
+    }
+
+    system.spawn();
+
+    const snake = system.snakes[0];
+    const bodyIdx = SNAKE_SEGMENT_COUNT - 1;
+    // The ex-head was reused at a body index (identity confirms the recycle)…
+    expect(snake.segments[bodyIdx]).toBe(exHead);
+    // …and its xp was RESET from the stale head value to the body value.
+    expect(snake.segments[bodyIdx].xp).toBe(SNAKE_SEGMENT_XP);
+    // Sanity: the actual head slot still carries the head value.
+    expect(snake.segments[0].xp).toBe(SNAKE_HEAD_XP);
   });
 });
 

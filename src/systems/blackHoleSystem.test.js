@@ -627,6 +627,87 @@ describe('BlackHoleSystem — safe implosion at the floor (AC — implosion)', (
   });
 });
 
+describe('BlackHoleSystem — defuse report (defusedX/defusedY, Story 8.1)', () => {
+  it('a safe implosion pushes the imploded hole coords into defusedX/defusedY', () => {
+    const bulletPool = new Pool(createBullet);
+    const scoreState = createScoreState();
+    const { system } = makeSystem({ bulletPool, scoreState });
+    // A distinctive off-center position so the reported coords are unambiguous.
+    const HX = CENTER_X + 37;
+    const HY = CENTER_Y - 19;
+    const hole = placeHole(system, HX, HY, {
+      radius: BLACKHOLE_MIN_RADIUS + BLACKHOLE_SHRINK_PER_BULLET,
+    });
+    const b = bulletPool.acquire();
+    b.x = HX;
+    b.y = HY;
+
+    system.fixedUpdate(DT);
+
+    // The hole safely imploded and its position was reported for the XP drop.
+    expect(hole.radius).toBeLessThanOrEqual(BLACKHOLE_MIN_RADIUS);
+    expect(system.holePool.activeCount).toBe(0);
+    expect(system.defusedX).toEqual([HX]);
+    expect(system.defusedY).toEqual([HY]);
+  });
+
+  it('a detonation leaves the defuse report empty (economy parity — a detonation pays no XP)', () => {
+    const enemyPool = new Pool(createSeeker);
+    const bulletPool = new Pool(createBullet);
+    const scoreState = createScoreState();
+    const playerState = createPlayerState();
+    const ship = createPlayerShip();
+    ship.x = 50; // parked far from the centered hole
+    ship.y = 50;
+    const { system } = makeSystem({
+      ship,
+      bulletPool,
+      enemyPools: [enemyPool],
+      scoreState,
+      playerState,
+    });
+    const collision = new CollisionSystem(bulletPool, [enemyPool]);
+    system.collisionSystem = collision;
+    // One absorb away from the unstable threshold → detonation this tick.
+    placeHole(system, CENTER_X, CENTER_Y, {
+      radius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+    });
+    const tipEnemy = enemyPool.acquire();
+    tipEnemy.x = CENTER_X;
+    tipEnemy.y = CENTER_Y;
+
+    collision.fixedUpdate(DT);
+    system.fixedUpdate(DT);
+
+    // Detonation (not implosion): the hole is gone but nothing was reported as defused.
+    expect(system.holePool.activeCount).toBe(0);
+    expect(playerState.pendingDeath).toBe(true);
+    expect(system.defusedX).toEqual([]);
+    expect(system.defusedY).toEqual([]);
+  });
+
+  it('resets the defuse report to empty each tick (a no-defuse tick reports nothing)', () => {
+    const bulletPool = new Pool(createBullet);
+    const { system } = makeSystem({ bulletPool });
+    // Tick A: implode a hole → report populated.
+    const HX = CENTER_X + 5;
+    const HY = CENTER_Y + 7;
+    placeHole(system, HX, HY, {
+      radius: BLACKHOLE_MIN_RADIUS + BLACKHOLE_SHRINK_PER_BULLET,
+    });
+    const b = bulletPool.acquire();
+    b.x = HX;
+    b.y = HY;
+    system.fixedUpdate(DT);
+    expect(system.defusedX).toEqual([HX]);
+
+    // Tick B: nothing implodes (no holes left) → the report resets to empty.
+    system.fixedUpdate(DT);
+    expect(system.defusedX).toEqual([]);
+    expect(system.defusedY).toEqual([]);
+  });
+});
+
 describe('BlackHoleSystem — instability level (maxInstability)', () => {
   it('is 0 with no active holes', () => {
     const { system } = makeSystem();

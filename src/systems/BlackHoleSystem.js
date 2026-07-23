@@ -119,6 +119,17 @@ export class BlackHoleSystem extends System {
     // the audio urgency cue. 0 when there is no such hole.
     this.maxInstability = 0;
 
+    // Public per-tick DEFUSE report (Story 8.1): the positions of holes that safely
+    // IMPLODED ("defused") this tick, parallel arrays defusedX[k]/defusedY[k]. Reset
+    // to empty at the top of every fixedUpdate and pushed at implosion DETECTION
+    // (before the hole is released, so the coords are recycle-safe primitives — no
+    // aliasing). The XpOrbSystem reads this to drop one BLACKHOLE_DEFUSED_XP orb per
+    // defuse. A DETONATION credits nothing and is deliberately NOT reported (economy
+    // parity — an absorbed/bomb-cleared removal drops no XP). Reused arrays — no
+    // per-tick allocation.
+    this.defusedX = [];
+    this.defusedY = [];
+
     // Spawn-cadence accumulator (ms). Starts at 0 so the first hole spawns after
     // one full interval (ungated — spawning does not depend on any input).
     this._accumMs = 0;
@@ -175,6 +186,13 @@ export class BlackHoleSystem extends System {
     const holes = this._holes;
     holes.length = 0;
     this.holePool.forEachActive(this._collectHole);
+
+    // Reset the per-tick defuse report (Story 8.1) BEFORE the holes guard so a tick
+    // with no holes reports [] and a prior tick's defuse is never re-read.
+    const defusedX = this.defusedX;
+    const defusedY = this.defusedY;
+    defusedX.length = 0;
+    defusedY.length = 0;
 
     if (holes.length > 0) {
       const bullets = this._bullets;
@@ -291,6 +309,11 @@ export class BlackHoleSystem extends System {
         } else if (hole.radius <= BLACKHOLE_MIN_RADIUS) {
           implodeHoles.push(hole);
           releaseHoles.push(hole);
+          // Story 8.1: report the defuse position NOW (before the hole is released
+          // below) as recycle-safe primitive coords, so the XpOrbSystem can drop one
+          // orb at the hole. Parallel to the score payout credited in the second pass.
+          defusedX.push(hole.x);
+          defusedY.push(hole.y);
         }
       }
 

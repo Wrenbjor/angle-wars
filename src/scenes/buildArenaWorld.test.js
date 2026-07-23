@@ -14,8 +14,9 @@ import {
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 20-system registration order (spec Design Notes; Story 6.3 added
-// MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector).
+// The canonical 21-system registration order (spec Design Notes; Story 6.3 added
+// MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector;
+// Story 8.1 added XpOrbSystem right after the BombSystem late-bind).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -30,6 +31,7 @@ const CANONICAL_ORDER = [
   'ScoringSystem',
   'BlackHoleSystem',
   'BombSystem',
+  'XpOrbSystem',
   'ExtraLifeSystem',
   'PlayerDeathSystem',
   'HighScoreSystem',
@@ -66,6 +68,7 @@ const RETURN_HANDLES = [
   'scoringSystem',
   'blackHoleSystem',
   'bombSystem',
+  'xpOrbSystem',
   'extraLifeSystem',
   'playerDeathSystem',
   'highScoreSystem',
@@ -83,7 +86,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 20 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 21 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -151,6 +154,22 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.mirrorReflectorSystem.bulletPool).toBe(ctx.firingSystem.bulletPool);
     expect(ctx.mirrorReflectorSystem.playerState).toBe(ctx.playerState);
     expect(ctx.mirrorReflectorSystem.scoreState).toBe(ctx.scoreState);
+  });
+
+  it('wires the XpOrbSystem (Story 8.1) with the shared drop-report sources + ship + scoreState', () => {
+    const ctx = buildArenaWorld();
+    // Returned as its own handle.
+    expect(ctx.xpOrbSystem).toBeDefined();
+    // Its three drop-report sources are the SAME shared system instances the rest of
+    // the world uses (bullet-kill snapshots, defuse report, center-kill report), so it
+    // reads each seam's this-tick report directly.
+    expect(ctx.xpOrbSystem.collisionSystem).toBe(ctx.collisionSystem);
+    expect(ctx.xpOrbSystem.blackHoleSystem).toBe(ctx.blackHoleSystem);
+    expect(ctx.xpOrbSystem.mirrorReflectorSystem).toBe(ctx.mirrorReflectorSystem);
+    // ship / scoreState are the SAME shared instances (drift/collect distance reads the
+    // ship; a collect credits scoreState.xp).
+    expect(ctx.xpOrbSystem.ship).toBe(ctx.ship);
+    expect(ctx.xpOrbSystem.scoreState).toBe(ctx.scoreState);
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {

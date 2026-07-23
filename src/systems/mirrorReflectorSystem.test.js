@@ -398,6 +398,53 @@ describe('MirrorReflectorSystem — ship interactions (center-destroy vs weight-
   });
 });
 
+describe('MirrorReflectorSystem — center-kill report (centerKillX/centerKillY, Story 8.1)', () => {
+  it('a center-destroy pushes the reflector center coords into centerKillX/centerKillY', () => {
+    // A distinctive off-arena-center position so the reported coords are unambiguous.
+    const RX = 517;
+    const RY = 331;
+    const { system } = makeSystem({ shipX: RX, shipY: RY });
+    placeReflector(system, RX, RY, 0, 0, 0); // center under the ship → center-destroy
+
+    system.fixedUpdate(DT);
+
+    expect(system.enemyPool.activeCount).toBe(0); // destroyed
+    expect(system.centerKillX).toEqual([RX]);
+    expect(system.centerKillY).toEqual([RY]);
+  });
+
+  it('a weight-kill leaves the center-kill report empty (economy parity — no XP for a weight-kill)', () => {
+    // Ship on the +x weight endpoint (center miss) → weight-kill, not a center-destroy.
+    const { system } = makeSystem({
+      shipX: 640 + REFLECTOR_BAR_HALF_LENGTH,
+      shipY: 360,
+    });
+    placeReflector(system, 640, 360, 0, 0, 0);
+
+    system.fixedUpdate(DT);
+
+    expect(system.playerState.pendingDeath).toBe(true); // it WAS a weight-kill
+    expect(system.enemyPool.activeCount).toBe(1); // reflector not destroyed
+    expect(system.centerKillX).toEqual([]); // nothing reported for the XP drop
+    expect(system.centerKillY).toEqual([]);
+  });
+
+  it('resets the center-kill report to empty each tick (a no-center-kill tick reports nothing)', () => {
+    // Tick A: center-destroy → report populated.
+    const RX = 640;
+    const RY = 360;
+    const { system } = makeSystem({ shipX: RX, shipY: RY });
+    placeReflector(system, RX, RY, 0, 0, 0);
+    system.fixedUpdate(DT);
+    expect(system.centerKillX).toEqual([RX]);
+
+    // Tick B: no reflector left → the report resets to empty.
+    system.fixedUpdate(DT);
+    expect(system.centerKillX).toEqual([]);
+    expect(system.centerKillY).toEqual([]);
+  });
+});
+
 describe('MirrorReflectorSystem — composed: a weight-kill drives the REAL PlayerDeathSystem', () => {
   it('a weight contact → pendingDeath → a real PlayerDeathSystem life loss with respawn/invuln', () => {
     const { system, ship, playerState } = makeSystem({

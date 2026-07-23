@@ -92,6 +92,15 @@ export class CollisionSystem extends System {
     // Reused arrays — length reset + push, no per-tick allocation.
     this.bulletKillX = [];
     this.bulletKillY = [];
+
+    // Public read-only XP SNAPSHOTS (Story 8.1), parallel to bulletKillX/Y: the
+    // per-type XP value of the k-th bullet kill, captured AT KILL TIME alongside the
+    // coordinate snapshot. Recycle-proof for the same reason the coords are — the
+    // killed enemy is released this tick and a later same-tick acquire() could
+    // overwrite its `xp`. The XpOrbSystem reads bulletKillXp[0 .. bulletKillCount)
+    // to drop one orb per bullet kill carrying that kill's value. Purely
+    // observational; never affects kills, scoring, lives, or any pool.
+    this.bulletKillXp = [];
   }
 
   /**
@@ -125,11 +134,14 @@ export class CollisionSystem extends System {
     // previous tick's kills are never re-counted (length reset, no alloc).
     const killedEnemies = this.killedEnemies;
     killedEnemies.length = 0;
-    // Reset the parallel bullet-kill coordinate snapshots too (Story 4.2).
+    // Reset the parallel bullet-kill coordinate snapshots too (Story 4.2), and the
+    // parallel XP snapshot (Story 8.1).
     const bulletKillX = this.bulletKillX;
     const bulletKillY = this.bulletKillY;
+    const bulletKillXp = this.bulletKillXp;
     bulletKillX.length = 0;
     bulletKillY.length = 0;
+    bulletKillXp.length = 0;
 
     // Pass 1: mark hits. A bullet stops after its first hit (consumed); an enemy
     // already hit this tick is skipped (destroyed once).
@@ -164,6 +176,10 @@ export class CollisionSystem extends System {
         // pool — a later same-tick acquire() could overwrite s.x/s.y (Story 4.2).
         bulletKillX.push(s.x);
         bulletKillY.push(s.y);
+        // Snapshot the XP value too (Story 8.1), guarded to a finite number →
+        // 0 (mirrors scoring's finite-score guard) so a malformed instance can
+        // never credit a non-finite XP amount downstream.
+        bulletKillXp.push(Number.isFinite(s.xp) ? s.xp : 0);
         owners[j].release(s);
       }
     }

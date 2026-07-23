@@ -10,6 +10,8 @@ import {
   SNAKE_SLITHER_AMPLITUDE_RAD,
   SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC,
   SNAKE_SEGMENT_POOL_PREWARM,
+  SNAKE_HEAD_XP,
+  SNAKE_SEGMENT_XP,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
@@ -352,6 +354,11 @@ export class SnakeSystem extends System {
       seg.y = hy + tdy * SNAKE_SEGMENT_SPACING * i;
       seg.vx = 0;
       seg.vy = 0;
+      // XP drop value (Story 8.1): the head (segments[0]) is worth SNAKE_HEAD_XP,
+      // every body segment SNAKE_SEGMENT_XP. Set EXPLICITLY on every segment (not
+      // just the head) so a pooled instance recycled from a prior snake's HEAD is
+      // reset to the body value here rather than carrying the stale head value.
+      seg.xp = i === 0 ? SNAKE_HEAD_XP : SNAKE_SEGMENT_XP;
       // Telegraph every segment identically: the chain freezes + activates as one.
       seg.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
       segments.push(seg);

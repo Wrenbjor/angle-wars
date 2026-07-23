@@ -1,4 +1,8 @@
-import { PINWHEEL_RADIUS, PINWHEEL_SCORE } from '../config/constants.js';
+import {
+  PINWHEEL_RADIUS,
+  PINWHEEL_SCORE,
+  PINWHEEL_XP,
+} from '../config/constants.js';
 
 // Pinwheel — the pooled Pinwheel/Wanderer enemy (plain data, Phaser-free).
 //
@@ -13,7 +17,7 @@ import { PINWHEEL_RADIUS, PINWHEEL_SCORE } from '../config/constants.js';
 // the fields in place on every spawn, so the zeroed values here are just a
 // well-defined starting shape.
 //
-// Shape: { x, y, vx, vy, radius, score, wanderMs }
+// Shape: { x, y, vx, vy, radius, score, xp, wanderMs }
 //  - x, y     : position (px, arena/logical space)
 //  - vx, vy   : velocity (px/s) — set on spawn to a random heading × drift speed,
 //               then rotated by wander turns and reflected by wall bounces (the
@@ -23,6 +27,9 @@ import { PINWHEEL_RADIUS, PINWHEEL_SCORE } from '../config/constants.js';
 //  - score    : base per-type value credited when this pinwheel is killed (read by
 //               the ScoringSystem). Carried per-instance so scoring stays
 //               type-agnostic across archetypes.
+//  - xp       : base per-type XP value dropped as an orb when this pinwheel is
+//               bullet-killed (Story 8.1). A SEPARATE economy from `score`,
+//               carried per-instance like it.
 //  - wanderMs : per-instance accumulator (ms) for the heading re-roll cadence.
 //               Ignored by the shared collision/death/scoring seams.
 //  - telegraphMs : spawn-telegraph countdown (ms, Story 2.6). While > 0 the
@@ -35,7 +42,7 @@ import { PINWHEEL_RADIUS, PINWHEEL_SCORE } from '../config/constants.js';
  * Create a zeroed pinwheel with its collision radius, base score, a zeroed
  * wander accumulator, and inactive telegraph. Used as the Pool factory;
  * positional/velocity/wander/telegraph fields are overwritten on spawn.
- * @returns {{x:number, y:number, vx:number, vy:number, radius:number, score:number, wanderMs:number, telegraphMs:number}}
+ * @returns {{x:number, y:number, vx:number, vy:number, radius:number, score:number, xp:number, wanderMs:number, telegraphMs:number}}
  */
 export function createPinwheel() {
   return {
@@ -45,6 +52,7 @@ export function createPinwheel() {
     vy: 0,
     radius: PINWHEEL_RADIUS,
     score: PINWHEEL_SCORE,
+    xp: PINWHEEL_XP,
     wanderMs: 0,
     telegraphMs: 0,
   };

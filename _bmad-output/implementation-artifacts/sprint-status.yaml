@@ -98,7 +98,7 @@ development_status:
 
   # Epic 8 — The Level-Up Loop (XP, Curve & Card UI)
   epic-8: backlog
-  8-1-xp-orbs-drop-drift-and-pickup: backlog
+  8-1-xp-orbs-drop-drift-and-pickup: done
   8-2-xp-level-curve-and-leveling: backlog
   8-3-level-up-moment-and-card-ui: backlog
   8-4-weighted-card-offer-and-slot-limits: backlog

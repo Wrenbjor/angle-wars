@@ -19,6 +19,8 @@ import {
   REFLECTOR_BAR_HALF_LENGTH,
   REFLECTOR_BAR_HALF_THICKNESS,
   REFLECTOR_WEIGHT_RADIUS,
+  COLOR_XP_ORB,
+  XP_ORB_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -171,7 +173,7 @@ export class ArenaScene extends Phaser.Scene {
     // in constant FIXED_STEP_MS slices; the spiral guard caps catch-up steps.
     this.fixedTimestep = new FixedTimestep(FIXED_STEP_MS, MAX_SUB_STEPS);
     // Build the entire simulation world — World + ship + input + states + pools
-    // + the 20 systems in canonical registration order, with both load-bearing
+    // + the 21 systems in canonical registration order, with both load-bearing
     // late-binds — via the shared, Phaser-free factory. The scene assigns each
     // returned handle onto this.* (the render loop below reads them) and keeps all
     // Phaser/render setup (graphics, input sampler, audio engine, FixedTimestep)
@@ -202,6 +204,7 @@ export class ArenaScene extends Phaser.Scene {
     this.scoringSystem = arena.scoringSystem;
     this.blackHoleSystem = arena.blackHoleSystem;
     this.bombSystem = arena.bombSystem;
+    this.xpOrbSystem = arena.xpOrbSystem;
     this.extraLifeSystem = arena.extraLifeSystem;
     this.playerDeathSystem = arena.playerDeathSystem;
     this.highScoreSystem = arena.highScoreSystem;
@@ -381,6 +384,11 @@ export class ArenaScene extends Phaser.Scene {
     // the drawn bar/weights track the exact geometry the system's collision tests use.
     // Zero per-frame allocation aside from the single endpoints object per reflector.
     this.reflectorGraphics = this.add.graphics();
+    // XP orbs (Story 8.1) are placeholder filled teal dots (one per active orb),
+    // cleared and redrawn each render frame from the XpOrbSystem's pool. Drawn above
+    // the enemy layers so a dropped pickup reads clearly. Epic 8 later stories own the
+    // real aesthetic. Zero per-frame allocation (mirrors the particle/bullet render).
+    this.xpOrbGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -418,6 +426,7 @@ export class ArenaScene extends Phaser.Scene {
         this.snakeGraphics,
         this.blackHoleGraphics,
         this.reflectorGraphics,
+        this.xpOrbGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
@@ -1044,6 +1053,17 @@ export class ArenaScene extends Phaser.Scene {
       ptg.fillCircle(p.x, p.y, p.size);
     });
 
+    // Redraw active XP orbs from the pool: clear once, then a filled teal dot of
+    // XP_ORB_RADIUS per live orb. Additive blend + camera bloom make each orb glow.
+    // Rendering reads the sim state; it never advances it. Zero per-frame allocation
+    // (mirrors the particle/bullet render). (Story 8.1)
+    const xog = this.xpOrbGraphics;
+    xog.clear();
+    xog.fillStyle(COLOR_XP_ORB, 1);
+    this.xpOrbSystem.pool.forEachActive((o) => {
+      xog.fillCircle(o.x, o.y, XP_ORB_RADIUS);
+    });
+
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is
     // the driving input, else clear it. Runs at render rate after sample() (which
     // updated the touch model this frame). The draw helper self-clears, so a
@@ -1070,7 +1090,7 @@ export class ArenaScene extends Phaser.Scene {
     // Read fresh each frame so a kill (score) or a death (lives) shows on the
     // very next frame.
     this.hudText.setText(
-      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}\nHIGH ${this.highScoreSystem.highScore}`,
+      `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}\nHIGH ${this.highScoreSystem.highScore}\nXP ${Math.floor(this.scoreState.xp)}`,
     );
 
     const over = this.playerState.gameOver;

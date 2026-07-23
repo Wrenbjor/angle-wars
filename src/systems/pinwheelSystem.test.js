@@ -20,6 +20,7 @@ import {
   PINWHEEL_WANDER_MAX_TURN_RAD,
   PINWHEEL_POOL_PREWARM,
   PINWHEEL_SCORE,
+  PINWHEEL_XP,
   PLAYER_INVULN_MS,
   PLAYER_START_LIVES,
   ENEMY_SPAWN_TELEGRAPH_MS,
@@ -470,6 +471,7 @@ describe('createPinwheel factory', () => {
     expect(pw.vy).toBe(0);
     expect(pw.radius).toBe(PINWHEEL_RADIUS);
     expect(pw.score).toBe(PINWHEEL_SCORE);
+    expect(pw.xp).toBe(PINWHEEL_XP); // base per-type XP (Story 8.1)
     expect(pw.wanderMs).toBe(0);
     expect(pw.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
   });
