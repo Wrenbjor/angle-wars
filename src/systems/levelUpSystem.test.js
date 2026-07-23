@@ -6,6 +6,8 @@ import {
   FIXED_STEP_MS,
   LEVELUP_INVULN_FLOOR,
   LEVELUP_LANDING_INVULN_MS,
+  REROLL_INITIAL_CHARGES,
+  BANISH_INITIAL_CHARGES,
 } from '../config/constants.js';
 
 // Story 8.3/8.4 — the level-up state machine. LevelUpSystem edge-detects the level-up
@@ -27,7 +29,9 @@ function seqRng(values = [0.13, 0.47, 0.81, 0.29, 0.63]) {
 }
 
 function build({ invulnMs = 0, rng = seqRng() } = {}) {
-  const levelStub = { levelsGainedThisTick: 0 };
+  // Story 8.5: the level stub now also carries `level` (the real LevelSystem always
+  // exposes it) so the reroll-charge grant edge-detect can compute prevLevel.
+  const levelStub = { level: 1, levelsGainedThisTick: 0 };
   const playerStub = { invulnMs };
   const prog = createProgressionState();
   const sys = new LevelUpSystem(levelStub, playerStub, prog, rng);
@@ -245,5 +249,247 @@ describe('LevelUpSystem — level-up moment state machine', () => {
     sys.queueSelection(0);
     sys.queueSelection(2);
     expect(sys._queuedChoice).toBe(0);
+  });
+});
+
+describe('LevelUpSystem — Story 8.5 reroll & banish', () => {
+  // Drive a crossing so a 3-card selection is active, then clear the crossing flag so
+  // later ticks do not re-enqueue. Returns the built world for the caller to act on.
+  // The stub is a REALIZABLE state: gaining 1 level to reach level 2 (prevLevel 1), well
+  // below the first reroll-grant threshold (10), so opening a selection never itself
+  // grants a reroll charge — the reroll/banish cases start from REROLL_INITIAL_CHARGES.
+  function openSelection(opts) {
+    const world = build(opts);
+    world.levelStub.level = 2;
+    world.levelStub.levelsGainedThisTick = 1;
+    world.sys.fixedUpdate();
+    world.levelStub.levelsGainedThisTick = 0;
+    return world;
+  }
+
+  it('reroll with a charge: spends one, redraws a fresh 3-distinct offer (new array), pending unchanged, still active', () => {
+    const { sys, prog } = openSelection();
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES);
+    const oldOffer = sys.currentOffer;
+    sys.queueReroll();
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES - 1);
+    expect(sys.currentOffer).not.toBe(oldOffer); // a fresh array (step-3 redraw)
+    expectValidOffer(sys.currentOffer);
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.selectionActive).toBe(true);
+  });
+
+  it('reroll deterministic: same rng sequence + same state, reroll twice → identical redrawn trio (ids + order)', () => {
+    const seq = [0.19, 0.61, 0.08, 0.44, 0.77, 0.23, 0.9, 0.35];
+    const a = openSelection({ rng: seqRng(seq) });
+    a.sys.queueReroll();
+    a.sys.fixedUpdate();
+    const b = openSelection({ rng: seqRng(seq) });
+    b.sys.queueReroll();
+    b.sys.fixedUpdate();
+    expect(a.sys.currentOffer.map((c) => c.id)).toEqual(
+      b.sys.currentOffer.map((c) => c.id),
+    );
+  });
+
+  it('reroll depleted: guarded no-op — offer unchanged (same array), charge stays 0', () => {
+    const { sys, prog } = openSelection();
+    prog.rerollCharges = 0;
+    const oldOffer = sys.currentOffer;
+    sys.queueReroll();
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(0);
+    expect(sys.currentOffer).toBe(oldOffer); // untouched: no redraw
+  });
+
+  it('reroll level grant: crossing INTO level 10 grants +1 reroll on that tick', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.level = 10;
+    levelStub.levelsGainedThisTick = 1; // prevLevel 9 → crosses 10
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES + 1);
+  });
+
+  it('reroll multi-grant: a single jump 9→16 crosses 10 AND 15 → +2 rerolls', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.level = 16;
+    levelStub.levelsGainedThisTick = 7; // prevLevel 9 → crosses 10 and 15 (not 20)
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES + 2);
+  });
+
+  it('reroll no re-grant: a non-crossing tick (levelsGainedThisTick 0) at level 20 grants nothing', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.level = 20;
+    levelStub.levelsGainedThisTick = 0;
+    const before = prog.rerollCharges;
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(before);
+  });
+
+  it('reroll grant lower bound: a crossing tick whose prevLevel is ALREADY past a threshold grants nothing', () => {
+    // Exercises the `prevLevel < T` lower bound of the grant guard (not just `T <= level`).
+    // level 12 with levelsGainedThisTick 1 → prevLevel 11, already past 10 (and below 15),
+    // so NO threshold is crossed INTO this tick and no reroll is granted. A weakened guard
+    // of just `T <= level` (an unbounded economy) would wrongly re-grant the 10 threshold.
+    const { sys, levelStub, prog } = build();
+    levelStub.level = 12;
+    levelStub.levelsGainedThisTick = 1; // prevLevel 11 (already > 10, < 15)
+    const before = prog.rerollCharges;
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(before);
+  });
+
+  it('banish with a charge: adds the focused id to banishedIds, spends one charge, fresh offer excludes it', () => {
+    const { sys, prog } = openSelection();
+    expect(prog.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+    const bannedId = sys.currentOffer[0].id;
+    sys.queueBanish(0);
+    sys.fixedUpdate();
+    expect(prog.banishedIds.has(bannedId)).toBe(true);
+    expect(prog.banishCharges).toBe(BANISH_INITIAL_CHARGES - 1);
+    expectValidOffer(sys.currentOffer);
+    expect(sys.currentOffer.some((c) => c.id === bannedId)).toBe(false);
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.selectionActive).toBe(true);
+  });
+
+  it('banish never returns: after banishing id X, many subsequent redraws never offer X again this run', () => {
+    const { sys, prog } = openSelection();
+    const bannedId = sys.currentOffer[0].id;
+    sys.queueBanish(0);
+    sys.fixedUpdate();
+    // Give plenty of reroll charges and drive many real redraws through drawCardOffer.
+    prog.rerollCharges = 50;
+    for (let t = 0; t < 40; t++) {
+      sys.queueReroll();
+      sys.fixedUpdate();
+      expect(sys.currentOffer.some((c) => c.id === bannedId)).toBe(false);
+    }
+  });
+
+  it('multi-pick reroll: with pending 2, a reroll leaves both picks owed + player invuln, redraws a fresh trio; a later pick drains to 1', () => {
+    const { sys, levelStub, playerStub } = build({ invulnMs: 0 });
+    levelStub.level = 3;
+    levelStub.levelsGainedThisTick = 2; // prevLevel 1 → pending 2, no reroll grant
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    expect(sys.pendingSelections).toBe(2);
+    const oldOffer = sys.currentOffer;
+    sys.queueReroll();
+    sys.fixedUpdate();
+    // Both picks are STILL owed and the player is STILL invulnerable (only the trio changed).
+    expect(sys.pendingSelections).toBe(2);
+    expect(playerStub.invulnMs).toBeGreaterThanOrEqual(LEVELUP_INVULN_FLOOR);
+    expect(sys.currentOffer).not.toBe(oldOffer);
+    expectValidOffer(sys.currentOffer);
+    expect(sys.selectionActive).toBe(true);
+    // A subsequent pick drains to 1 with a fresh offer, still active.
+    const afterReroll = sys.currentOffer;
+    sys.queueSelection(0);
+    sys.fixedUpdate();
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.currentOffer).not.toBe(afterReroll);
+    expectValidOffer(sys.currentOffer);
+    expect(sys.selectionActive).toBe(true);
+  });
+
+  it('multi-pick banish: with pending 2, a banish leaves both picks owed + player invuln, redraws a fresh trio excluding the id; a later pick drains to 1', () => {
+    const { sys, levelStub, playerStub, prog } = build({ invulnMs: 0 });
+    levelStub.level = 3;
+    levelStub.levelsGainedThisTick = 2;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    expect(sys.pendingSelections).toBe(2);
+    const bannedId = sys.currentOffer[0].id;
+    const oldOffer = sys.currentOffer;
+    sys.queueBanish(0);
+    sys.fixedUpdate();
+    expect(sys.pendingSelections).toBe(2);
+    expect(playerStub.invulnMs).toBeGreaterThanOrEqual(LEVELUP_INVULN_FLOOR);
+    expect(prog.banishedIds.has(bannedId)).toBe(true);
+    expect(sys.currentOffer).not.toBe(oldOffer);
+    expectValidOffer(sys.currentOffer);
+    expect(sys.currentOffer.some((c) => c.id === bannedId)).toBe(false);
+    expect(sys.selectionActive).toBe(true);
+    // A subsequent pick drains to 1 with a fresh offer.
+    const afterBanish = sys.currentOffer;
+    sys.queueSelection(0);
+    sys.fixedUpdate();
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.currentOffer).not.toBe(afterBanish);
+    expectValidOffer(sys.currentOffer);
+  });
+
+  it('banish depleted: guarded no-op — nothing banished, offer unchanged, charge stays 0', () => {
+    const { sys, prog } = openSelection();
+    prog.banishCharges = 0;
+    const oldOffer = sys.currentOffer;
+    sys.queueBanish(0);
+    sys.fixedUpdate();
+    expect(prog.banishCharges).toBe(0);
+    expect(prog.banishedIds.size).toBe(0);
+    expect(sys.currentOffer).toBe(oldOffer); // untouched: no banish, no redraw
+  });
+
+  it('banish invalid index (5 / -1): guarded no-op — latch cleared, nothing banished, charge unchanged, no throw', () => {
+    const { sys, prog } = openSelection();
+    const oldOffer = sys.currentOffer;
+    sys.queueBanish(5);
+    expect(() => sys.fixedUpdate()).not.toThrow();
+    expect(prog.banishedIds.size).toBe(0);
+    expect(prog.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+    expect(sys._queuedBanish).toBe(null); // latch consumed even on the no-op
+    expect(sys.currentOffer).toBe(oldOffer); // untouched
+
+    sys.queueBanish(-1);
+    sys.fixedUpdate();
+    expect(prog.banishedIds.size).toBe(0);
+    expect(prog.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+  });
+
+  it('reroll/banish with none pending: guarded no-op — no charge spent, no throw', () => {
+    const { sys, prog } = build(); // nothing pending
+    sys.queueReroll();
+    expect(() => sys.fixedUpdate()).not.toThrow();
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES);
+    sys.queueBanish(0);
+    expect(() => sys.fixedUpdate()).not.toThrow();
+    expect(prog.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+    expect(prog.banishedIds.size).toBe(0);
+    expect(sys.selectionActive).toBe(false);
+  });
+
+  it('latch idempotency: two queueReroll() before a tick spend only one charge (one-slot latch)', () => {
+    const { sys, prog } = openSelection();
+    prog.rerollCharges = 2;
+    sys.queueReroll();
+    sys.queueReroll();
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(1); // only one reroll honored
+  });
+
+  it('latch idempotency: queueBanish honors only the first index within a fixed-step window', () => {
+    const { sys } = build();
+    sys.queueBanish(0);
+    sys.queueBanish(1);
+    expect(sys._queuedBanish).toBe(0);
+  });
+
+  it('a same-tick pick empties the offer, so a same-tick reroll/banish is a no-op that spends no charge', () => {
+    const { sys, prog } = openSelection();
+    const rerollBefore = prog.rerollCharges;
+    const banishBefore = prog.banishCharges;
+    // Pick (empties currentOffer in step 1) AND request reroll+banish the same tick.
+    sys.queueSelection(0);
+    sys.queueReroll();
+    sys.queueBanish(1);
+    sys.fixedUpdate();
+    // The pick drained the only owed selection → closed; reroll/banish saw an empty
+    // offer and no-op'd, so neither charge was spent.
+    expect(prog.rerollCharges).toBe(rerollBefore);
+    expect(prog.banishCharges).toBe(banishBefore);
+    expect(prog.banishedIds.size).toBe(0);
   });
 });

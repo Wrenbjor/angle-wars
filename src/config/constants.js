@@ -657,6 +657,10 @@ export const LEVELUP_PROMPT_FONT = '20px monospace';
 export const LEVELUP_CARD_WIDTH = 300;
 export const LEVELUP_CARD_HEIGHT = 200;
 export const LEVELUP_CARD_GAP = 40;
+// Vertical offset (px) of the prompt line below the panels' BOTTOM edge. Named so the
+// prompt draw AND the reroll/banish action row (LEVELUP_ACTION_Y_OFFSET is measured
+// relative to it) stay in sync — a single source for that spacing (Story 8.5).
+export const LEVELUP_PROMPT_Y_OFFSET = 50;
 
 // --- Weighted card offer & slot limits (Story 8.4 / Epic 8 progression) ------
 // The level-up offer is a deterministic weighted-without-replacement draw of
@@ -689,6 +693,68 @@ export const CARD_WEIGHT_LEVEL1_MULT = 1.0;
 // Level factor for any card NOT at level 1 (unowned level 0 or mid-tier levels
 // 2+): the bump that, combined with ownership, favors finishing mid-tier builds.
 export const CARD_WEIGHT_MIDTIER_MULT = 1.4;
+
+// --- Reroll & Banish (Story 8.5 / Epic 8 progression) ------------------------
+// The two build-shaping tools layered onto the 8.3/8.4 draft: REROLL redraws the
+// offered trio (a limited charge economy that grows with the run) and BANISH
+// permanently drops a card from this run's offer pool. Both are run-scoped
+// resources on ProgressionState (created fresh per run, never touched by death),
+// consumed via LevelUpSystem latches while a selection is active. All values are
+// tunable placeholders (Epic 14 owns real meta-progression) — no inline magic
+// numbers on the reroll/banish path.
+
+// Reroll charges a fresh run starts with. A reroll spends one charge and redraws
+// the trio (respecting weights/slots/banished); at 0 it is a guarded no-op.
+export const REROLL_INITIAL_CHARGES = 1;
+// Banish charges a fresh run has. A banish adds the focused card's id to the run's
+// banished set (never offered again) and spends one charge; at 0 it is a no-op.
+export const BANISH_INITIAL_CHARGES = 2;
+// Levels that each grant +1 reroll charge on the tick the player crosses INTO them
+// (a single multi-level jump spanning several thresholds grants one per threshold).
+// Frozen so no consumer can mutate the shared list.
+export const REROLL_LEVEL_GRANTS = Object.freeze([10, 15, 20]);
+
+// --- Reroll/Banish overlay action-button style (Story 8.5) -------------------
+// Two labelled action controls (Reroll / Banish) rendered below the card panels in
+// the level-up overlay, each showing its remaining charge count with an enabled vs
+// depleted (count 0) look. Placeholder styling only (Epic 4 owns the real aesthetic;
+// Epic 10 owns the real draft UX). Mirrors the LEVELUP_* card-panel style block.
+// Enabled button fill color + alpha (a warm amber that reads as an actionable tool
+// distinct from the green card panels once bloom bleeds it).
+export const COLOR_LEVELUP_ACTION = 0x332211;
+export const LEVELUP_ACTION_ALPHA = 0.6;
+// Depleted (count 0) fill color + alpha: dimmer/greyer so a spent action reads as
+// clearly unavailable at a glance.
+export const COLOR_LEVELUP_ACTION_DEPLETED = 0x1a1a1a;
+export const LEVELUP_ACTION_DEPLETED_ALPHA = 0.4;
+// Button border color + width (enabled). The depleted variant reuses the depleted
+// text color for a uniformly dimmed look.
+export const COLOR_LEVELUP_ACTION_BORDER = 0xffaa55;
+export const LEVELUP_ACTION_BORDER_WIDTH = 2;
+// Button label color: bright when enabled, dimmed grey when depleted.
+export const COLOR_LEVELUP_ACTION_TEXT = '#ffddaa';
+export const COLOR_LEVELUP_ACTION_TEXT_DEPLETED = '#666666';
+// Button label font.
+export const LEVELUP_ACTION_FONT = '18px monospace';
+// Button rect geometry (px, logical): each control's width/height, the gap between
+// the two controls, and the vertical offset of the control row below the prompt line
+// (which itself sits LEVELUP_CARD_HEIGHT + LEVELUP_PROMPT_Y_OFFSET below the panels' top).
+export const LEVELUP_ACTION_WIDTH = 260;
+export const LEVELUP_ACTION_HEIGHT = 54;
+export const LEVELUP_ACTION_GAP = 40;
+export const LEVELUP_ACTION_Y_OFFSET = 90;
+
+// Per-card banish glyph (Story 8.5): a small tappable target in the TOP-RIGHT corner of
+// each card panel so a touch/mouse player can banish a SPECIFIC card (the focus-based
+// bottom Banish button only ever targets the focused slot, which touch cannot move
+// without also committing a pick). Keyboard `B` / gamepad LB still banish the focused
+// card. The glyph reuses the action-button colors (enabled amber / depleted grey) for a
+// consistent "tool" read; only its geometry + label font are new. Size/margin in px.
+export const LEVELUP_CARD_BANISH_SIZE = 40;
+export const LEVELUP_CARD_BANISH_MARGIN = 10;
+export const LEVELUP_CARD_BANISH_FONT = '20px monospace';
+// The banish glyph label (kept ASCII so it renders reliably under the bloom pass).
+export const LEVELUP_CARD_BANISH_GLYPH = 'X';
 
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;

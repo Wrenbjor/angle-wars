@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { cardWeight, drawCardOffer } from './cardOffer.js';
 import { createProgressionState } from '../state/ProgressionState.js';
+import { PLACEHOLDER_CARDS } from '../config/cards.js';
 import {
   SLOT_LIMIT_OFFENSE,
   SLOT_LIMIT_DEFENSE,
@@ -295,6 +296,36 @@ describe('drawCardOffer — weighted-without-replacement draw', () => {
     }
     // With only three positive-weight cards, every offer is all three.
     expect(seen).toEqual(new Set(['a', 'b', 'c']));
+  });
+
+  it('Story 8.5: a banished id over the real pool never appears while the offer stays exactly three distinct', () => {
+    // End-to-end lock of "never appears again" at the draw surface with the SHIPPED
+    // pool: banish one real id, drive many draws over a varied rng sequence, and assert
+    // the banished id is never offered while every offer is still exactly three distinct
+    // pool cards (the 6+5 positive-weight pool stays >= 3 with one banished).
+    const banishedId = 'off-rapid';
+    const banishedIds = new Set([banishedId]);
+    const prog = createProgressionState();
+    const rng = seqRng([0.07, 0.29, 0.53, 0.81, 0.11, 0.42, 0.68, 0.95, 0.34]);
+    const seen = new Set();
+    for (let t = 0; t < 60; t++) {
+      const offer = drawCardOffer({
+        pool: PLACEHOLDER_CARDS,
+        progressionState: prog,
+        rng,
+        banishedIds,
+      });
+      expect(offer).toHaveLength(CARD_OFFER_SIZE);
+      const ids = offer.map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length); // distinct
+      for (const c of offer) {
+        expect(PLACEHOLDER_CARDS).toContain(c);
+        seen.add(c.id);
+      }
+    }
+    expect(seen.has(banishedId)).toBe(false);
+    // Sanity: other cards ARE reachable (the draw is not degenerately stuck).
+    expect(seen.size).toBeGreaterThan(CARD_OFFER_SIZE);
   });
 
   it('the three returned ids are pairwise distinct in any state', () => {

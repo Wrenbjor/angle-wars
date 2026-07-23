@@ -55,6 +55,24 @@ import {
   LEVELUP_CARD_WIDTH,
   LEVELUP_CARD_HEIGHT,
   LEVELUP_CARD_GAP,
+  LEVELUP_PROMPT_Y_OFFSET,
+  LEVELUP_CARD_BANISH_SIZE,
+  LEVELUP_CARD_BANISH_MARGIN,
+  LEVELUP_CARD_BANISH_FONT,
+  LEVELUP_CARD_BANISH_GLYPH,
+  COLOR_LEVELUP_ACTION,
+  LEVELUP_ACTION_ALPHA,
+  COLOR_LEVELUP_ACTION_DEPLETED,
+  LEVELUP_ACTION_DEPLETED_ALPHA,
+  COLOR_LEVELUP_ACTION_BORDER,
+  LEVELUP_ACTION_BORDER_WIDTH,
+  COLOR_LEVELUP_ACTION_TEXT,
+  COLOR_LEVELUP_ACTION_TEXT_DEPLETED,
+  LEVELUP_ACTION_FONT,
+  LEVELUP_ACTION_WIDTH,
+  LEVELUP_ACTION_HEIGHT,
+  LEVELUP_ACTION_GAP,
+  LEVELUP_ACTION_Y_OFFSET,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_TELEGRAPH_MIN_ALPHA,
   SPAWN_TELEGRAPH_MIN_SCALE,
@@ -705,6 +723,10 @@ export class ArenaScene extends Phaser.Scene {
     const cardsStartX = cx - cardsTotalW / 2;
     const cardPanelY = cy - LEVELUP_CARD_HEIGHT / 2;
     this._cardRects = [];
+    // Story 8.5: a per-card banish glyph rect in each panel's TOP-RIGHT corner — the
+    // touch/mouse affordance to banish a SPECIFIC card (hit-tested BEFORE the card-commit
+    // rect so a tap on it banishes rather than picks). Same index as _cardRects[i].
+    this._cardBanishRects = [];
     for (let i = 0; i < 3; i++) {
       const rx = cardsStartX + i * (LEVELUP_CARD_WIDTH + LEVELUP_CARD_GAP);
       this._cardRects.push({
@@ -714,6 +736,17 @@ export class ArenaScene extends Phaser.Scene {
         h: LEVELUP_CARD_HEIGHT,
         cx: rx + LEVELUP_CARD_WIDTH / 2,
         cy: cardPanelY + LEVELUP_CARD_HEIGHT / 2,
+      });
+      const bx =
+        rx + LEVELUP_CARD_WIDTH - LEVELUP_CARD_BANISH_MARGIN - LEVELUP_CARD_BANISH_SIZE;
+      const by = cardPanelY + LEVELUP_CARD_BANISH_MARGIN;
+      this._cardBanishRects.push({
+        x: bx,
+        y: by,
+        w: LEVELUP_CARD_BANISH_SIZE,
+        h: LEVELUP_CARD_BANISH_SIZE,
+        cx: bx + LEVELUP_CARD_BANISH_SIZE / 2,
+        cy: by + LEVELUP_CARD_BANISH_SIZE / 2,
       });
     }
     // Dimming rect (reuses the pause overlay color).
@@ -749,9 +782,22 @@ export class ArenaScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setVisible(false),
     );
+    // Story 8.5: one banish-glyph label per card, centered on its top-right glyph rect.
+    // Drawn (with its rect) in the card-panel render loop; dimmed when banishCharges===0.
+    this.cardBanishLabels = this._cardBanishRects.map((b) =>
+      this.add
+        .text(b.cx, b.cy, LEVELUP_CARD_BANISH_GLYPH, {
+          font: LEVELUP_CARD_BANISH_FONT,
+          color: COLOR_LEVELUP_ACTION_TEXT,
+          align: 'center',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setVisible(false),
+    );
     // Prompt line below the panels (text set per-frame from the active input method).
     this.levelUpPrompt = this.add
-      .text(cx, cardPanelY + LEVELUP_CARD_HEIGHT + 50, '', {
+      .text(cx, cardPanelY + LEVELUP_CARD_HEIGHT + LEVELUP_PROMPT_Y_OFFSET, '', {
         font: LEVELUP_PROMPT_FONT,
         color: COLOR_LEVELUP_TEXT,
         align: 'center',
@@ -759,6 +805,51 @@ export class ArenaScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setVisible(false);
+
+    // --- Reroll / Banish action controls (Story 8.5) ------------------------
+    // Two labelled action buttons (index 0 = Reroll, index 1 = Banish) below the prompt,
+    // each showing its remaining charge count with an enabled vs depleted (count 0) look.
+    // Precompute the two rects (top-left x/y + size + center), centered horizontally
+    // around cx — reused for both the draw and the pointer hit-test so the drawn geometry
+    // IS the touch target (mirrors the card-rect idiom). Redrawn each frame in update().
+    const actionsTotalW = LEVELUP_ACTION_WIDTH * 2 + LEVELUP_ACTION_GAP;
+    const actionsStartX = cx - actionsTotalW / 2;
+    const actionY =
+      cardPanelY +
+      LEVELUP_CARD_HEIGHT +
+      LEVELUP_PROMPT_Y_OFFSET +
+      LEVELUP_ACTION_Y_OFFSET;
+    this._actionRects = [];
+    for (let i = 0; i < 2; i++) {
+      const rx = actionsStartX + i * (LEVELUP_ACTION_WIDTH + LEVELUP_ACTION_GAP);
+      this._actionRects.push({
+        kind: i === 0 ? 'reroll' : 'banish',
+        x: rx,
+        y: actionY,
+        w: LEVELUP_ACTION_WIDTH,
+        h: LEVELUP_ACTION_HEIGHT,
+        cx: rx + LEVELUP_ACTION_WIDTH / 2,
+        cy: actionY + LEVELUP_ACTION_HEIGHT / 2,
+      });
+    }
+    // Panel graphics for the two buttons: one Graphics cleared + redrawn each frame with
+    // the enabled/depleted fill+border keyed to the matching live charge count.
+    this.actionPanelGraphics = this.add.graphics();
+    this.actionPanelGraphics.setScrollFactor(0);
+    this.actionPanelGraphics.setVisible(false);
+    // One label Text per button, centered on each rect (text + color set per-frame from
+    // the live charge count — dimmed when depleted).
+    this.actionLabels = this._actionRects.map((r) =>
+      this.add
+        .text(r.cx, r.cy, '', {
+          font: LEVELUP_ACTION_FONT,
+          color: COLOR_LEVELUP_ACTION_TEXT,
+          align: 'center',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setVisible(false),
+    );
 
     // --- Level-up card input ------------------------------------------------
     // Card nav + confirm across keyboard, gamepad, AND touch, each guarded on
@@ -801,22 +892,48 @@ export class ArenaScene extends Phaser.Scene {
       if (this._cardConfirmGraceMs > 0) return;
       this.levelUpSystem.queueSelection(this._cardFocus);
     };
+    // Story 8.5: R rerolls the trio, B banishes the focused card. Guarded exactly like
+    // the confirm (selectionActive + !paused + not-during-grace + no OS auto-repeat) so
+    // the same keys never affect a normal run. The LevelUpSystem latch enforces the
+    // charge economy — a keypress with no charge is a guarded sim-side no-op.
+    const cardReroll = (event) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (event && event.repeat) return;
+      if (this._cardConfirmGraceMs > 0) return;
+      this.levelUpSystem.queueReroll();
+    };
+    const cardBanish = (event) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (event && event.repeat) return;
+      if (this._cardConfirmGraceMs > 0) return;
+      this.levelUpSystem.queueBanish(this._cardFocus);
+    };
     this.input.keyboard.on('keydown-LEFT', cardNavLeft);
     this.input.keyboard.on('keydown-A', cardNavLeft);
     this.input.keyboard.on('keydown-RIGHT', cardNavRight);
     this.input.keyboard.on('keydown-D', cardNavRight);
     this.input.keyboard.on('keydown-ENTER', cardConfirm);
     this.input.keyboard.on('keydown-SPACE', cardConfirm);
+    this.input.keyboard.on('keydown-R', cardReroll);
+    this.input.keyboard.on('keydown-B', cardBanish);
     // Gamepad confirm: FACE buttons only (standard-mapping indices 0..3), so d-pad /
     // stick horizontal are free to NAVIGATE (polled in update()) rather than confirm.
     // Edge-triggered via the 'down' event; grace-gated like the keyboard/touch confirm.
     // The pad plugin is present only when enabled, so it is guarded.
+    // Story 8.5: the shoulder buttons drive the two tools — LB (index 4) banishes the
+    // focused card, RB (index 5) rerolls — so the face buttons stay confirm-only and a
+    // directional input still navigates. Grace-gated like the confirm; the LevelUpSystem
+    // latches enforce the charge economy.
     this.input.gamepad?.on('down', (pad, button) => {
       if (!this.levelUpSystem.selectionActive || this._paused) return;
       if (this._cardConfirmGraceMs > 0) return;
       const idx = button && button.index;
       if (idx >= 0 && idx <= 3) {
         this.levelUpSystem.queueSelection(this._cardFocus);
+      } else if (idx === 4) {
+        this.levelUpSystem.queueBanish(this._cardFocus);
+      } else if (idx === 5) {
+        this.levelUpSystem.queueReroll();
       }
     });
     // Touch/mouse: a pointerdown inside a card rect selects it (grace-gated). Base-
@@ -827,11 +944,49 @@ export class ArenaScene extends Phaser.Scene {
       if (this._cardConfirmGraceMs > 0) return;
       const px = pointer.x;
       const py = pointer.y;
+      // Story 8.5: the per-card banish glyph (top-right of each panel) is hit-tested
+      // FIRST and short-circuits — a tap on it banishes THAT card (a specific target the
+      // focus-based banish cannot reach on touch) and must NOT also commit a pick. The
+      // return fires even when depleted so a tap on the glyph never falls through to a
+      // pick; queueBanish is only called when a charge remains (the sim latch also guards
+      // it). This is the touch/mouse banish path; keyboard B / gamepad LB stay focus-based.
+      for (let i = 0; i < this._cardBanishRects.length; i++) {
+        const b = this._cardBanishRects[i];
+        if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+          if (this.progressionState.banishCharges > 0) {
+            this.levelUpSystem.queueBanish(i);
+          }
+          return;
+        }
+      }
       for (let i = 0; i < this._cardRects.length; i++) {
         const r = this._cardRects[i];
         if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
           this._cardFocus = i;
           this.levelUpSystem.queueSelection(i);
+          break;
+        }
+      }
+    });
+    // Story 8.5: a pointerdown inside the bottom REROLL button latches a reroll (reroll
+    // needs no target). Same base-resolution hit-test as the card rects (overlay pinned
+    // scrollFactor 0) so the drawn button IS the touch target; grace-gated and pause-
+    // guarded like the card confirm. The LevelUpSystem latch is the sole charge authority
+    // — a tap on the depleted (dimmed) button is a guarded no-op there. The bottom BANISH
+    // button is deliberately NOT pointer-hittable: it banishes the FOCUSED slot, which a
+    // touch/mouse player cannot aim without also committing a pick, so it would always
+    // waste a charge on slot 0. Pointer banishing is the per-card glyph above; the bottom
+    // Banish button stays a keyboard-B / gamepad-LB affordance + live charge readout.
+    this.input.on('pointerdown', (pointer) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (this._cardConfirmGraceMs > 0) return;
+      const px = pointer.x;
+      const py = pointer.y;
+      for (let i = 0; i < this._actionRects.length; i++) {
+        const r = this._actionRects[i];
+        if (r.kind !== 'reroll') continue;
+        if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+          this.levelUpSystem.queueReroll();
           break;
         }
       }
@@ -970,6 +1125,15 @@ export class ArenaScene extends Phaser.Scene {
       this.levelUpPrompt.setVisible(false);
       for (let i = 0; i < this.cardTitles.length; i++) {
         this.cardTitles[i].setVisible(false);
+      }
+      // Story 8.5: hide the reroll/banish controls + per-card banish glyphs too (re-shown
+      // on resume by the per-frame render while selectionActive is still true).
+      this.actionPanelGraphics.setVisible(false);
+      for (let i = 0; i < this.actionLabels.length; i++) {
+        this.actionLabels[i].setVisible(false);
+      }
+      for (let i = 0; i < this.cardBanishLabels.length; i++) {
+        this.cardBanishLabels[i].setVisible(false);
       }
       this.touchOverlayGraphics.clear();
       this.inputSampler.resetTouch();
@@ -1387,11 +1551,16 @@ export class ArenaScene extends Phaser.Scene {
     this.levelUpPrompt.setVisible(cardsOpen);
     const cpg = this.cardPanelGraphics;
     cpg.clear();
+    // Story 8.5: a banished-charge-depleted look for the per-card glyphs (shared across
+    // all three cards — a single banish counter gates them all).
+    const banishDepleted = this.progressionState.banishCharges <= 0;
     for (let i = 0; i < this._cardRects.length; i++) {
       const r = this._cardRects[i];
       const title = this.cardTitles[i];
+      const banishLabel = this.cardBanishLabels[i];
       const shown = cardsOpen && i < offer.length;
       title.setVisible(shown);
+      banishLabel.setVisible(shown);
       if (!shown) continue;
       const focused = i === this._cardFocus;
       cpg.fillStyle(
@@ -1406,15 +1575,69 @@ export class ArenaScene extends Phaser.Scene {
       );
       cpg.strokeRect(r.x, r.y, r.w, r.h);
       title.setText(offer[i].title);
+      // Per-card banish glyph in the top-right corner: enabled amber when a banish
+      // charge remains, dimmed grey when depleted (reads as clearly unavailable).
+      const b = this._cardBanishRects[i];
+      cpg.fillStyle(
+        banishDepleted ? COLOR_LEVELUP_ACTION_DEPLETED : COLOR_LEVELUP_ACTION,
+        banishDepleted ? LEVELUP_ACTION_DEPLETED_ALPHA : LEVELUP_ACTION_ALPHA,
+      );
+      cpg.fillRect(b.x, b.y, b.w, b.h);
+      cpg.lineStyle(
+        LEVELUP_ACTION_BORDER_WIDTH,
+        banishDepleted ? COLOR_LEVELUP_ACTION_DEPLETED : COLOR_LEVELUP_ACTION_BORDER,
+        1,
+      );
+      cpg.strokeRect(b.x, b.y, b.w, b.h);
+      banishLabel.setColor(
+        banishDepleted ? COLOR_LEVELUP_ACTION_TEXT_DEPLETED : COLOR_LEVELUP_ACTION_TEXT,
+      );
     }
     if (cardsOpen) {
       const method = this.inputSampler.activeMethod;
       this.levelUpPrompt.setText(
         method === INPUT_METHOD.TOUCH
-          ? 'Tap a card to choose'
+          ? `Tap a card to choose  ·  tap ${LEVELUP_CARD_BANISH_GLYPH} on a card to banish  ·  tap Reroll`
           : method === INPUT_METHOD.GAMEPAD
-            ? 'Stick / D-pad to choose  ·  A to confirm'
-            : '← → or A / D to choose  ·  Enter / Space to confirm',
+            ? 'Stick / D-pad to choose  ·  A confirm  ·  RB reroll  ·  LB banish'
+            : '← → or A / D to choose  ·  Enter / Space confirm  ·  R reroll  ·  B banish',
+      );
+    }
+
+    // Story 8.5: draw the two reroll/banish action buttons with live charge counts and
+    // an enabled vs depleted (count 0) look. Redrawn each frame like the card panels: a
+    // depleted control reads as clearly unavailable (dimmed fill/border/label). The
+    // LevelUpSystem latch is the sole charge authority, so a press on a depleted button
+    // is a guarded no-op there — the styling is purely a render cue.
+    this.actionPanelGraphics.setVisible(cardsOpen);
+    const apg = this.actionPanelGraphics;
+    apg.clear();
+    for (let i = 0; i < this._actionRects.length; i++) {
+      const r = this._actionRects[i];
+      const label = this.actionLabels[i];
+      label.setVisible(cardsOpen);
+      if (!cardsOpen) continue;
+      const count =
+        r.kind === 'reroll'
+          ? this.progressionState.rerollCharges
+          : this.progressionState.banishCharges;
+      const depleted = count <= 0;
+      apg.fillStyle(
+        depleted ? COLOR_LEVELUP_ACTION_DEPLETED : COLOR_LEVELUP_ACTION,
+        depleted ? LEVELUP_ACTION_DEPLETED_ALPHA : LEVELUP_ACTION_ALPHA,
+      );
+      apg.fillRect(r.x, r.y, r.w, r.h);
+      apg.lineStyle(
+        LEVELUP_ACTION_BORDER_WIDTH,
+        depleted ? COLOR_LEVELUP_ACTION_DEPLETED : COLOR_LEVELUP_ACTION_BORDER,
+        1,
+      );
+      apg.strokeRect(r.x, r.y, r.w, r.h);
+      label.setColor(
+        depleted ? COLOR_LEVELUP_ACTION_TEXT_DEPLETED : COLOR_LEVELUP_ACTION_TEXT,
+      );
+      label.setText(
+        `${r.kind === 'reroll' ? 'Reroll' : 'Banish'} (${count})`,
       );
     }
 

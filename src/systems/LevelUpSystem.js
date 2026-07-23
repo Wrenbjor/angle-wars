@@ -3,6 +3,7 @@ import { PLACEHOLDER_CARDS } from '../config/cards.js';
 import {
   LEVELUP_INVULN_FLOOR,
   LEVELUP_LANDING_INVULN_MS,
+  REROLL_LEVEL_GRANTS,
 } from '../config/constants.js';
 import { applyCard } from '../state/ProgressionState.js';
 import { drawCardOffer } from './cardOffer.js';
@@ -33,6 +34,24 @@ import { drawCardOffer } from './cardOffer.js';
 // so a multi-level jump — or an orb collected mid-slow-mo that crosses another threshold
 // — owes multiple picks.
 //
+// Story 8.5 layers two more latched build-shaping tools onto the same idiom, consumed in
+// fixedUpdate AFTER the pick and BEFORE the level-cross edge-detect:
+//   - queueReroll()      : while a 3-card selection is active and progressionState has a
+//     reroll charge, spend one and clear currentOffer so step (3) redraws a fresh weighted
+//     trio (same rng stream, weights/slots/banished honored). pendingSelections is
+//     unchanged — the same pick is still owed, the player still invulnerable. At 0 charges
+//     it is a guarded no-op that spends nothing.
+//   - queueBanish(index) : while a 3-card selection is active, the index is a valid slot,
+//     and a banish charge remains, add currentOffer[index].id to progressionState.banishedIds,
+//     spend one charge, and clear currentOffer so the redraw EXCLUDES the banished id (its
+//     8.4 weight zeroes). A banished id never appears in any offer again this run. At 0
+//     charges / an invalid index it is a guarded no-op.
+// Additionally, on a level-crossing tick, +1 reroll charge is granted for each
+// REROLL_LEVEL_GRANTS threshold the tick crosses INTO (multi-level-jump-safe via
+// prevLevel = level - levelsGainedThisTick). Consumption order: pick → reroll → banish →
+// level-cross grant/enqueue → offer rebuild + invuln re-arm. Because reroll/banish require
+// a 3-card offer, a same-tick pick (which empties the offer) makes them no-op that tick.
+//
 // Zero steady-state allocation on the idle path: when nothing is pending, fixedUpdate
 // touches no allocation (currentOffer is only (re)built on a crossing/post-pick tick,
 // never every tick).
@@ -42,9 +61,11 @@ export class LevelUpSystem extends System {
    *   read-only here for its per-tick level-crossing delta (the edge-detect seam).
    * @param {{invulnMs:number}} playerState Shared player lifecycle state — its invuln
    *   window is re-armed each pending tick (reusing PlayerDeathSystem's i-frame gate).
-   * @param {{ownedCards:Object<string,number>, debugStat:number}} progressionState
-   *   Shared run-scoped card progression — a selection applies its card here, and its
-   *   ownership drives the weighted offer draw.
+   * @param {{ownedCards:Object<string,number>, debugStat:number,
+   *   rerollCharges:number, banishCharges:number, banishedIds:Set<string>}} progressionState
+   *   Shared run-scoped card progression — a selection applies its card here, its
+   *   ownership drives the weighted offer draw, and (Story 8.5) its reroll/banish charges
+   *   and banished-id set drive the reroll/banish tools + grants.
    * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the weighted
    *   offer draw (Story 8.4). Threaded from buildArenaWorld so the offer routes through
    *   the SAME seedable stream the spawn systems use; injectable so the draw is
@@ -64,6 +85,11 @@ export class LevelUpSystem extends System {
     // One-slot choice latch (mirrors the bomb latch): the overlay writes an index;
     // fixedUpdate reads-and-clears it. null = no choice queued.
     this._queuedChoice = null;
+    // Story 8.5 one-slot latches (same read-and-cleared-in-the-tick idiom):
+    //  - _queuedReroll : a boolean flag set by queueReroll(), consumed once per tick.
+    //  - _queuedBanish : the slot index set by queueBanish(index), or null when none.
+    this._queuedReroll = false;
+    this._queuedBanish = null;
   }
 
   /**
@@ -85,9 +111,35 @@ export class LevelUpSystem extends System {
   }
 
   /**
+   * Latch a reroll request from the overlay (Story 8.5). One-slot, like the choice
+   * latch: only the FIRST call before the next fixedUpdate is honored (multiple
+   * presses in one frame yield one reroll). fixedUpdate reads-and-clears it and, if a
+   * charge is available while a 3-card selection is active, spends it and redraws the
+   * trio; otherwise it is a guarded no-op that spends nothing.
+   */
+  queueReroll() {
+    this._queuedReroll = true;
+  }
+
+  /**
+   * Latch a banish request for the card at `index` from the overlay (Story 8.5).
+   * One-slot: only the FIRST call before the next fixedUpdate is honored. fixedUpdate
+   * reads-and-clears it and, if a charge is available while a 3-card selection is
+   * active and the index is a valid slot, banishes that card's id and redraws the trio
+   * excluding it; otherwise it is a guarded no-op that spends nothing.
+   * @param {number} index The focused card index (0..2).
+   */
+  queueBanish(index) {
+    if (this._queuedBanish === null) this._queuedBanish = index;
+  }
+
+  /**
    * Advance one fixed step: (1) consume any latched choice and apply the card,
-   * (2) edge-detect this tick's level crossings and enqueue owed picks, (3) while
-   * pending, (re)build the offer if needed and re-arm the invuln floor.
+   * (1b) consume a latched reroll then a latched banish (Story 8.5) — each guarded on
+   * an active 3-card offer + a positive matching charge, clearing currentOffer for the
+   * step-(3) rebuild, (2) edge-detect this tick's level crossings, grant reroll charges
+   * for each threshold crossed, and enqueue owed picks, (3) while pending, (re)build the
+   * offer if needed and re-arm the invuln floor.
    */
   fixedUpdate() {
     // (1) Consume the latched choice (read-and-clear). Apply it ONLY when a
@@ -125,9 +177,58 @@ export class LevelUpSystem extends System {
       }
     }
 
+    // (1b) Consume the reroll latch, then the banish latch (Story 8.5), in that order.
+    // Both read-and-clear their latch and are honored ONLY while a selection is active,
+    // a full 3-card offer is present, and the matching charge is positive (a banish also
+    // requires a valid slot index) — otherwise a guarded no-op that spends no charge and
+    // does not throw. On success each clears currentOffer so step (3) redraws a fresh
+    // weighted trio (reroll: respecting weights/slots/banished; banish: also excluding
+    // the just-banished id). pendingSelections is left unchanged: the same pick is still
+    // owed and the player stays invulnerable. Because both require currentOffer.length ===
+    // 3, a same-tick pick above (which empties the offer) makes them no-op this tick.
+    if (this._queuedReroll) {
+      this._queuedReroll = false;
+      if (
+        this.selectionActive &&
+        this.currentOffer.length === 3 &&
+        this.progressionState.rerollCharges > 0
+      ) {
+        this.progressionState.rerollCharges--;
+        this.currentOffer = [];
+      }
+    }
+    if (this._queuedBanish !== null) {
+      const index = this._queuedBanish;
+      this._queuedBanish = null;
+      if (
+        this.selectionActive &&
+        this.currentOffer.length === 3 &&
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < 3 &&
+        this.progressionState.banishCharges > 0
+      ) {
+        this.progressionState.banishedIds.add(this.currentOffer[index].id);
+        this.progressionState.banishCharges--;
+        this.currentOffer = [];
+      }
+    }
+
     // (2) Edge-detect the level-up: enqueue exactly the number of levels crossed on
-    // THIS tick (0 on a non-crossing tick, so no re-enqueue after the crossing).
+    // THIS tick (0 on a non-crossing tick, so no re-enqueue after the crossing), and
+    // (Story 8.5) grant +1 reroll charge for each REROLL_LEVEL_GRANTS threshold the tick
+    // crosses INTO. prevLevel = level - levelsGainedThisTick; a threshold T is crossed
+    // this tick iff prevLevel < T <= level — correct for a multi-level jump spanning
+    // several thresholds, firing exactly once each (level is monotonic, no re-cross).
     if (this.levelSystem.levelsGainedThisTick > 0) {
+      const prevLevel =
+        this.levelSystem.level - this.levelSystem.levelsGainedThisTick;
+      for (let i = 0; i < REROLL_LEVEL_GRANTS.length; i++) {
+        const T = REROLL_LEVEL_GRANTS[i];
+        if (prevLevel < T && T <= this.levelSystem.level) {
+          this.progressionState.rerollCharges++;
+        }
+      }
       this.pendingSelections += this.levelSystem.levelsGainedThisTick;
     }
 
@@ -146,6 +247,7 @@ export class LevelUpSystem extends System {
           pool: PLACEHOLDER_CARDS,
           progressionState: this.progressionState,
           rng: this._rng,
+          banishedIds: this.progressionState.banishedIds,
         });
       }
       if (this.playerState.invulnMs < LEVELUP_INVULN_FLOOR) {

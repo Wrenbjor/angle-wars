@@ -306,18 +306,66 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     expect(arenaSrc).toMatch(/if\s*\(\s*idx\s*>=\s*0\s*&&\s*idx\s*<=\s*3\s*\)/);
   });
 
-  it('VG10: every card input handler is a no-op while paused (no blind pick on refocus)', () => {
+  it('VG10: every card/action input handler is a no-op while paused (no blind pick on refocus)', () => {
     // A forced pause (blur/backgrounding, desktop web included) can fire mid-selection
     // with the overlay hidden but these event listeners still live. Without the pause
     // guard, a window-refocus pointerdown (by click position, not focus) inside a now-
     // invisible card rect — or a resume-reflex confirm — silently latches a blind pick
-    // applied on resume. All five handlers (nav L/R, keyboard confirm, gamepad down,
-    // pointerdown) must gate on `selectionActive || this._paused`. Pin all five.
+    // applied on resume. Every handler must gate on `selectionActive || this._paused`.
+    // The five card handlers (nav L/R, keyboard confirm, gamepad down, card pointerdown)
+    // PLUS the three Story 8.5 handlers (keyboard reroll, keyboard banish, action-rect
+    // pointerdown) → eight guarded handlers. Pin all eight.
     const guards = arenaSrc.match(
       /if\s*\(\s*!this\.levelUpSystem\.selectionActive\s*\|\|\s*this\._paused\s*\)\s*return/g,
     );
     expect(guards).not.toBeNull();
-    expect(guards.length).toBe(5);
+    expect(guards.length).toBe(8);
+  });
+
+  it('VG11: keyboard R maps to reroll and B maps to focused banish (not swapped)', () => {
+    // A silent R↔B swap would pass every behavioral test but make the player banish when
+    // intending to reroll. Pin the key→action direction at the source (VG9-style): the
+    // keydown-R binding drives cardReroll (whose body calls queueReroll), and keydown-B
+    // drives cardBanish (whose body calls queueBanish(this._cardFocus)).
+    expect(arenaSrc).toMatch(/keydown-R['"]\s*,\s*cardReroll/);
+    expect(arenaSrc).toMatch(/const\s+cardReroll\s*=[\s\S]*?queueReroll\(\)/);
+    expect(arenaSrc).toMatch(/keydown-B['"]\s*,\s*cardBanish/);
+    expect(arenaSrc).toMatch(
+      /const\s+cardBanish\s*=[\s\S]*?queueBanish\(this\._cardFocus\)/,
+    );
+  });
+
+  it('VG12: gamepad shoulder LB(4) maps to banish and RB(5) to reroll (not swapped)', () => {
+    // Same anti-swap pin for the pad shoulders: index 4 (LB) banishes the focused card,
+    // index 5 (RB) rerolls. A 4↔5 swap passes behavior but inverts the controls.
+    expect(arenaSrc).toMatch(
+      /idx === 4\)\s*\{\s*this\.levelUpSystem\.queueBanish\(this\._cardFocus\)/,
+    );
+    expect(arenaSrc).toMatch(
+      /idx === 5\)\s*\{\s*this\.levelUpSystem\.queueReroll\(\)/,
+    );
+  });
+
+  it('VG13: per-card touch banish glyph targets the TAPPED card index and short-circuits the pick', () => {
+    // The glyph is the ONLY touch path that can banish a SPECIFIC card (the focus-based
+    // path always hits slot 0 on a fresh trio). A silent regression to queueBanish(this.
+    // _cardFocus) — matching the keyboard/gamepad idiom — would make every touch banish hit
+    // the focused slot instead of the tapped card, defeating the feature while VG11/VG12
+    // (keyboard/gamepad only) still pass. Pin the glyph loop to queueBanish(i) (the loop
+    // index) AND the short-circuit `return`, so a glyph tap can never also commit a pick.
+    expect(arenaSrc).toMatch(
+      /_cardBanishRects\[i\][\s\S]*?queueBanish\(i\)[\s\S]*?return/,
+    );
+  });
+
+  it('VG14: action-row touch latches ONLY reroll; the bottom Banish button is not pointer-hittable', () => {
+    // The bottom Banish button banishes the FOCUSED slot, which a touch player cannot aim
+    // without also committing a pick — so it would always waste a charge on slot 0. It is
+    // deliberately skipped in the action-rect pointerdown (`r.kind !== 'reroll'` continue),
+    // leaving the per-card glyph as the touch banish path. Dropping that filter re-opens the
+    // exact wasted-charge bug. Pin the skip AND that the reroll rect drives queueReroll().
+    expect(arenaSrc).toMatch(/r\.kind !== 'reroll'\)\s*continue/);
+    expect(arenaSrc).toMatch(/_actionRects[\s\S]*?queueReroll\(\)/);
   });
 });
 

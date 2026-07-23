@@ -84,6 +84,12 @@ describe('PlayerDeathSystem', () => {
     applyCard(progressionState, { id: 'card-a', statDelta: 3 });
     applyCard(progressionState, { id: 'card-a', statDelta: 3 });
     applyCard(progressionState, { id: 'card-b', statDelta: 1 });
+    // Story 8.5: seed the reroll/banish economy fields to NON-default values too, so
+    // "untouched by death" is proven against real mutations — a targeted death-path reset
+    // of just these fields (to their fresh-run defaults) would otherwise read as untouched.
+    progressionState.rerollCharges = 3;
+    progressionState.banishCharges = 0;
+    progressionState.banishedIds.add('off-rapid');
     const before = JSON.stringify(progressionState);
 
     ship.x = 100;
@@ -100,6 +106,11 @@ describe('PlayerDeathSystem', () => {
     expect(progressionState).toEqual({
       ownedCards: { 'card-a': 2, 'card-b': 1 },
       debugStat: 7,
+      // Story 8.5: the run-scoped reroll/banish economy fields survive the death path
+      // intact at their SEEDED (non-default) values — proving death does not reset them.
+      rerollCharges: 3,
+      banishCharges: 0,
+      banishedIds: new Set(['off-rapid']),
     });
   });
 

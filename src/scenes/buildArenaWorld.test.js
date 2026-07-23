@@ -5,6 +5,8 @@ import {
   PARTICLE_MAX,
   SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT,
   SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT,
+  REROLL_INITIAL_CHARGES,
+  BANISH_INITIAL_CHARGES,
 } from '../config/constants.js';
 
 // buildArenaWorld wiring coverage. The scene's create() inlines this exact build
@@ -201,8 +203,14 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.levelUpSystem.playerState).toBe(ctx.playerState);
     expect(ctx.levelUpSystem.progressionState).toBe(ctx.progressionState);
     // Fresh run: run-scoped progression starts empty (rebuilt fresh per run, never
-    // reset on death — mirrors scoreState.xp).
-    expect(ctx.progressionState).toEqual({ ownedCards: {}, debugStat: 0 });
+    // reset on death — mirrors scoreState.xp), with the Story 8.5 reroll/banish charge
+    // economies at their starting values and an empty banished set.
+    expect(ctx.progressionState.ownedCards).toEqual({});
+    expect(ctx.progressionState.debugStat).toBe(0);
+    expect(ctx.progressionState.rerollCharges).toBe(REROLL_INITIAL_CHARGES);
+    expect(ctx.progressionState.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+    expect(ctx.progressionState.banishedIds).toBeInstanceOf(Set);
+    expect(ctx.progressionState.banishedIds.size).toBe(0);
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {
