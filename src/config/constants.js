@@ -381,6 +381,30 @@ export const SPAWN_DIRECTOR_SNAKE_PEAK_WEIGHT = 2;
 export const SPAWN_DIRECTOR_REFLECTOR_BASE_WEIGHT = 0;
 export const SPAWN_DIRECTOR_REFLECTOR_PEAK_WEIGHT = 2;
 
+// --- Build-adaptive spawn governor (Story 9.2 / Epic 9) ---------------------
+// The damped adaptive rate lever layered onto the v1 time ramp above. The
+// SpawnDirector consumes the rolling player DPS signal (Story 9.1) through a
+// slew-rate-limited `pressure` scalar that shortens the effective spawn interval
+// BELOW the v1 curve: effectiveInterval = intervalAt(elapsed) / (1 + pressure),
+// with pressure >= 0 so the v1 interval is a HARD FLOOR (adaptive only ever adds
+// pressure, never removes it; pressure 0 == byte-identical v1 behavior). All three
+// are tunable placeholders (tuned post-launch), mirroring the SPAWN_DIRECTOR_*
+// discipline — no inline magic numbers on the governor path.
+
+// DPS that maps to +1.0 pressure (the interval halves at this sustained output).
+// The pressure target is clamp(dps / this, 0, MAX_PRESSURE), so a linear read of
+// build power into rate pressure.
+export const SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE = 8;
+// Pressure cap: the fastest the adaptive layer ever drives the rate is
+// floor/(1+MAX), i.e. up to 3× the v1 spawn rate. With the existing MAX_ACTIVE
+// cap this bound is the death-spiral guard — no separate min-interval clamp.
+export const SPAWN_DIRECTOR_MAX_PRESSURE = 2;
+// Slew-rate limit: the most |Δpressure| may change per millisecond of fixed-step
+// time. A full 0→MAX swing takes ≈ MAX / this ms ≈ 10s (matching the ~10s DPS
+// window), so the governor tracks build power smoothly and cannot overshoot or
+// oscillate toward a constant target (monotonic by construction).
+export const SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS = 0.0002;
+
 // --- Enemy spawn telegraph / spawn-point safety (Story 2.6) ------------------
 // Every freshly spawned enemy of every archetype (Seeker, Green Square,
 // Pinwheel, Snake segments, Black Hole, and Black-Hole-fed seekers) carries a

@@ -177,6 +177,9 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.dpsTelemetrySystem.collisionSystem).toBe(ctx.collisionSystem);
     // Fresh build: the rolling estimate starts empty.
     expect(ctx.dpsTelemetrySystem.dps).toBe(0);
+    // Story 9.2 closes the adaptive loop: the SpawnDirector's governor is late-bound
+    // to the SAME shared telemetry instance (the director reads its `dps` each tick).
+    expect(ctx.spawnDirector.dpsTelemetry).toBe(ctx.dpsTelemetrySystem);
   });
 
   it('wires the XpOrbSystem (Story 8.1) with the shared drop-report sources + ship + scoreState', () => {

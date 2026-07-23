@@ -1654,6 +1654,7 @@ export class ArenaScene extends Phaser.Scene {
           `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
           `cards      : ${Object.keys(this.progressionState.ownedCards).length}  stat ${this.progressionState.debugStat}`,
           `dps        : ${this.dpsTelemetrySystem.dps.toFixed(1)}`,
+          `pressure   : ${this.spawnDirector.pressure.toFixed(2)}`,
         ].join('\n'),
       );
     }

@@ -6,6 +6,9 @@ import {
   SPAWN_DIRECTOR_MIN_INTERVAL_MS,
   SPAWN_DIRECTOR_RAMP_DURATION_MS,
   SPAWN_DIRECTOR_MAX_ACTIVE,
+  SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE,
+  SPAWN_DIRECTOR_MAX_PRESSURE,
+  SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS,
   SNAKE_SEGMENT_COUNT,
 } from '../config/constants.js';
 
@@ -449,6 +452,157 @@ describe('SpawnDirector — read-only spawnCount latch (Story 4.5)', () => {
     dir.fixedUpdate(SPAWN_DIRECTOR_BASE_INTERVAL_MS); // one interval → one spawn
     expect(a.system.spawnCalls).toBe(1); // a spawn actually occurred
     expect(dir.spawnCount).toBe(1);
+  });
+});
+
+// A mutable DPS-telemetry stub exposing only the `dps` field the governor reads.
+function dpsStub(dps = 0) {
+  return { dps };
+}
+
+describe('SpawnDirector — build-adaptive rate governor (Story 9.2)', () => {
+  it('no telemetry bound ≡ v1: pressure stays 0 and effectiveInterval == intervalAt every tick', () => {
+    const dir = new SpawnDirector(fourMix(), seqRng([0.0, 0.3, 0.6, 0.9]));
+    expect(dir.dpsTelemetry).toBe(null); // defaults to no source
+    for (let i = 0; i < 500; i++) {
+      dir.fixedUpdate(DT);
+      expect(dir.pressure).toBe(0);
+      // Effective interval is byte-identical to the pure v1 floor at pressure 0.
+      expect(dir.effectiveInterval).toBe(dir.intervalAt(dir.elapsedMs));
+    }
+  });
+
+  it('zero dps: pressure stays 0 and the effective interval is the v1 floor', () => {
+    const dir = new SpawnDirector(fourMix(), seqRng([0.0]));
+    dir.dpsTelemetry = dpsStub(0);
+    for (let i = 0; i < 300; i++) {
+      dir.fixedUpdate(DT);
+      expect(dir.pressure).toBe(0);
+      expect(dir.effectiveInterval).toBe(dir.intervalAt(dir.elapsedMs));
+    }
+  });
+
+  it('sustained high dps: pressure rises by ≤ slew·dt per tick, settles at the clamped target, interval shorter than the floor', () => {
+    // dps == reference → target pressure exactly 1.0 (below the MAX cap).
+    const dir = new SpawnDirector(fourMix(), seqRng([0.0, 0.5]));
+    dir.dpsTelemetry = dpsStub(SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE);
+    const target = 1.0;
+    const maxStep = SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS * DT;
+    for (let i = 0; i < 500; i++) {
+      const before = dir.pressure;
+      dir.fixedUpdate(DT);
+      // Each adjustment is bounded by the slew rate (with float slack).
+      expect(dir.pressure - before).toBeLessThanOrEqual(maxStep + 1e-9);
+      expect(dir.pressure).toBeGreaterThanOrEqual(before); // rising, never dips
+    }
+    // Settled exactly at the clamped target and holds there.
+    expect(dir.pressure).toBeCloseTo(target, 9);
+    // Effective interval is genuinely shorter than the v1 floor (more spawns).
+    const floor = dir.intervalAt(dir.elapsedMs);
+    expect(dir.effectiveInterval).toBeLessThan(floor);
+    expect(dir.effectiveInterval).toBeCloseTo(floor / (1 + target), 9);
+  });
+
+  it('sudden power spike: pressure climbs monotonically without overshoot and clamps at MAX_PRESSURE', () => {
+    // dps far above the reference so the raw target exceeds the cap → clamps to MAX.
+    const dir = new SpawnDirector(fourMix(), seqRng([0.0]));
+    dir.dpsTelemetry = dpsStub(SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE * 100);
+    let prev = dir.pressure;
+    for (let i = 0; i < 2000; i++) {
+      dir.fixedUpdate(DT);
+      // Monotonic non-decreasing and NEVER exceeds the clamped target (no overshoot).
+      expect(dir.pressure).toBeGreaterThanOrEqual(prev - 1e-12);
+      expect(dir.pressure).toBeLessThanOrEqual(SPAWN_DIRECTOR_MAX_PRESSURE + 1e-9);
+      prev = dir.pressure;
+    }
+    // Reached and holds the hard cap.
+    expect(dir.pressure).toBeCloseTo(SPAWN_DIRECTOR_MAX_PRESSURE, 9);
+  });
+
+  it('sudden power drop: pressure relaxes monotonically to exactly 0 and the interval returns to the exact v1 floor', () => {
+    const dir = new SpawnDirector(fourMix(), seqRng([0.0]));
+    const stub = dpsStub(SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE * 100);
+    dir.dpsTelemetry = stub;
+    // Drive pressure up to the cap first.
+    for (let i = 0; i < 2000; i++) dir.fixedUpdate(DT);
+    expect(dir.pressure).toBeGreaterThan(0);
+    // Power collapses to 0 (death reset / remnant consumption manifests as dps→0).
+    stub.dps = 0;
+    let prev = dir.pressure;
+    for (let i = 0; i < 2000; i++) {
+      dir.fixedUpdate(DT);
+      expect(dir.pressure).toBeLessThanOrEqual(prev + 1e-12); // monotonic relax
+      expect(dir.pressure).toBeGreaterThanOrEqual(0); // never negative
+      prev = dir.pressure;
+    }
+    // Relaxed back to EXACTLY 0 → the effective interval is the exact v1 floor again.
+    expect(dir.pressure).toBe(0);
+    expect(dir.effectiveInterval).toBe(dir.intervalAt(dir.elapsedMs));
+  });
+
+  it('framerate independence: fine vs coarse dt to the same elapsed give identical pressure + effective interval (constant target)', () => {
+    // A constant huge target so both runs are still slewing (not yet capped) at the
+    // compared elapsed — pressure accrues slew·Σdt, identical regardless of cadence.
+    const DPS = SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE * 100;
+    const totalMs = 1000; // reached two ways; slew·1000 = 0.2 < MAX, so still climbing
+
+    const fine = new SpawnDirector(fourMix(), seqRng([0.0]));
+    fine.dpsTelemetry = dpsStub(DPS);
+    for (let i = 0; i < 100; i++) fine.fixedUpdate(10); // 100 × 10ms
+
+    const coarse = new SpawnDirector(fourMix(), seqRng([0.0]));
+    coarse.dpsTelemetry = dpsStub(DPS);
+    for (let i = 0; i < 5; i++) coarse.fixedUpdate(200); // 5 × 200ms
+
+    expect(fine.elapsedMs).toBeCloseTo(totalMs, 9);
+    expect(coarse.elapsedMs).toBeCloseTo(totalMs, 9);
+    expect(fine.pressure).toBeCloseTo(coarse.pressure, 9);
+    expect(fine.effectiveInterval).toBeCloseTo(coarse.effectiveInterval, 9);
+    // Sanity: it really was still slewing (below the cap), so this is a real compare.
+    expect(fine.pressure).toBeGreaterThan(0);
+    expect(fine.pressure).toBeLessThan(SPAWN_DIRECTOR_MAX_PRESSURE);
+  });
+
+  it('sustained pressure shortens the REALIZED cadence: more spawns per window than pressure 0 (drives the accumulator loop, not just the getter)', () => {
+    const WINDOW_MS = 4000;
+    function spawnsOverWindow(dpsValue) {
+      const mix = fourMix();
+      const dir = new SpawnDirector(mix, seqRng([0.0, 0.3, 0.6, 0.9]));
+      if (dpsValue != null) dir.dpsTelemetry = dpsStub(dpsValue);
+      // Settle pressure first (well past the slew ramp) at a FIXED elapsed so both
+      // runs share the same v1 floor, then count spawns over the window from there.
+      dir._elapsedMs = SPAWN_DIRECTOR_RAMP_DURATION_MS; // interval at the MIN floor
+      for (let i = 0; i < 4000; i++) dir.fixedUpdate(DT); // reach steady-state pressure
+      const startSpawns = totalSpawns(mix);
+      const end = dir.elapsedMs + WINDOW_MS;
+      while (dir.elapsedMs < end) dir.fixedUpdate(DT);
+      return { spawns: totalSpawns(mix) - startSpawns, pressure: dir.pressure };
+    }
+    const base = spawnsOverWindow(null); // pressure 0 → v1 floor cadence
+    const pressured = spawnsOverWindow(SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE); // target 1.0
+    expect(base.pressure).toBe(0);
+    expect(pressured.pressure).toBeCloseTo(1.0, 6);
+    // Realized cadence genuinely rose (this is what fails if the loop ever stops
+    // dividing the interval by (1+pressure)).
+    expect(pressured.spawns).toBeGreaterThan(base.spawns);
+    // ≈ the floor/(1+pressure) ratio: pressure 1.0 → ~2× the spawns (±1 boundary slack).
+    expect(pressured.spawns).toBeGreaterThanOrEqual(base.spawns * 2 - 1);
+  });
+
+  it('zero per-tick allocation under a live governor: the _weights buffer stays stable over many governed ticks', () => {
+    const mix = fourMix();
+    const dir = new SpawnDirector(mix, seqRng([0.0, 0.3, 0.6, 0.9]));
+    dir.dpsTelemetry = dpsStub(SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE * 100); // pressure active
+    const ref = dir._weights;
+    const len = ref.length;
+    for (let i = 0; i < 2000; i++) dir.fixedUpdate(DT);
+    // The scratch buffer reference + length are unchanged — the governor added only
+    // scalar field updates, no new arrays/objects in the hot loop.
+    expect(dir._weights).toBe(ref);
+    expect(dir._weights.length).toBe(len);
+    // The governor genuinely engaged (pressure rose) and the loop actually spawned.
+    expect(dir.pressure).toBeGreaterThan(0);
+    expect(totalSpawns(mix)).toBeGreaterThan(0);
   });
 });
 

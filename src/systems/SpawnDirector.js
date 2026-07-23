@@ -4,6 +4,9 @@ import {
   SPAWN_DIRECTOR_MIN_INTERVAL_MS,
   SPAWN_DIRECTOR_RAMP_DURATION_MS,
   SPAWN_DIRECTOR_MAX_ACTIVE,
+  SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE,
+  SPAWN_DIRECTOR_MAX_PRESSURE,
+  SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS,
 } from '../config/constants.js';
 
 // SpawnDirector — the single escalating spawn authority for its governed
@@ -74,11 +77,35 @@ export class SpawnDirector extends System {
     // CollisionSystem.bulletKillCount. Purely observational: it never affects the
     // spawn cadence, cap, mix, or placement.
     this.spawnCount = 0;
+
+    // --- Build-adaptive rate governor (Story 9.2) ---------------------------
+    // Optional, late-bound player-DPS source (the Story 9.1 telemetry). Defaults
+    // to null and is wired by the scene AFTER both systems exist (the director
+    // runs earlier in the tick than the telemetry, so it reads LAST tick's dps —
+    // a harmless, causally-necessary one-tick lag). When null the governor reads
+    // dps as 0, `pressure` stays 0, and this director is byte-identical to v1.
+    this.dpsTelemetry = null;
+    // Public read-only pressure scalar in [0, SPAWN_DIRECTOR_MAX_PRESSURE]. It is
+    // slew-rate-limited toward a dps-derived target each fixed step (monotonic, no
+    // overshoot). The effective spawn interval is intervalAt(elapsed)/(1+pressure),
+    // so pressure only ever spawns EQUAL-OR-FASTER than the v1 floor (= at 0).
+    this.pressure = 0;
   }
 
   /** Elapsed sim time in ms (Σ of every dt seen). Read-only accessor. */
   get elapsedMs() {
     return this._elapsedMs;
+  }
+
+  /**
+   * Effective spawn interval (ms) after the adaptive governor: the v1 floor
+   * divided by (1 + pressure). Since pressure >= 0 this is always <= the v1
+   * interval (=== it exactly at pressure 0), so the v1 curve is a hard floor.
+   * Read-only observability + the value the accumulator loop consumes.
+   * @returns {number}
+   */
+  get effectiveInterval() {
+    return this.intervalAt(this._elapsedMs) / (1 + Math.max(0, this.pressure));
   }
 
   /** Current spawn interval (ms) at the director's current elapsed time. */
@@ -143,7 +170,31 @@ export class SpawnDirector extends System {
     // and a prior tick's spawns are never re-counted.
     this.spawnCount = 0;
 
-    const interval = this.intervalAt(this._elapsedMs);
+    // --- Build-adaptive rate governor (Story 9.2) ---------------------------
+    // Slew-rate-limit `pressure` toward a dps-derived target BEFORE the accumulator
+    // loop, so pressure + the effective interval are fixed for the whole tick. The
+    // dps source is optional/late-bound: null → dps 0 → target 0 → pressure relaxes
+    // toward (or stays at) 0, i.e. exact v1 behavior. Pure scalar math — no allocation.
+    const dps = this.dpsTelemetry ? this.dpsTelemetry.dps : 0;
+    let target = dps / SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE;
+    // Clamp to [0, MAX]. The `!(target >= 0)` form ALSO catches a non-finite dps
+    // (NaN/undefined from a mis-wired/renamed telemetry source): `NaN >= 0` is false,
+    // so target snaps to 0 (safe v1 fallback) instead of poisoning `pressure` — a NaN
+    // pressure would make the effective interval NaN and freeze all spawning. Also
+    // catches negatives. Keeps `pressure` provably finite in [0, MAX] every tick.
+    if (!(target >= 0)) target = 0;
+    else if (target > SPAWN_DIRECTOR_MAX_PRESSURE) target = SPAWN_DIRECTOR_MAX_PRESSURE;
+    const maxStep = SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS * dt;
+    const delta = target - this.pressure; // symmetric: rise and relax
+    if (delta > maxStep) this.pressure += maxStep;
+    else if (delta < -maxStep) this.pressure -= maxStep;
+    else this.pressure = target; // within one step → snap (no overshoot/oscillation)
+
+    // Effective interval = v1 floor / (1 + pressure ≥ 1), so it is always ≤ the v1
+    // floor (=== it at pressure 0). Computed once per tick from the fixed elapsed.
+    // Consume the getter so there is ONE source of truth (and one hang-proof
+    // division site) shared with the tests and observability.
+    const interval = this.effectiveInterval;
     while (this._accumMs >= interval) {
       this._accumMs -= interval;
       // Global cap gate: at/above the cap, skip the spawn and discard this

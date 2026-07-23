@@ -241,6 +241,13 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // it mutates no pool, score, xp, or player state. Nothing consumes `dps` yet.
   const dpsTelemetrySystem = new DpsTelemetrySystem(collisionSystem);
   world.addSystem(dpsTelemetrySystem);
+  // Close the adaptive loop (Story 9.2): late-bind the DPS telemetry into the
+  // SpawnDirector's build-adaptive rate governor now that the telemetry system
+  // exists (mirrors the snakeSystem.collisionSystem late-bind). The director runs
+  // EARLIER in the tick than the telemetry, so its governor reads LAST tick's dps
+  // — a harmless, causally-necessary one-tick lag. Until this is set the governor
+  // reads dps as 0 (pressure stays 0 → byte-identical v1 behavior).
+  spawnDirector.dpsTelemetry = dpsTelemetrySystem;
 
   // The shared player lifecycle state (playerState) was likewise created up in the
   // enemy section (Story 6.3): the MirrorReflectorSystem, the BlackHoleSystem (a
