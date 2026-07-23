@@ -1,0 +1,11 @@
+{
+  "DW-9": {
+    "answered_at": "2026-07-23",
+    "bundle_name": "",
+    "effect": "build",
+    "intent": "In GreenSquareSystem, replace the straight-line-flee + hard axis-clamp with a wall-aware evasion model that steers along/away from walls instead of parking against them, so squares stay mobile and must be actively cornered; update the greenSquareSystem.test.js wall-rest assertions accordingly.",
+    "key": "1",
+    "label": "Rework into agile evasion",
+    "resolution": ""
+  }
+}

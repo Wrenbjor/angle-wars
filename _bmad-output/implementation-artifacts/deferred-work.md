@@ -7,7 +7,9 @@ origin: review-budget-followup
 source_spec: `spec-5-4-input-config-and-gamepad-polish.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260719-113220-5a3e; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-23
+resolution: closed by human decision: The dw-gamepad-input-robustness sweep independently re-reviewed and hardened story 5-4's input surface, satisfying the intent of the deferred follow-up review.
+decision: 2026-07-23 Close (superseded) — The dw-gamepad-input-robustness sweep independently re-reviewed and hardened story 5-4's input surface, satisfying the intent of the deferred follow-up review.
 
 ### DW-2: The render-integration surface (Phaser.WEBGL enforcement, Scale.FIT/CENTER_BOTH letterboxing, Boot→Preload→Arena chain, and the render→sim decoupling wiring in ArenaScene.update) plus the ArenaScene sim-rate sampling math have zero automated coverage; consider extracting the sampling into a Phaser-free helper (unit-tested like the other core primitives) and/or adding a headless config-assertion smoke test for the scene setup.
 
@@ -79,6 +81,7 @@ source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-1-gree
 location: `GreenSquareSystem` (flee behavior)
 reason: Intent-alignment and adversarial layers converged: the diff faithfully implements the spec's committed reading (straight-line flee + arena clamp; the two wall-clamp tests assert a fleeing square resting exactly at MIN/MAX bounds is correct), which satisfies AC1's literal primary clause "flees away from the player" but not the softer "moving agilely / must be cornered" reading. Not a defect against the story's literal ACs; real enough to revisit in playtest tuning and when Story 2.5 introduces concurrency caps/despawn.
 status: open
+decision: 2026-07-23 Rework into agile evasion — In GreenSquareSystem, replace the straight-line-flee + hard axis-clamp with a wall-aware evasion model that steers along/away from walls instead of parking against them, so squares stay mobile and must be actively cornered; update the greenSquareSystem.test.js wall-rest assertions accordingly.
 
 ### DW-10: `GreenSquareSystem._spawnOne` (like the pre-existing `EnemySystem._spawnOne`) places a new square at a random arena-edge point with no check against the ship's current position and spawns after the behavior pass, so a fresh square is a live lethal collider on its first tick and can appear on top of a wall-hugging player for an unavoidable death; safe-spawn placement (avoid the ship's position) is explicitly owned by Story 2.6 (Enemy Spawn Telegraph) per the epic.
 
