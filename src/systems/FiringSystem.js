@@ -12,7 +12,13 @@ import {
   PLAYER_BULLET_MIN_DAMAGE,
   BULLET_SPEED,
   BULLET_POOL_PREWARM,
+  SPREAD_MAX_WAYS,
+  SPREAD_MAX_ARC_DEG,
 } from '../config/constants.js';
+
+// Degrees → radians, for the volley cone (Story 10.3). Module-level so the conversion
+// is a constant multiply, never a per-build expression.
+const DEG_TO_RAD = Math.PI / 180;
 
 /**
  * True when `v` is a PLAIN object — an object literal or a null-prototype object, and
@@ -71,6 +77,21 @@ function describeBadStore(v) {
 //     PLAYER_BULLET_BASE_DAMAGE × damageMult (so an in-flight bullet keeps the
 //     damage it was fired with).
 // With no store (or a base store) every behavior is identical to pre-10.2.
+//
+// Story 10.3 (Spread Cannon) turns a single shot into a VOLLEY, reading two more fields
+// off the same live store:
+//   - spreadWays   → bullets emitted per volley (sanitized: anything < 2 is the single
+//     shot, so an unowned Spread Cannon is exactly the pre-10.3 gun);
+//   - spreadArcDeg → the volley's TOTAL cone angle in degrees, CENTERED on the aim
+//     direction — NOT the gap between adjacent bullets. The `ways` bullets are spaced
+//     EVENLY across that cone (3 ways / 12° → aim −6°, 0°, +6°), so every odd way count
+//     keeps one bullet travelling exactly along aim.
+// Each bullet's direction is the LIVE aim unit vector rotated by its own cached offset,
+// and it spawns from the ship nose ALONG ITS OWN direction at BULLET_SPEED. The cos/sin
+// offset table is rebuilt only when `(ways, arcDeg)` changes — i.e. on a card pick —
+// into preallocated buffers, so the hot loop still allocates nothing. Both fields are
+// clamped by SPREAD_MAX_WAYS / SPREAD_MAX_ARC_DEG, which are loop-termination SAFETY
+// guards in the same shape as FIRE_INTERVAL_FLOOR_MS, never balance levers.
 export class FiringSystem extends System {
   /**
    * @param {{x:number,y:number,radius:number}} ship Aim origin (fire from nose).
@@ -157,13 +178,38 @@ export class FiringSystem extends System {
     // delay — at base this is exactly FIRE_INTERVAL_MS, as before Story 10.2.
     this._accumMs = this._fireIntervalMs();
 
-    // Public read-only observability latch (Story 4.5): the number of bullets THIS
+    // Public read-only observability latch (Story 4.5): the number of BULLETS THIS
     // system spawned this tick. Reset at the top of every fixedUpdate (so an empty
     // tick reports 0 and a shot is never counted twice), then ++ per bullet spawned.
-    // Read by the AudioDirectorSystem (fire SFX source) — mirrors
-    // CollisionSystem.bulletKillCount. Purely observational: it never affects the
-    // fire cadence, cap, mix, or placement.
+    // Mirrors CollisionSystem.bulletKillCount. Purely observational: it never affects
+    // the fire cadence, cap, mix, or placement.
+    //
+    // Story 10.3 kept this honest to its name — with Spread Cannon owned, a single
+    // trigger-pull spawns `ways` bullets and this counts all of them, which is the whole
+    // point of the story. The AUDIO cue therefore moved to `volleysFiredCount` below.
     this.shotsFiredCount = 0;
+    // Public read-only observability latch (Story 10.3): the number of fire EVENTS —
+    // VOLLEYS — this tick, incremented once per cadence interval regardless of how many
+    // bullets that volley emitted. Reset alongside shotsFiredCount every tick.
+    //
+    // This, not shotsFiredCount, is the AudioDirectorSystem's fire cue: one trigger-pull
+    // is one gunshot. Left on the bullet count, a 9-way build would peg the
+    // AUDIO_SFX_FIRE_MAX_PER_FRAME cap on every single tick.
+    this.volleysFiredCount = 0;
+
+    // --- Story 10.3 cached per-bullet rotation table ---------------------------
+    // Parallel cos/sin buffers holding each bullet's rotation offset from the aim
+    // direction, preallocated at SPREAD_MAX_WAYS so a rebuild writes in place and the
+    // fixed step never allocates. Rebuilt ONLY when `(ways, arcDeg)` differs from the
+    // values the table was last built for — i.e. on a card pick, never per tick.
+    this._offsetCos = new Float64Array(SPREAD_MAX_WAYS);
+    this._offsetSin = new Float64Array(SPREAD_MAX_WAYS);
+    // The (ways, arcDeg) pair the table currently holds. Seeded to -1/-1 (a pair no
+    // sanitizer can produce) so the first real volley always builds.
+    this._tableWays = -1;
+    this._tableArcDeg = -1;
+    // Rebuild counter — observability only (proves the table is NOT rebuilt per tick).
+    this._tableBuilds = 0;
   }
 
   /**
@@ -182,6 +228,80 @@ export class FiringSystem extends System {
     if (ps === null) return 1;
     const v = ps[key];
     return Number.isFinite(v) && v > 0 ? v : 1;
+  }
+
+  /**
+   * The sanitized number of bullets in one volley (Story 10.3) — an INTEGER in
+   * [1, SPREAD_MAX_WAYS]. Mirrors `_mult`: the value comes off the shared store, so a
+   * missing store, a missing field, or junk (NaN, Infinity, negative, fractional, 1e9)
+   * must resolve to something the fan loop can terminate on rather than throw.
+   *   - no store / non-finite / < 2  → 1, the pre-10.3 SINGLE shot;
+   *   - fractional                   → floored to a whole bullet count;
+   *   - absurdly large               → clamped to SPREAD_MAX_WAYS (a SAFETY guard: an
+   *     unclamped 1e9 would ask the loop for a billion pool.acquire() calls inside one
+   *     fixed step).
+   * Returns a number; allocates nothing.
+   * @returns {number} the sanitized way count (integer, 1..SPREAD_MAX_WAYS).
+   */
+  _spreadWays() {
+    const ps = this.playerStats;
+    if (ps === null) return 1;
+    const v = ps.spreadWays;
+    if (!Number.isFinite(v)) return 1;
+    const ways = Math.floor(v);
+    if (ways < 2) return 1;
+    return ways > SPREAD_MAX_WAYS ? SPREAD_MAX_WAYS : ways;
+  }
+
+  /**
+   * The sanitized TOTAL cone angle (degrees) of a volley, centered on aim (Story 10.3)
+   * — a finite number in [0, SPREAD_MAX_ARC_DEG]. Sanitized on the same terms as
+   * `_spreadWays`: a missing store/field, a non-finite value, or a non-positive one all
+   * resolve to 0° (every bullet travels along aim — degenerate but well-defined, never a
+   * NaN offset stamped into the rotation table), and an absurd value clamps to
+   * SPREAD_MAX_ARC_DEG.
+   *
+   * The clamp here is GEOMETRIC, not numeric: cos/sin are bounded for every finite input,
+   * and the non-finite check above has already run, so no arc value is numerically
+   * dangerous. It exists so a corrupted arc still yields a forward-facing volley — see
+   * the constant. Loop termination is guarded by SPREAD_MAX_WAYS alone.
+   * Allocates nothing.
+   * @returns {number} the sanitized total cone angle in degrees (0..SPREAD_MAX_ARC_DEG).
+   */
+  _spreadArcDeg() {
+    const ps = this.playerStats;
+    if (ps === null) return 0;
+    const v = ps.spreadArcDeg;
+    if (!Number.isFinite(v) || v <= 0) return 0;
+    return v > SPREAD_MAX_ARC_DEG ? SPREAD_MAX_ARC_DEG : v;
+  }
+
+  /**
+   * Ensure the cached per-bullet rotation table matches `(ways, arcDeg)`, rebuilding it
+   * IN PLACE only when the pair changed since the last build (a card pick, effectively
+   * — never per tick). Both arguments must already be sanitized, with `ways >= 2`.
+   *
+   * The offsets are spaced EVENLY across the TOTAL cone and centered on aim: bullet `i`
+   * sits at `(i - (ways-1)/2) × arc/(ways-1)`. Written that way rather than as
+   * `-arc/2 + i×step` so the CENTER bullet of an odd volley gets an offset of EXACTLY 0
+   * — its direction is then bit-identical to the un-spread aim vector, not a
+   * float-noise rotation of it.
+   * @param {number} ways   integer >= 2, <= SPREAD_MAX_WAYS
+   * @param {number} arcDeg finite >= 0, <= SPREAD_MAX_ARC_DEG
+   * @returns {void}
+   */
+  _ensureOffsetTable(ways, arcDeg) {
+    if (ways === this._tableWays && arcDeg === this._tableArcDeg) return;
+    this._tableWays = ways;
+    this._tableArcDeg = arcDeg;
+    this._tableBuilds++;
+    const step = (arcDeg * DEG_TO_RAD) / (ways - 1);
+    const half = (ways - 1) / 2;
+    for (let i = 0; i < ways; i++) {
+      const off = (i - half) * step;
+      this._offsetCos[i] = Math.cos(off);
+      this._offsetSin[i] = Math.sin(off);
+    }
   }
 
   /**
@@ -233,9 +353,10 @@ export class FiringSystem extends System {
     const dtSec = dt / 1000;
     const pool = this.bulletPool;
 
-    // Reset the per-tick shots-fired report (Story 4.5) so a tick with no spawns
-    // reports 0 and a prior tick's shots are never re-counted.
+    // Reset the per-tick fire reports (Story 4.5 bullets, Story 10.3 volleys) so a tick
+    // with no spawns reports 0 on both and a prior tick's shots are never re-counted.
     this.shotsFiredCount = 0;
+    this.volleysFiredCount = 0;
 
     // 1. Advance existing bullets; collect any that have left the arena. Runs
     //    even when aim is inactive so in-flight bullets keep travelling. Stash
@@ -286,15 +407,50 @@ export class FiringSystem extends System {
       // burst" promise below true at every multiplier.
       if (this._accumMs > interval) this._accumMs = interval;
       this._accumMs += dt;
+      // Volley shape, resolved once per tick from the live shared store (Story 10.3) and
+      // sanitized so the fan loop below is always bounded. `ways <= 1` is the pre-10.3
+      // single shot — the overwhelmingly common case (no Spread Cannon owned) — and the
+      // table is only touched when there is actually a cone to build.
+      const ways = this._spreadWays();
+      if (ways > 1) this._ensureOffsetTable(ways, this._spreadArcDeg());
       while (this._accumMs >= interval) {
-        const b = pool.acquire();
-        // Emerge from the ship nose along the aim direction.
-        b.x = this.ship.x + input.aimX * this.ship.radius;
-        b.y = this.ship.y + input.aimY * this.ship.radius;
-        b.vx = input.aimX * BULLET_SPEED;
-        b.vy = input.aimY * BULLET_SPEED;
-        b.damage = damage; // Story 10.2 — stamped ONCE, at spawn
-        this.shotsFiredCount++; // Story 4.5 read-only fire-event counter
+        if (ways <= 1) {
+          // BASE VOLLEY — the literal pre-10.3 code path, kept verbatim rather than
+          // folded into a one-iteration case of the fan loop, so "no Spread Cannon owned
+          // behaves byte-for-byte as before" is true by construction and not by review.
+          const b = pool.acquire();
+          // Emerge from the ship nose along the aim direction.
+          b.x = this.ship.x + input.aimX * this.ship.radius;
+          b.y = this.ship.y + input.aimY * this.ship.radius;
+          b.vx = input.aimX * BULLET_SPEED;
+          b.vy = input.aimY * BULLET_SPEED;
+          b.damage = damage; // Story 10.2 — stamped ONCE, at spawn
+          this.shotsFiredCount++; // Story 4.5 read-only bullet counter
+        } else {
+          // SPREAD VOLLEY — fan `ways` bullets across the cached cone. Each bullet's
+          // direction is the LIVE aim unit vector rotated by its own cached offset (the
+          // standard 2-D rotation), so it stays unit-length and the volley re-aims with
+          // the stick. It emerges from the nose along ITS OWN direction, not the aim
+          // direction, so the volley leaves the ship as a fan rather than a line.
+          for (let i = 0; i < ways; i++) {
+            const c = this._offsetCos[i];
+            const s = this._offsetSin[i];
+            const dx = input.aimX * c - input.aimY * s;
+            const dy = input.aimX * s + input.aimY * c;
+            const b = pool.acquire();
+            b.x = this.ship.x + dx * this.ship.radius;
+            b.y = this.ship.y + dy * this.ship.radius;
+            b.vx = dx * BULLET_SPEED;
+            b.vy = dy * BULLET_SPEED;
+            // Story 10.2's stamp-at-acquire obligation (see entities/Bullet.js): EVERY
+            // bullet in the volley, because a RECYCLED instance still carries the
+            // previous shot's damage and the collision-side fallback cannot detect it.
+            b.damage = damage;
+            this.shotsFiredCount++;
+          }
+        }
+        // One trigger-pull = one fire EVENT, whatever the bullet count (the audio cue).
+        this.volleysFiredCount++;
         this._accumMs -= interval;
       }
     } else {

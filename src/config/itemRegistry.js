@@ -13,7 +13,8 @@
 // keep working unchanged — id/rarity/track carry the draw, and `title` is the label
 // the overlay renders):
 //   { id, name, title, track:'offense'|'defense', rarity, maxLevel: ITEM_MAX_LEVEL,
-//     levels: [{ level, desc, stats }] ×5, fusion: {partner, epic} | null }
+//     levels: [{ level, desc, stats }] ×5, guaranteeFromLevel: number | null,
+//     fusion: {partner, epic} | null }
 //   - id      : stable unique key; ownedCards is keyed by it.
 //   - name    : human-readable item name (canonical).
 //   - title   : the label the level-up overlay draws (aliased to name so the overlay
@@ -29,24 +30,42 @@
 //               map the fold applies, authored as FRACTIONAL BONUSES onto the fold's
 //               base (see the AUTHORING CONVENTION in state/PlayerStats.js). Each
 //               item's real per-level effect NUMBERS and gameplay-seam wiring land in
-//               its OWN story: Overcharge 10.2 (AUTHORED below), Spread Cannon 10.3,
-//               Nanite Shield 10.4, Afterburner 10.5 — those three still carry EMPTY
-//               `stats: {}` and contribute nothing to the fold until their story lands.
+//               its OWN story: Overcharge 10.2 and Spread Cannon 10.3 (both AUTHORED
+//               below), Nanite Shield 10.4, Afterburner 10.5 — those last two still
+//               carry EMPTY `stats: {}` and contribute nothing to the fold until their
+//               story lands.
+//
+//               ⚠ TOTALS-vs-DELTA-DESC TRAP. `stats` is the TOTAL at that level; `desc`
+//               is player-facing prose and may read as a DELTA. Spread Cannon L3's desc
+//               is '+30% fire rate', but its `stats` must ALSO restate the L2 spread
+//               (5 ways / 16°) — otherwise picking L3 would silently REMOVE the spread.
+//               Restated values are deliberate content, not copy-paste slips, and the
+//               `desc` strings are never rewritten to match the totals.
+//   - guaranteeFromLevel
+//             : the RUN level from which the card offer RESERVES this item a slot while
+//               it is still UNOWNED (level 0) — a `number`, or `null` for an item with
+//               no guarantee. Read by systems/cardOffer.js BEFORE the weighted loop, so
+//               it consumes no rng() draw. It is EXCLUSION-SUBORDINATE: it only ever
+//               reserves a slot for an item whose ordinary `cardWeight` is already > 0,
+//               so banished / maxed / remnant / unowned-in-a-full-track still exclude
+//               it. Present on EVERY entry (null where there is no guarantee) so the
+//               shape is uniform.
 //   - fusion  : {partner, epic} — this item at Lv5 + `partner` at Lv3 unlocks `epic`
 //               (PRD §13.5); or null when it has no fusion. Tracked + exposed here;
 //               Epic 12 owns the actual fusion consumption.
 
-import { ITEM_MAX_LEVEL } from './constants.js';
+import { ITEM_MAX_LEVEL, SPREAD_CANNON_GUARANTEE_LEVEL } from './constants.js';
 
 /**
  * The four Epic-10 items (PRD §13.3 offense / §13.4 defense) as data-driven
  * definitions. Frozen (the array and every entry + nested level/fusion object) so no
  * consumer can mutate the shared registry. Effect NUMBERS are deferred to each item's
- * own story — Overcharge's are authored (Story 10.2); the other three `stats` maps
- * are still empty.
+ * own story — Overcharge's (Story 10.2) and Spread Cannon's (Story 10.3) are authored;
+ * the two defense `stats` maps are still empty.
  * @type {ReadonlyArray<{ id: string, name: string, title: string,
  *   track: 'offense'|'defense', rarity: number, maxLevel: number,
  *   levels: ReadonlyArray<{ level: number, desc: string, stats: Object<string,number> }>,
+ *   guaranteeFromLevel: number | null,
  *   fusion: { partner: string, epic: string } | null }>}
  */
 export const ITEM_REGISTRY = Object.freeze([
@@ -90,6 +109,8 @@ export const ITEM_REGISTRY = Object.freeze([
         stats: Object.freeze({ damageMult: 0.6, fireRateMult: 0.4 }),
       }),
     ]),
+    // No offer guarantee — Overcharge is drawn purely on its weight.
+    guaranteeFromLevel: null,
     // Overcharge Lv5 + any 2 offense items at Lv5 → Critical Resonance (PRD §13.5).
     // The "any 2 offense" condition has no single partner id; Epic 12 resolves it.
     fusion: Object.freeze({ partner: 'any-2-offense-lv5', epic: 'critical-resonance' }),
@@ -101,13 +122,61 @@ export const ITEM_REGISTRY = Object.freeze([
     track: 'offense',
     rarity: 4,
     maxLevel: ITEM_MAX_LEVEL,
+    // Story 10.3 — the real per-level NUMBERS (PRD §13.3). Two new fold fields:
+    //   - spreadWays   : bullets per volley (additive/count field, base 0 — an unowned
+    //                    Spread Cannon leaves the single-bullet volley untouched);
+    //   - spreadArcDeg : the volley's TOTAL cone angle in degrees, CENTERED on the aim
+    //                    direction — NOT the gap between adjacent bullets. Bullets are
+    //                    spaced evenly across it, so a 3-way / 12° volley fires at aim
+    //                    −6°, 0°, +6°. (PRD §13.5's Sunburst "full 360° ring" is the
+    //                    same author using degrees for a volley's TOTAL coverage.)
+    // The fire-rate and damage rungs reuse Story 10.2's already-shipped seams
+    // (fireRateMult → effective interval, damageMult → stamped bullet damage) and stack
+    // ADDITIVELY with Overcharge.
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header): L3 restates
+    // the L2 spread, L4 restates the L3 fire rate, L5 restates the L4 arc AND the L3
+    // fire rate — even though each `desc` reads as a delta. The saturating shape (a 22°
+    // cone at both L4 and L5, so the volley grows DENSER rather than wider) is
+    // deliberate content: more DPS down the aim line, not a wall of near-perpendicular
+    // bullets.
     levels: Object.freeze([
-      Object.freeze({ level: 1, desc: '3-way spread / 12°', stats: Object.freeze({}) }),
-      Object.freeze({ level: 2, desc: '5-way spread / 16°', stats: Object.freeze({}) }),
-      Object.freeze({ level: 3, desc: '+30% fire rate', stats: Object.freeze({}) }),
-      Object.freeze({ level: 4, desc: '7-way spread / 22°', stats: Object.freeze({}) }),
-      Object.freeze({ level: 5, desc: '9-way spread / +35% damage', stats: Object.freeze({}) }),
+      Object.freeze({
+        level: 1,
+        desc: '3-way spread / 12°',
+        stats: Object.freeze({ spreadWays: 3, spreadArcDeg: 12 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '5-way spread / 16°',
+        stats: Object.freeze({ spreadWays: 5, spreadArcDeg: 16 }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+30% fire rate',
+        stats: Object.freeze({ spreadWays: 5, spreadArcDeg: 16, fireRateMult: 0.3 }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '7-way spread / 22°',
+        stats: Object.freeze({ spreadWays: 7, spreadArcDeg: 22, fireRateMult: 0.3 }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '9-way spread / +35% damage',
+        stats: Object.freeze({
+          spreadWays: 9,
+          spreadArcDeg: 22,
+          fireRateMult: 0.3,
+          damageMult: 0.35,
+        }),
+      }),
     ]),
+    // PRD §13.3: Spread Cannon is the base-weapon evolution and is ALWAYS offered by run
+    // level 3 while still unowned — the onboarding beat that makes a run's default firing
+    // reliably scale into the mid-game. Subordinate to every exclusion (see the field's
+    // note in the entry-shape header).
+    guaranteeFromLevel: SPREAD_CANNON_GUARANTEE_LEVEL,
     // Spread Cannon Lv5 + Piercing Lance Lv3 → Sunburst (PRD §13.5).
     fusion: Object.freeze({ partner: 'piercing-lance', epic: 'sunburst' }),
   }),
@@ -126,6 +195,8 @@ export const ITEM_REGISTRY = Object.freeze([
       Object.freeze({ level: 4, desc: 'Recharge 10s', stats: Object.freeze({}) }),
       Object.freeze({ level: 5, desc: '3 charges + knockback pulse', stats: Object.freeze({}) }),
     ]),
+    // No offer guarantee — Nanite Shield is drawn purely on its weight.
+    guaranteeFromLevel: null,
     // Nanite Shield Lv5 + Afterburner Lv3 → Phase Armor (PRD §13.5).
     fusion: Object.freeze({ partner: 'afterburner', epic: 'phase-armor' }),
   }),
@@ -143,6 +214,8 @@ export const ITEM_REGISTRY = Object.freeze([
       Object.freeze({ level: 4, desc: '2s dash cooldown + dash damages on contact', stats: Object.freeze({}) }),
       Object.freeze({ level: 5, desc: '+35% speed + burning dash trail', stats: Object.freeze({}) }),
     ]),
+    // No offer guarantee — Afterburner is drawn purely on its weight.
+    guaranteeFromLevel: null,
     // Afterburner Lv5 + Nanite Shield Lv3 → Slipstream (PRD §13.5).
     fusion: Object.freeze({ partner: 'nanite-shield', epic: 'slipstream' }),
   }),

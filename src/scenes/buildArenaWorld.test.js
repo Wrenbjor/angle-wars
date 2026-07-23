@@ -18,7 +18,14 @@ import {
   GOVERNOR_BOOST_DPS,
   GOVERNOR_BOOST_DURATION_MS,
   SPAWN_DIRECTOR_MAX_PRESSURE,
+  BULLET_SPEED,
+  BULLET_POOL_PREWARM,
+  SPREAD_CANNON_GUARANTEE_LEVEL,
+  ARENA_WIDTH,
+  ARENA_HEIGHT,
+  ARENA_BORDER_INSET,
 } from '../config/constants.js';
+import { xpToNextLevel } from '../systems/LevelSystem.js';
 
 // buildArenaWorld wiring coverage. The scene's create() inlines this exact build
 // but cannot be unit-tested (it needs a live Phaser context); the factory is the
@@ -555,5 +562,269 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // never relaxed (asymmetric/stuck-high) fails here.
     expect(spawnDirector.pressure).toBeLessThan(peakPressure * 0.5);
     expect(spawnDirector.pressure).toBeLessThan(0.05);
+  });
+});
+
+describe('buildArenaWorld — Spread Cannon through the ASSEMBLED world (Story 10.3)', () => {
+  // The story's headline observable at the surface the intent states it at: a card pick
+  // folds the SHARED playerStats, and the very next volley through the REAL FiringSystem
+  // fires that level's bullet count across that level's cone.
+  //
+  // The FIRST test drives the whole chain for real — XP → level crossing → the drawn
+  // offer → queueSelection → LevelUpSystem's fold → the volley — so a change to how a
+  // selection is applied fails here. The SECOND constructs the Lv5+Lv5 owned state
+  // directly: it is a pool-capacity (NFR2) test that needs a maxed build, not a claim
+  // about the pick path, and reaching Lv5 on two items through real XP would add a long
+  // setup that pins nothing the first test does not already cover.
+
+  // The SIGNED angle (degrees) of a bullet's velocity relative to the aim direction.
+  function offsetDeg(bullet, ax, ay) {
+    const dx = bullet.vx / BULLET_SPEED;
+    const dy = bullet.vy / BULLET_SPEED;
+    return (Math.atan2(ax * dy - ay * dx, ax * dx + ay * dy) * 180) / Math.PI;
+  }
+
+  function activeBullets(ctx) {
+    const out = [];
+    ctx.firingSystem.bulletPool.forEachActive((b) => out.push(b));
+    return out;
+  }
+
+  it('offer → pick → fold → volley: the REAL level-up path yields 3 bullets at −6° / 0° / +6°', () => {
+    // The story's headline chain, driven END TO END through the assembled world. Nothing
+    // here reimplements the pick: the level crossing comes from real XP through the real
+    // LevelSystem, the offer comes from the real LevelUpSystem draw (including the Story
+    // 10.3 guarantee), the pick goes through the real queueSelection latch, and the fold
+    // is the one LevelUpSystem runs on that selection. A change to how a selection is
+    // applied breaks THIS test, which is exactly what a hand-written
+    // `ownedCards[id] = 1; recomputePlayerStats(...)` could not do.
+    const ctx = buildArenaWorld();
+    const ax = 0;
+    const ay = 1;
+
+    // Baseline: the assembled world still fires ONE bullet with nothing owned.
+    ctx.inputState.setAim(ax, ay);
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+    expect(activeBullets(ctx)).toHaveLength(1);
+    expect(ctx.firingSystem.volleysFiredCount).toBe(1);
+    expect(ctx.firingSystem.shotsFiredCount).toBe(1);
+    const systemsBefore = ctx.world.systems.slice();
+
+    // Bank enough REAL xp to cross into the guarantee level, and let LevelSystem derive
+    // it. (xp is the run economy the orb pickups feed; the level is a pure function of
+    // it, so this is the same input path a played run produces.)
+    let need = 0;
+    for (let l = 1; l < SPREAD_CANNON_GUARANTEE_LEVEL; l++) need += xpToNextLevel(l);
+    ctx.scoreState.xp = need;
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+    expect(ctx.levelSystem.level).toBe(SPREAD_CANNON_GUARANTEE_LEVEL);
+    expect(ctx.levelUpSystem.pendingSelections).toBeGreaterThanOrEqual(1);
+
+    // The GUARANTEE put Spread Cannon in the offer the real draw produced — the offer the
+    // overlay would render. Pick it through the real latch.
+    const slot = ctx.levelUpSystem.currentOffer.findIndex(
+      (c) => c.id === 'spread-cannon',
+    );
+    expect(slot).toBeGreaterThanOrEqual(0);
+    expect(ctx.playerStats.spreadWays).toBe(0); // not folded yet
+    ctx.levelUpSystem.queueSelection(slot);
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    // The real pick recorded ownership and ran the real fold into the SHARED store.
+    expect(ctx.progressionState.ownedCards['spread-cannon']).toBe(1);
+    expect(ctx.playerStats.spreadWays).toBe(3);
+    expect(ctx.playerStats.spreadArcDeg).toBe(12);
+
+    // No system was replaced or re-added by the pick — the SAME instances still run.
+    expect(ctx.world.systems).toHaveLength(systemsBefore.length);
+    systemsBefore.forEach((s, i) => expect(ctx.world.systems[i]).toBe(s));
+
+    // Step the way the REAL loop does (FixedTimestep only ever calls
+    // world.fixedUpdate(stepMs)) until the next volley lands.
+    // Derived from the constants, not a magic literal: a volley is due within one
+    // interval, so ceil(interval / step) + 1 ticks always contains one. A hardcoded
+    // count would start failing as a "the fan is broken" assertion if FIRE_INTERVAL_MS
+    // were raised, pointing the next maintainer at FiringSystem instead of the wait.
+    const maxWaitTicks = Math.ceil(FIRE_INTERVAL_MS / FIXED_STEP_MS) + 1;
+    let volley = [];
+    for (let i = 0; i < maxWaitTicks; i++) {
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      if (ctx.firingSystem.volleysFiredCount > 0) {
+        // The volley is the LAST shotsFiredCount instances in the pool's active-set
+        // order (Set iteration is insertion order, and FiringSystem acquires this
+        // volley's bullets last within the tick, in fan order).
+        //
+        // NOT a set-difference against a pre-tick snapshot: the pool is LIFO
+        // (Pool.release pushes, Pool.acquire pops) and FiringSystem releases expired
+        // bullets BEFORE it spawns in the same fixedUpdate — so a bullet retired on
+        // the volley tick is the FIRST instance the volley re-acquires. It would be
+        // present in the snapshot, get filtered out of its own volley, and redden
+        // this as `expect([...2 items]).toHaveLength(3)` — an assertion pointing at
+        // the spread fan rather than at the identification. That masking depends
+        // only on flight time exceeding the wait, so a smaller arena, a faster
+        // bullet, or a moved spawn point would expose it.
+        const n = ctx.firingSystem.shotsFiredCount;
+        volley = activeBullets(ctx).slice(-n);
+        break; // stop on the spawn tick — the counters are per-tick latches
+      }
+    }
+    // ONE volley, THREE bullets — the counter split the audio cue depends on.
+    expect(ctx.firingSystem.volleysFiredCount).toBe(1);
+    expect(ctx.firingSystem.shotsFiredCount).toBe(3);
+    expect(volley).toHaveLength(3);
+
+    const offsets = volley.map((b) => offsetDeg(b, ax, ay)).sort((p, q) => p - q);
+    expect(offsets[0]).toBeCloseTo(-6, 9);
+    expect(offsets[1]).toBeCloseTo(0, 9);
+    expect(offsets[2]).toBeCloseTo(6, 9);
+    for (const b of volley) {
+      // Unit-speed, and the damage stamp the real FiringSystem applied — not re-derived.
+      expect(Math.hypot(b.vx, b.vy)).toBeCloseTo(BULLET_SPEED, 9);
+      expect(b.damage).toBe(PLAYER_BULLET_BASE_DAMAGE);
+    }
+  });
+
+  it('Spread Cannon Lv5 + Overcharge Lv5: 9 bullets at 1.95 damage, pool never runs the factory', () => {
+    // Seeded: this case asserts an NFR2 pool invariant across 600 ticks of a LIVE world
+    // (enemy spawns, black-hole placement, reflector placement all read the injected
+    // rng). Left on Math.random the invariant would be checked against a different
+    // world every run — detection of a future overrun becomes statistical, i.e. a
+    // flaky red on the story's headline invariant that a re-run makes go away.
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ctx.progressionState.ownedCards['spread-cannon'] = 5;
+    ctx.progressionState.ownedCards.overcharge = 5;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+    // The two items stack ADDITIVELY on the shared fire rungs.
+    expect(ctx.playerStats.fireRateMult).toBeCloseTo(1.7, 10);
+    expect(ctx.playerStats.damageMult).toBeCloseTo(1.95, 10);
+    expect(ctx.playerStats.spreadWays).toBe(9);
+
+    const pool = ctx.firingSystem.bulletPool;
+    const prewarmTotal = pool.activeCount + pool.freeCount;
+    expect(prewarmTotal).toBe(BULLET_POOL_PREWARM);
+
+    ctx.inputState.setAim(0, 1);
+    let sawVolley = false;
+    let cuedVolleys = 0;
+    let cuedFire = 0;
+    let peak = 0;
+    for (let i = 0; i < 600; i++) {
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      if (ctx.firingSystem.volleysFiredCount > 0) {
+        sawVolley = true;
+        expect(ctx.firingSystem.shotsFiredCount).toBe(
+          ctx.firingSystem.volleysFiredCount * 9,
+        );
+        cuedVolleys += ctx.firingSystem.volleysFiredCount;
+      }
+      // The fire CUE through the REAL seam: buildArenaWorld constructs the
+      // AudioDirectorSystem over this same FiringSystem instance, so consuming the
+      // latch here reads what the render loop would play. Asserting it in the
+      // assembled world (not against a hand-built {shotsFiredCount, volleysFiredCount}
+      // literal) is what makes the counter NAME load-bearing: renaming or dropping
+      // volleysFiredCount sends the director down its Number.isFinite fallback to the
+      // per-BULLET count, which would make this 9x and fail here instead of silently
+      // shipping 9 gunshots per trigger-pull (the story's explicit "Never").
+      cuedFire += ctx.audioDirector.consumeSfxRequests().fire;
+      // NFR2 through the ASSEMBLED pipeline: no system in the real world order makes the
+      // Pool factory run at the worst authorable build. NOTE this is a WIRING check, not
+      // a sizing pin — createPlayerShip() spawns at the arena CENTRE (ARENA_WIDTH/2,
+      // ARENA_HEIGHT/2) and this aims straight down, so the flight is a half-height run
+      // and the measured peak in-flight here is ~63, far under the prewarm. The prewarm's
+      // SIZING is pinned in firingSystem.test.js, which fires along the inset diagonal
+      // and the arena width.
+      expect(pool.activeCount + pool.freeCount).toBe(prewarmTotal);
+      peak = Math.max(peak, pool.activeCount);
+    }
+    expect(sawVolley).toBe(true);
+    // ONE gunshot per trigger-pull across the whole run, at 9 bullets per pull.
+    expect(cuedVolleys).toBeGreaterThan(0);
+    expect(cuedFire).toBe(cuedVolleys);
+    // Pin the geometry claim the comment above makes, so it cannot silently drift into
+    // a long-flight case (which would make this a sizing pin it is not documented as).
+    expect(peak).toBeLessThan(BULLET_POOL_PREWARM / 4);
+    for (const b of activeBullets(ctx)) expect(b.damage).toBeCloseTo(1.95, 10);
+  });
+
+  it('a 9-way build with mirrors and a black hole live still never runs the pool factory', () => {
+    // The prewarm's derivation is a STRAIGHT-LINE flight bound; its stated margin exists
+    // for the two systems that break that assumption — MirrorReflectorSystem reflects
+    // player bullets WITHOUT consuming them, and BlackHoleSystem curves and slows them.
+    // Neither was exercised at a 9-way build, so the margin the comment sells was the one
+    // thing nothing checked. This drives both, from the worst corner, with aim toggling
+    // every tick (the volley-rate term the sizing is derived against).
+    //
+    // Seeded: reflector edge placement, black-hole placement and enemy spawns all read
+    // the injected rng, so an unseeded build would check the prewarm against a different
+    // world every run — statistical detection (a flaky red) on the exact NFR2 invariant
+    // this story raised the constant to protect.
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ctx.progressionState.ownedCards['spread-cannon'] = 5;
+    ctx.progressionState.ownedCards.overcharge = 5;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+
+    const pool = ctx.firingSystem.bulletPool;
+    const prewarmTotal = pool.activeCount + pool.freeCount;
+    expect(prewarmTotal).toBe(BULLET_POOL_PREWARM);
+
+    // Worst geometry: the inset corner, firing across the arena diagonal.
+    ctx.ship.x = ARENA_BORDER_INSET;
+    ctx.ship.y = ARENA_BORDER_INSET;
+    const dx = ARENA_WIDTH - 2 * ARENA_BORDER_INSET;
+    const dy = ARENA_HEIGHT - 2 * ARENA_BORDER_INSET;
+    const len = Math.hypot(dx, dy);
+
+    // Put reflectors in the field up front. Called with NO avoid args deliberately:
+    // spawn(avoidX, avoidY) is an AVOID point, not a placement target, so passing the
+    // ship would push every reflector at least SPAWN_SAFE_RADIUS away from the one
+    // corner all of this build's bullets originate from — the opposite of what a case
+    // about reflect-extended flight wants. BlackHoleSystem self-spawns on its own
+    // cadence, so 3000 ticks (50 s of sim) covers holes without poking it.
+    for (let i = 0; i < 3; i++) ctx.mirrorReflectorSystem.spawn();
+    expect(ctx.mirrorReflectorSystem.enemyPool.activeCount).toBe(3);
+
+    let peak = 0;
+    let reflectTicks = 0;
+    let holeTicks = 0;
+    for (let i = 0; i < 3000; i++) {
+      // Toggle the aim channel every tick — the non-aiming branch re-seeds the
+      // accumulator, so this is the highest volley rate the input surface can produce.
+      if (i % 2 === 0) ctx.inputState.setAim(dx / len, dy / len);
+      else ctx.inputState.setAim(0, 0);
+      ctx.ship.x = ARENA_BORDER_INSET;
+      ctx.ship.y = ARENA_BORDER_INSET;
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      peak = Math.max(peak, pool.activeCount);
+      // The two systems this case exists for actually PARTICIPATED. MirrorReflectorSystem
+      // clears its per-tick reflect Set at the top of each fixedUpdate, so reading it
+      // after the step counts this tick's reflects; BlackHoleSystem's holePool is its
+      // active-hole truth. Without these the only assertions here are pool capacity and
+      // `peak > 200`, both of which straight-line flight satisfies on its own — control-
+      // verified: with the reflector spawns removed the case still passed at peak 436, so
+      // a reflect regression (an inverted REFLECTOR_MAX_ACTIVE guard, a dropped bullet-bar
+      // reflect) or a BLACKHOLE_SPAWN_INTERVAL_MS raised past the 50 s simulated here
+      // would leave the prewarm's ONLY reflector/black-hole-aware guard silently gone.
+      if (ctx.mirrorReflectorSystem._reflected.size > 0) reflectTicks++;
+      if (ctx.blackHoleSystem.holePool.activeCount > 0) holeTicks++;
+      // The factory never runs: total capacity is still exactly the prewarm.
+      expect(pool.activeCount + pool.freeCount).toBe(prewarmTotal);
+    }
+    expect(reflectTicks).toBeGreaterThan(0);
+    expect(holeTicks).toBeGreaterThan(0);
+    // Guard against the case silently degrading into a short-flight geometry that would
+    // pass for the wrong reason (the same trap the firingSystem NFR2 cases pin against).
+    expect(peak).toBeGreaterThan(200);
+    // Pin the actual headroom, not just "some flight happened". This is the number the
+    // prewarm's +29% margin is sold as covering, so a retune that erodes it fails HERE
+    // rather than at the capacity assertion once it has already overrun.
+    expect(peak).toBeLessThan(BULLET_POOL_PREWARM);
   });
 });

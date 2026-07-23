@@ -28,6 +28,13 @@ import { drawCardOffer } from './cardOffer.js';
 // — favoring owned builds / mid-tier upgrades and honoring per-track slot limits —
 // instead of the old fixed placeholder trio.
 //
+// Story 10.3: that offer can now contain a GUARANTEED card. The draw is passed this
+// system's current run level (`levelSystem.level`), and an unowned item whose definition
+// carries `guaranteeFromLevel <= level` is reserved a slot before the weighted loop runs
+// — PRD §13.3's "Spread Cannon is always offered by Lv3". It consumes no rng() and is
+// subordinate to every exclusion, so a banished/maxed/remnant/slot-full card is still
+// never offered and an offer may still be SHORT.
+//
 // The choice is LATCHED, not applied directly: the overlay (render loop) calls
 // queueSelection(index); fixedUpdate consumes the latch and applies the card — mirroring
 // the InputState bomb latch, keeping all state mutation deterministic and inside the tick
@@ -124,6 +131,10 @@ export class LevelUpSystem extends System {
     // One-slot choice latch (mirrors the bomb latch): the overlay writes an index;
     // fixedUpdate reads-and-clears it. null = no choice queued.
     this._queuedChoice = null;
+    // Story 10.3: one-shot "skip the offer guarantee on the NEXT rebuild", raised when a
+    // PAID reroll is consumed and cleared by the rebuild that reads it — so a spent
+    // charge can actually replace the guaranteed card instead of redrawing around it.
+    this._suppressGuaranteeOnce = false;
     // Story 8.5 one-slot latches (same read-and-cleared-in-the-tick idiom):
     //  - _queuedReroll : a boolean flag set by queueReroll(), consumed once per tick.
     //  - _queuedBanish : the slot index set by queueBanish(index), or null when none.
@@ -245,6 +256,15 @@ export class LevelUpSystem extends System {
       ) {
         this.progressionState.rerollCharges--;
         this.currentOffer = [];
+        // Story 10.3: a PAID reroll suppresses the offer guarantee for the redraw it
+        // triggers. Without this the reservation deterministically refills slot 0 with
+        // the same guaranteed card, so from run level 3 onward with Spread Cannon
+        // unowned the player spends a charge and only 2 of 3 slots actually reroll —
+        // with banish as the sole way out. The flag is ONE-SHOT: the very next offer
+        // rebuild consumes it, so the guarantee returns on the following rebuild (the
+        // next level-up, or a post-pick rebuild) while the item stays unowned. "Always
+        // offered by Lv3" is therefore unaffected; only the paid redraw is exempt.
+        this._suppressGuaranteeOnce = true;
       }
     }
     if (this._queuedBanish !== null) {
@@ -295,11 +315,27 @@ export class LevelUpSystem extends System {
         // Returns a NEW array per call, preserving the 8.3 freshOffer focus-reset (keyed
         // on array identity). The offer is VARIABLE LENGTH (0..CARD_OFFER_SIZE): only
         // eligible cards, no excluded card padded in (Story 10.1 exclusion purity).
+        // Story 10.3: the CURRENT run level drives the offer guarantee — an unowned,
+        // otherwise-eligible item whose `guaranteeFromLevel` the run has reached is
+        // reserved a slot before the weighted draw (no rng consumed). Read live off the
+        // level spine, so the guarantee holds on every rebuild from the threshold
+        // onward, not only on the crossing tick.
+        // A pending one-shot reroll suppression (set when a PAID reroll was consumed
+        // above) makes this ONE rebuild ignore the guarantee — read and cleared here, so
+        // the next rebuild is guaranteed again.
+        const suppressed = this._suppressGuaranteeOnce;
+        this._suppressGuaranteeOnce = false;
         this.currentOffer = drawCardOffer({
           pool: this.registry,
           progressionState: this.progressionState,
           rng: this._rng,
           banishedIds: this.progressionState.banishedIds,
+          // Suppression is signalled with an explicit -Infinity rather than `undefined`:
+          // relying on the callee's destructuring default made the suppression depend on
+          // a default two files away (which already changed once this story, 0 →
+          // -Infinity) and read at the call site as "no argument" rather than "no
+          // guarantee". -Infinity satisfies no finite threshold either way.
+          runLevel: suppressed ? -Infinity : this.levelSystem.level,
         });
       }
       // Story 10.1 empty-offer AUTO-DRAIN: an EMPTY eligible pool (0 cards — every owned

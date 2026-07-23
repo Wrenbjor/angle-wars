@@ -149,32 +149,30 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.shieldCharges).toBe(0);
   });
 
-  it('the SHIPPED registry contributes ONLY Overcharge today (10.3–10.5 stats still empty)', () => {
+  it('the SHIPPED registry contributes ONLY the two OFFENSE items today (10.4–10.5 stats still empty)', () => {
     const ps = createPlayerStats();
-    // Own every shipped item at a spread of levels. Only Overcharge has authored
-    // numbers (Story 10.2); the other three carry empty stats maps, so the rest of
-    // the store stays exactly at base.
+    // Own every shipped item at a spread of levels. Only Overcharge (10.2) and Spread
+    // Cannon (10.3) have authored numbers; the two DEFENSE items carry empty stats maps,
+    // so the seams they own stay exactly at base.
     recomputePlayerStats(
       ps,
       { overcharge: 5, 'spread-cannon': 3, 'nanite-shield': 2, afterburner: 4 },
       ITEM_REGISTRY,
     );
-    expect(ps.damageMult).toBeCloseTo(1.6);
-    expect(ps.fireRateMult).toBeCloseTo(1.4);
-    // The seams the other three stories own are untouched by this build.
+    expect(ps.damageMult).toBeCloseTo(1.6, 10); // Overcharge L5 only (Spread L3 adds none)
+    expect(ps.fireRateMult).toBeCloseTo(1.7, 10); // 1 + 0.40 (OC L5) + 0.30 (Spread L3)
+    expect(ps.spreadWays).toBe(5); // Spread Cannon L3 restates the L2 spread
+    expect(ps.spreadArcDeg).toBe(16);
+    // The seams the two DEFENSE stories own are untouched by this build.
     expect(ps.moveSpeedMult).toBe(PLAYER_STATS_BASE.moveSpeedMult);
     expect(ps.shieldCharges).toBe(PLAYER_STATS_BASE.shieldCharges);
     // And the fold introduced no key beyond the declared base fields.
     expect(Object.keys(ps).sort()).toEqual(Object.keys(PLAYER_STATS_BASE).sort());
   });
 
-  it('the SHIPPED registry with NO Overcharge owned still folds to exactly base', () => {
+  it('the SHIPPED registry with only the two DEFENSE items owned still folds to exactly base', () => {
     const ps = createPlayerStats();
-    recomputePlayerStats(
-      ps,
-      { 'spread-cannon': 5, 'nanite-shield': 5, afterburner: 5 },
-      ITEM_REGISTRY,
-    );
+    recomputePlayerStats(ps, { 'nanite-shield': 5, afterburner: 5 }, ITEM_REGISTRY);
     expect(ps).toEqual({ ...PLAYER_STATS_BASE });
   });
 
@@ -256,5 +254,72 @@ describe('recomputePlayerStats — Overcharge against the REAL registry (Story 1
     const ps = createPlayerStats();
     recomputePlayerStats(ps, { overcharge: 0 }, ITEM_REGISTRY);
     expect(ps).toEqual({ ...PLAYER_STATS_BASE });
+  });
+});
+
+describe('recomputePlayerStats — Spread Cannon against the REAL registry (Story 10.3)', () => {
+  // The second real-content exercise of the fold, and the one that proves the two NEW
+  // count fields (`spreadWays`/`spreadArcDeg`) land as authored and that the levels are
+  // TOTALS: an author who wrote L3 as a delta ('+30% fire rate' with no spread) would
+  // show up here as a Lv3 pick that DELETES the player's spread.
+  const EXPECTED_BY_LEVEL = [
+    { level: 1, spreadWays: 3, spreadArcDeg: 12, fireRateMult: 1, damageMult: 1 },
+    { level: 2, spreadWays: 5, spreadArcDeg: 16, fireRateMult: 1, damageMult: 1 },
+    { level: 3, spreadWays: 5, spreadArcDeg: 16, fireRateMult: 1.3, damageMult: 1 },
+    { level: 4, spreadWays: 7, spreadArcDeg: 22, fireRateMult: 1.3, damageMult: 1 },
+    { level: 5, spreadWays: 9, spreadArcDeg: 22, fireRateMult: 1.3, damageMult: 1.35 },
+  ];
+
+  it.each(EXPECTED_BY_LEVEL)(
+    'Spread Cannon Lv$level folds to $spreadWays ways / $spreadArcDeg° / fireRateMult $fireRateMult / damageMult $damageMult',
+    ({ level, spreadWays, spreadArcDeg, fireRateMult, damageMult }) => {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'spread-cannon': level }, ITEM_REGISTRY);
+      expect(ps.spreadWays).toBe(spreadWays);
+      expect(ps.spreadArcDeg).toBe(spreadArcDeg);
+      expect(ps.fireRateMult).toBeCloseTo(fireRateMult, 10);
+      expect(ps.damageMult).toBeCloseTo(damageMult, 10);
+      // Spread Cannon touches nothing on the defense/movement seams.
+      expect(ps.moveSpeedMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+    },
+  );
+
+  it('an unowned (level 0) Spread Cannon leaves the volley fields at their base of 0', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { 'spread-cannon': 0 }, ITEM_REGISTRY);
+    expect(ps.spreadWays).toBe(0);
+    expect(ps.spreadArcDeg).toBe(0);
+    expect(ps).toEqual({ ...PLAYER_STATS_BASE });
+  });
+
+  it('re-folding at a LOWER Spread Cannon level does not accumulate (levels are totals)', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { 'spread-cannon': 5 }, ITEM_REGISTRY);
+    recomputePlayerStats(ps, { 'spread-cannon': 1 }, ITEM_REGISTRY);
+    expect(ps.spreadWays).toBe(3); // the L1 TOTAL, not 3+5+5+7+9
+    expect(ps.spreadArcDeg).toBe(12);
+    expect(ps.fireRateMult).toBe(1); // L1 has no fire-rate rung — back to base
+    expect(ps.damageMult).toBe(1);
+  });
+
+  it('STACKS ADDITIVELY with Overcharge on the shared fire rungs (both Lv5 → 1.70 / 1.95)', () => {
+    // Two items contributing the same `*Mult` stack ADDITIVELY onto the single base of 1
+    // (+40% and +30% → 1.70x, never 1.4 × 1.3 = 1.82). That is the specified fold, and
+    // 1.70 is exactly the cadence BULLET_POOL_PREWARM is sized against.
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5, 'spread-cannon': 5 }, ITEM_REGISTRY);
+    expect(ps.fireRateMult).toBeCloseTo(1.7, 10); // 1 + 0.40 + 0.30
+    expect(ps.damageMult).toBeCloseTo(1.95, 10); // 1 + 0.60 + 0.35
+    expect(ps.spreadWays).toBe(9);
+    expect(ps.spreadArcDeg).toBe(22);
+  });
+
+  it('an over-cap Spread Cannon level clamps to the Lv5 entry', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { 'spread-cannon': 99 }, ITEM_REGISTRY);
+    expect(ps.spreadWays).toBe(9);
+    expect(ps.spreadArcDeg).toBe(22);
+    expect(ps.damageMult).toBeCloseTo(1.35, 10);
   });
 });

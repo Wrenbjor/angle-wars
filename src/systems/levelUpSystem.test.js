@@ -10,6 +10,8 @@ import {
   REROLL_INITIAL_CHARGES,
   BANISH_INITIAL_CHARGES,
   CARD_OFFER_SIZE,
+  ITEM_MAX_LEVEL,
+  SPREAD_CANNON_GUARANTEE_LEVEL,
 } from '../config/constants.js';
 
 // Story 8.3/8.4/8.5/10.1 — the level-up state machine. LevelUpSystem edge-detects the
@@ -648,5 +650,229 @@ describe('LevelUpSystem — Story 8.5 reroll & banish', () => {
     expect(prog.rerollCharges).toBe(rerollBefore);
     expect(prog.banishCharges).toBe(banishBefore);
     expect(prog.banishedIds.size).toBe(0);
+  });
+});
+
+describe('LevelUpSystem — the Spread Cannon offer guarantee (Story 10.3)', () => {
+  // PRD §13.3's onboarding beat, end to end through the system: LevelUpSystem threads its
+  // CURRENT run level into drawCardOffer, so an unowned Spread Cannon is reserved a slot
+  // from run level 3 onward — unless an exclusion outranks it.
+  const spreadIds = (sys) => sys.currentOffer.map((c) => c.id);
+
+  it('a level-3 crossing with spread-cannon UNOWNED produces an offer containing it', () => {
+    const { sys, levelStub, prog } = build();
+    expect(prog.ownedCards['spread-cannon']).toBeUndefined();
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    expectValidOffer(sys.currentOffer);
+    expect(spreadIds(sys)).toContain('spread-cannon');
+    expect(sys.currentOffer[0].id).toBe('spread-cannon'); // the reserved slot
+  });
+
+  it('BELOW level 3 the offer is the ordinary weighted draw (no reservation)', () => {
+    // The 4-item registry always yields a 3-card offer, so "contains it" proves nothing
+    // below the threshold — instead pin that the draw is IDENTICAL to one built by a
+    // system whose level never reaches the threshold at all.
+    const seq = [0.17, 0.53, 0.88, 0.31, 0.72];
+    const a = build({ rng: seqRng(seq) });
+    a.levelStub.level = 2;
+    a.levelStub.levelsGainedThisTick = 1;
+    a.sys.fixedUpdate();
+    // Same seed, same (empty) ownership, level 0 — the pre-10.3 baseline.
+    const b = build({ rng: seqRng(seq) });
+    b.levelStub.level = 0;
+    b.levelStub.levelsGainedThisTick = 1;
+    b.sys.fixedUpdate();
+    expect(spreadIds(a.sys)).toEqual(spreadIds(b.sys));
+  });
+
+  it('picking the guaranteed card removes the guarantee from the NEXT offer', () => {
+    // A multi-level jump owes two picks, so the post-pick tick rebuilds the offer against
+    // the just-updated ownership — the exact path the guarantee must retire on.
+    const { sys, levelStub, prog } = build();
+    levelStub.level = 4;
+    levelStub.levelsGainedThisTick = 2;
+    sys.fixedUpdate();
+    expect(sys.currentOffer[0].id).toBe('spread-cannon');
+
+    levelStub.levelsGainedThisTick = 0;
+    sys.queueSelection(0); // take the guaranteed card
+    sys.fixedUpdate();
+    expect(prog.ownedCards['spread-cannon']).toBe(1);
+    expect(sys.pendingSelections).toBe(1);
+    // The rebuilt offer no longer RESERVES it — it is back to being a weighted candidate
+    // like everything else (slot 0 is now whatever the draw produced first).
+    expect(sys.currentOffer[0].id).not.toBe('spread-cannon');
+  });
+
+  it('the guarantee also folds Spread Cannon into playerStats on the pick', () => {
+    // The whole point of guaranteeing the card: the run's default firing actually
+    // evolves. One pick, and the SHARED store the FiringSystem reads carries the volley.
+    const { sys, levelStub, playerStats } = build();
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    expect(playerStats.spreadWays).toBe(0);
+    sys.queueSelection(0); // the reserved spread-cannon slot
+    levelStub.levelsGainedThisTick = 0;
+    sys.fixedUpdate();
+    expect(playerStats.spreadWays).toBe(3); // Lv1: 3-way / 12°
+    expect(playerStats.spreadArcDeg).toBe(12);
+  });
+
+  it('a BANISHED spread-cannon stays absent at level 3+ (banish permanence outranks it)', () => {
+    const { sys, levelStub, prog } = build();
+    prog.banishedIds.add('spread-cannon');
+    for (const level of [3, 5, 12]) {
+      sys.currentOffer = [];
+      sys.pendingSelections = 0;
+      levelStub.level = level;
+      levelStub.levelsGainedThisTick = 1;
+      sys.fixedUpdate();
+      expect(spreadIds(sys)).not.toContain('spread-cannon');
+      levelStub.levelsGainedThisTick = 0;
+      sys.queueSelection(0); // drain the owed pick so the next iteration starts clean
+      sys.fixedUpdate();
+    }
+  });
+
+  it('a MAXED spread-cannon is not re-offered at level 3+ (maxed exclusion outranks it)', () => {
+    const { sys, levelStub, prog } = build();
+    prog.ownedCards['spread-cannon'] = ITEM_MAX_LEVEL;
+    levelStub.level = 9;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    expect(spreadIds(sys)).not.toContain('spread-cannon');
+  });
+
+  it('a legacy level stub with no `level` field degrades to no guarantee (no throw)', () => {
+    // `this.levelSystem.level` is `undefined`, which is not a finite number, so the
+    // reservation is skipped. NOT "falls back to level 0" — the drawCardOffer default is
+    // -Infinity precisely so an absent run level cannot satisfy a `guaranteeFromLevel: 0`
+    // threshold; see the `runLevel defaults to no-guarantee, not to level 0` cases in
+    // cardOffer.test.js.
+    const levelStub = { levelsGainedThisTick: 1 }; // no `level` at all
+    const sys = new LevelUpSystem(
+      levelStub,
+      { invulnMs: 0 },
+      createProgressionState(),
+      ITEM_REGISTRY,
+      createPlayerStats(),
+      seqRng(),
+    );
+    expect(() => sys.fixedUpdate()).not.toThrow();
+    expectValidOffer(sys.currentOffer);
+  });
+});
+
+describe('LevelUpSystem — a PAID reroll can displace the guaranteed card (Story 10.3)', () => {
+  // A reroll works by clearing currentOffer so step (3) redraws. The redraw re-passes the
+  // current run level, so without a suppression the reservation deterministically refills
+  // slot 0 with the SAME guaranteed card: the player spends a charge, only 2 of 3 slots
+  // actually reroll, and banish becomes the only way to see a guarantee-free offer. The
+  // suppression is ONE-SHOT — the guarantee returns on the next rebuild while unowned.
+
+  it('a reroll at run level >= 3 with spread-cannon unowned CAN yield an offer without it', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    // The guarantee reserved slot 0, as it must.
+    expect(sys.currentOffer[0].id).toBe('spread-cannon');
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES);
+
+    sys.queueReroll();
+    sys.fixedUpdate();
+    // The charge was spent AND the paid redraw was actually free of the guarantee — with
+    // only 4 registry items and 3 slots, an unsuppressed reservation would still hold
+    // slot 0.
+    expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES - 1);
+    expect(sys.currentOffer).toHaveLength(CARD_OFFER_SIZE);
+    expect(sys.currentOffer.map((c) => c.id)).not.toContain('spread-cannon');
+  });
+
+  it('the suppression is ONE-SHOT: the NEXT level-up offer has the guarantee back', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    sys.queueReroll();
+    sys.fixedUpdate();
+    expect(sys.currentOffer.map((c) => c.id)).not.toContain('spread-cannon');
+
+    // Drain the owed pick (taking something that is NOT spread-cannon), then level again.
+    sys.queueSelection(0);
+    sys.fixedUpdate();
+    expect(prog.ownedCards['spread-cannon']).toBeUndefined();
+    expect(sys.pendingSelections).toBe(0);
+
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL + 1;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    // "Always offered by Lv3" is unaffected — the exemption covered only the paid redraw.
+    expect(sys.currentOffer[0].id).toBe('spread-cannon');
+  });
+
+  it('the suppression is ONE-SHOT: a post-pick rebuild in the SAME multi-level jump has it back', () => {
+    // The other rebuild path. A 2-level jump owes two picks; a reroll on the first is
+    // exempt, but the rebuild after the pick drains is guaranteed again.
+    const { sys, levelStub } = build();
+    levelStub.level = 5;
+    levelStub.levelsGainedThisTick = 2;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    sys.queueReroll();
+    sys.fixedUpdate();
+    expect(sys.currentOffer.map((c) => c.id)).not.toContain('spread-cannon');
+
+    sys.queueSelection(0); // drains one owed pick; step (3) rebuilds for the second
+    sys.fixedUpdate();
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.currentOffer[0].id).toBe('spread-cannon');
+  });
+
+  it('an UNPAID reroll (0 charges) does not consume the suppression', () => {
+    // The guarded no-op must not silently burn the one-shot exemption, or a player at 0
+    // charges would lose the guarantee from their next offer for free.
+    const { sys, levelStub, prog } = build();
+    prog.rerollCharges = 0;
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    expect(sys.currentOffer[0].id).toBe('spread-cannon');
+
+    sys.queueReroll(); // no charge — a no-op
+    sys.fixedUpdate();
+    expect(prog.rerollCharges).toBe(0);
+    expect(sys.currentOffer[0].id).toBe('spread-cannon'); // offer untouched
+    expect(sys._suppressGuaranteeOnce).toBe(false);
+  });
+
+  it('BANISH behavior is unchanged — a banished spread-cannon stays out permanently', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    const slot = sys.currentOffer.findIndex((c) => c.id === 'spread-cannon');
+    expect(slot).toBe(0);
+    sys.queueBanish(slot);
+    sys.fixedUpdate();
+    expect(prog.banishedIds.has('spread-cannon')).toBe(true);
+    expect(sys.currentOffer.map((c) => c.id)).not.toContain('spread-cannon');
+    // And it never returns, on any later rebuild.
+    for (const level of [4, 8]) {
+      sys.queueSelection(0);
+      sys.fixedUpdate();
+      levelStub.level = level;
+      levelStub.levelsGainedThisTick = 1;
+      sys.fixedUpdate();
+      levelStub.levelsGainedThisTick = 0;
+      expect(sys.currentOffer.map((c) => c.id)).not.toContain('spread-cannon');
+    }
   });
 });

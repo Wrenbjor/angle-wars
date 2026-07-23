@@ -13,8 +13,11 @@
 // other (additive/count) fields base at 0. Story 10.2 gave the fold its first REAL
 // content: Overcharge's five levels carry authored `damageMult`/`fireRateMult` maps,
 // exercised against the SHIPPED registry in playerStats.test.js (not only against
-// synthetic fixtures). The other three items (10.3–10.5) still carry empty `stats`
-// maps — the framework is real; the item numbers are each story's job.
+// synthetic fixtures). Story 10.3 added Spread Cannon's, which introduce the two
+// `spreadWays`/`spreadArcDeg` count fields AND reuse Overcharge's `fireRateMult`/
+// `damageMult` rungs — so two items now stack additively on the same fields, exactly as
+// the fold specifies. The two DEFENSE items (10.4–10.5) still carry empty `stats` maps —
+// the framework is real; those item numbers are each story's job.
 //
 // AUTHORING CONVENTION (read this before writing any `stats` map in stories 10.2–10.5).
 // The fold ADDS onto the base, so a `*Mult` entry is the FRACTIONAL BONUS, never the
@@ -39,6 +42,16 @@ export const PLAYER_STATS_BASE = Object.freeze({
   // Global fire modifiers (Overcharge, Story 10.2 — Spread Cannon's fire-rate rung).
   damageMult: 1,
   fireRateMult: 1,
+  // Volley shape (Spread Cannon, Story 10.3). Both are ADDITIVE/COUNT fields, so they
+  // base at 0 — no Spread Cannon owned means the pre-10.3 single-bullet volley, and
+  // FiringSystem treats any sanitized ways < 2 as that single shot.
+  //  - spreadWays   : bullets emitted per volley.
+  //  - spreadArcDeg : the volley's TOTAL cone angle in degrees, CENTERED on the aim
+  //                   direction — NOT the gap between adjacent bullets. The bullets are
+  //                   spaced evenly across it (3 ways / 12° → aim −6°, 0°, +6°), so the
+  //                   odd shipped counts always keep one bullet exactly along aim.
+  spreadWays: 0,
+  spreadArcDeg: 0,
   // Movement (Afterburner, Story 10.5).
   moveSpeedMult: 1,
   // Defense (Nanite Shield, Story 10.4).

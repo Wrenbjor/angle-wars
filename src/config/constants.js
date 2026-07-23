@@ -214,10 +214,68 @@ export const BULLET_SPEED = 900;
 // Reused by Story 1.4 collision. NOTE: this is NOT the spawn nose offset — the
 // FiringSystem emits bullets from the ship's radius (SHIP_RADIUS), not this.
 export const BULLET_RADIUS = 4;
+// Absolute UPPER bound on the number of bullets one volley may emit (Story 10.3 —
+// Spread Cannon). This is THE loop-termination SAFETY guard for the per-volley fan loop,
+// in exactly the shape of FIRE_INTERVAL_FLOOR_MS / PLAYER_BULLET_MIN_DAMAGE, and never a
+// balance lever: the ways count comes off the shared player-stat store, so a junk
+// `spreadWays` (1e9, or Infinity via a malformed item definition) would otherwise ask the
+// fan loop to acquire an unbounded number of pooled bullets inside a single fixed step.
+// The way count is the ONLY thing that bounds that loop — see SPREAD_MAX_ARC_DEG below,
+// which is a geometric bound and does not guard termination at all. The shipped maximum
+// is 9 (Spread Cannon Lv5), so this sits far above every authorable value and no shipped
+// build ever reaches it.
+export const SPREAD_MAX_WAYS = 25;
+// Absolute UPPER bound (degrees) on a volley's TOTAL cone angle. Unlike SPREAD_MAX_WAYS
+// this is NOT a loop-termination or numeric-overflow guard — it cannot be one. The fan
+// loop's length depends only on the way count, and `Math.cos`/`Math.sin` are bounded and
+// well-defined for EVERY finite input, while `_spreadArcDeg` already rejects non-finite
+// values before this clamp is ever applied. Nothing about a huge arc is numerically
+// dangerous.
+//
+// What it actually is: a GEOMETRIC SANITY bound on a junk value, so a corrupted arc still
+// produces a volley that reads as a spread rather than as a bug. 180° is the largest
+// total cone that keeps every bullet within ±90° of aim — no bullet ever fires BACKWARDS,
+// and the first and last bullets never coincide. Both failure modes are real at a larger
+// clamp: at 360° the outermost offsets are −180° and +180°, which are the same direction,
+// so the first and last bullets of the volley overlap exactly; and with 2 ways at 360°
+// BOTH bullets fire directly opposite to aim, i.e. a "spread" that shoots only behind the
+// player. The shipped content maxes at 22° (Lv4/Lv5), so this is not a balance lever and
+// no authored build is affected by the value.
+export const SPREAD_MAX_ARC_DEG = 180;
 // Idle bullet instances prewarmed into the pool at construction, so the steady
-// state never has to allocate. Sized above the worst-case simultaneous in-flight
-// count (interval, speed, arena span).
-export const BULLET_POOL_PREWARM = 64;
+// state never has to allocate.
+//
+// SIZED FROM THE ACHIEVABLE PEAK IN-FLIGHT COUNT, stated as arithmetic so it can be
+// checked rather than assumed (Story 10.3 raised it from 64, which predated multi-bullet
+// volleys). bulletPoolBound() in firingSystem.test.js recomputes this SAME bound from the
+// live constants + the shipped registry and asserts the constant still covers it — so
+// retuning FIRE_INTERVAL_MS, BULLET_SPEED, the arena size or an item's stats fails a
+// test instead of silently making this comment a lie.
+//
+//   - fastest authorable cadence: fireRateMult 1.70 (Spread Cannon Lv3's +30% stacked
+//     additively with Overcharge Lv5's +40%) → FIRE_INTERVAL_MS / 1.70 = 52.94ms
+//     → 18.89 volleys/s in the STEADY state;
+//   - but the steady state is NOT the peak, and ordinary input beats it. The non-aiming
+//     branch re-seeds `_accumMs` to the effective interval, so an aim channel that goes
+//     inactive→active on alternate fixed steps (stick deadzone jitter, tap-aiming) fires
+//     a volley every SECOND tick: 1 / (2 × FIXED_STEP_MS) = 30 volleys/s at the 60Hz
+//     step. That is the binding term — the achievable rate is
+//     max(18.89, 30) = 30 volleys/s;
+//   - widest authored volley: 9 ways (Spread Cannon Lv5) → 30 × 9 = 270 bullets/s;
+//   - longest straight-line flight before the border despawn: the inset arena diagonal,
+//     sqrt(1512² + 672²) = 1654.6px ÷ BULLET_SPEED 900px/s = 1.838s.
+// 270 × 1.838 ≈ 496 bullets simultaneously in flight (measured peak: 456, since a fanned
+// volley's outer bullets exit sooner than the diagonal bound assumes).
+//
+// The +29% on top of 496 is deliberate margin for the two systems that make real flight
+// time EXCEED the straight-line diagonal: MirrorReflectorSystem reflects a player bullet
+// WITHOUT consuming it (a reflected bullet keeps flying, so its path is the incoming leg
+// plus the outgoing one), and BlackHoleSystem curves and slows bullets near a hole. Both
+// are unbounded in principle — no finite prewarm can be a hard guarantee against a bullet
+// pinballing between reflectors — so this is sized to cover normal play, not to be proven
+// sufficient. Above it the pool still grows lazily (one-time factory calls, then
+// allocation-free again); this is the number that keeps ordinary play off the factory.
+export const BULLET_POOL_PREWARM = 640;
 
 // --- Blue Seeker enemy (feel) -----------------------------------------------
 // The Seeker spawns at a random arena edge and homes toward the ship's current
@@ -868,6 +926,15 @@ export const LEVELUP_PROMPT_Y_OFFSET = 50;
 // builds (and mid-tier upgrades) over starting new ones, and a full track stops
 // offering fresh cards in it. All values are tunable placeholders (tuned post-
 // launch; Epic 10 owns the real registry) — no inline magic numbers in the draw.
+//
+// The formula is no longer the WHOLE story (Story 10.3). An item definition may carry
+// `guaranteeFromLevel`: from that run level onward, while the item is still UNOWNED,
+// drawCardOffer RESERVES it an offer slot before the weighted loop runs — the remaining
+// slots are then drawn normally. The reservation is EXCLUSION-SUBORDINATE and costs no
+// `rng()` draw: it only ever moves a candidate whose ordinary weight is already `> 0`,
+// so banished / maxed / remnant / unowned-in-a-full-track still exclude it (a banished
+// item is never offered again, guarantee or not), and an inactive guarantee leaves the
+// draw stream bit-identical to the pre-10.3 draw.
 
 // Per-track distinct-owned slot limits: once this many DISTINCT cards in a track
 // are owned, no UNOWNED card in that track is offered (its weight zeroes). Offense
@@ -909,6 +976,13 @@ export const ITEM_MAX_LEVEL = 5;
 // The level a fusion-consumed (remnant) item is frozen at — keeps its Lv3 stats,
 // no longer upgradable (PRD §13.6). The plumbing lands here; Epic 12 consumes it.
 export const ITEM_REMNANT_LEVEL = 3;
+// The run level from which Spread Cannon is GUARANTEED an offer slot while it is still
+// unowned (Story 10.3 / PRD §13.3 "base-weapon evolution, always offered by Lv3"). It is
+// the value of `guaranteeFromLevel` on the spread-cannon registry entry — the deliberate
+// onboarding beat that makes a run's default firing reliably scale into the mid-game.
+// The guarantee is EXCLUSION-SUBORDINATE (see the weight-formula note above): banish,
+// maxed, remnant and a full track all still outrank it.
+export const SPREAD_CANNON_GUARANTEE_LEVEL = 3;
 
 // --- Reroll & Banish (Story 8.5 / Epic 8 progression) ------------------------
 // The two build-shaping tools layered onto the 8.3/8.4 draft: REROLL redraws the
@@ -1201,7 +1275,8 @@ export const SCREEN_NEARMISS_COOLDOWN_MS = 400;
 // visual is procedurally drawn — so audio is procedurally SYNTHESISED too (Web
 // Audio API), with no asset pipeline. AudioDirectorSystem (the Phaser-free sim
 // seam) observes the SAME event sources the grid ripple (4.2) / particles (4.3) /
-// screen juice (4.4) read — firingSystem.shotsFiredCount (fire),
+// screen juice (4.4) read — firingSystem.volleysFiredCount (fire: one cue per
+// trigger-pull, NOT per bullet, since Story 10.3 made a volley up to 9 bullets),
 // collisionSystem.bulletKillCount (kill), spawnDirector.spawnCount (spawn),
 // bombSystem.shockwaveMs rising edge (bomb), playerDeathSystem.deathSeq increment
 // (death) — into render-consumable SFX-request latches, and reads the SpawnDirector

@@ -38,6 +38,19 @@ import {
 // former zero-weight "fill safety net" (which re-surfaced banished/excluded cards) is
 // deleted. Count-safety must never win over exclusion purity. An EMPTY (0-eligible)
 // offer is drained by LevelUpSystem (the owed pick auto-drains, no card applied).
+//
+// OFFER GUARANTEE (Story 10.3): an item definition may carry `guaranteeFromLevel`, the
+// run level from which the offer RESERVES it a slot while it is still UNOWNED — PRD
+// §13.3's "Spread Cannon is always offered by Lv3" onboarding beat, expressed as data on
+// the definition rather than as a special case in the draw. The reservation happens
+// BEFORE the weighted loop and consumes NO rng() call, so an inactive guarantee leaves
+// the draw stream bit-identical to the pre-10.3 draw for the same seed.
+//
+// The guarantee is strictly SUBORDINATE to exclusion: it can only move a candidate whose
+// ordinary weight is already > 0, so a banished (Story 8.5 permanence), maxed, remnant,
+// or unowned-in-a-full-track item is NOT offered, guarantee or not — it can never
+// resurrect a zero-weight card. It also holds from the threshold level ONWARD (not only
+// on the crossing level-up) for as long as the item stays unowned.
 
 // Per-track distinct-owned slot limits, keyed by a card's `track`.
 const TRACK_LIMITS = {
@@ -121,17 +134,35 @@ export function cardWeight(
  * `banishedIds` is the SEPARATE top-level argument — `progressionState.banishedIds` is
  * NOT read here (the Story 8.5 callers thread it explicitly). Passing it only on
  * `progressionState` yields ZERO banish exclusion.
- * @param {{ pool: ReadonlyArray<{ id:string, rarity:number, track:string, maxLevel?:number }>,
+ *
+ * Story 10.3 — `runLevel` drives the OFFER GUARANTEE (see the module header): each
+ * candidate carrying a finite `guaranteeFromLevel <= runLevel` that is still UNOWNED and
+ * still ELIGIBLE (weight > 0) is moved into the result, in registry order, before the
+ * weighted loop runs and without consuming an rng() draw. It defaults to -Infinity, NOT
+ * 0: an absent run level must be unable to satisfy ANY finite threshold, and a 0 default
+ * would let an item authored with `guaranteeFromLevel: 0` reserve a slot for every legacy
+ * or synthetic-pool caller that omits the argument — precisely the regression the
+ * "an inactive guarantee leaves the draw bit-identical" property exists to prevent.
+ * @param {{ pool: ReadonlyArray<{ id:string, rarity:number, track:string, maxLevel?:number,
+ *             guaranteeFromLevel?: number|null }>,
  *           progressionState: { ownedCards: Object<string,number>,
  *             remnantIds?: (Set<string>|string[]) },
- *           rng?: () => number, banishedIds?: (Set<string>|string[]) }} args
- * @returns {Array<object>} 0..CARD_OFFER_SIZE distinct eligible cards, in draw order.
+ *           rng?: () => number, banishedIds?: (Set<string>|string[]),
+ *           runLevel?: number }} args
+ * @returns {Array<object>} 0..CARD_OFFER_SIZE distinct eligible cards, guaranteed cards
+ *   first (in registry order), then the weighted draw order.
  */
 export function drawCardOffer({
   pool,
   progressionState,
   rng = Math.random,
   banishedIds,
+  // An OMITTED run level must not be able to satisfy any threshold, including a
+  // `guaranteeFromLevel: 0`. -Infinity says that in the value itself; the reservation
+  // loop's Number.isFinite gate independently rejects it (and every other non-numeric
+  // level), so the two agree. An EXPLICIT `runLevel: 0` is finite and still honors a
+  // zero threshold.
+  runLevel = -Infinity,
 }) {
   const ownedCards = progressionState.ownedCards;
   const remnantIds = progressionState.remnantIds;
@@ -157,7 +188,44 @@ export function drawCardOffer({
   }
 
   const result = [];
-  for (let draw = 0; draw < CARD_OFFER_SIZE; draw++) {
+
+  // Story 10.3 — PRE-DRAW GUARANTEE RESERVATION. Walk the candidates in REGISTRY order
+  // (deterministic, and independent of the rng stream) and move each guaranteed one into
+  // the result. Three conditions, all of which must hold:
+  //   - `weight > 0`  : the guarantee is EXCLUSION-SUBORDINATE. A banished / maxed /
+  //     remnant / unowned-in-a-full-track item weighs 0 and stays out — Story 8.5 banish
+  //     permanence and Story 10.1 exclusion purity outrank the guarantee, so a banished
+  //     Spread Cannon is never offered again. This is also why the reservation can never
+  //     resurrect a zero-weight card back into the offer.
+  //   - level 0       : the guarantee exists to get the item OWNED. Once it is owned it
+  //     competes on its ordinary weight like everything else (an owned item's upgrades
+  //     are already favored by the OWNED multiplier).
+  //   - a finite `guaranteeFromLevel <= runLevel` : holds from the threshold level ONWARD
+  //     while unowned, not only on the crossing level-up. A missing/null field (every
+  //     other item, and every legacy/synthetic pool card) is not finite, so it never
+  //     reserves.
+  // No rng() is consumed here, so an INACTIVE guarantee leaves the draw stream
+  // bit-identical to pre-10.3. The cap keeps a hypothetical many-guarantee registry from
+  // overflowing the offer.
+  for (let i = 0; i < candidates.length && result.length < CARD_OFFER_SIZE; i++) {
+    const { card, weight } = candidates[i];
+    if (weight <= 0) continue;
+    if ((ownedCards[card.id] ?? 0) >= 1) continue;
+    const from = card.guaranteeFromLevel;
+    // BOTH operands must be real numbers. `guaranteeFromLevel` was always checked, but a
+    // bare `runLevel >= from` coerces the other side: a string level ('9') or a `null`
+    // (which a destructuring default does NOT replace — it only fires on `undefined`)
+    // compares as a number and activates a guarantee, defeating the `-Infinity` default
+    // whose entire job is that an absent run level cannot satisfy ANY finite threshold.
+    if (!Number.isFinite(from) || !Number.isFinite(runLevel)) continue;
+    if (runLevel < from) continue;
+    result.push(card);
+    candidates.splice(i, 1); // out of the draw so the offer stays distinct
+    i--;
+  }
+
+  // The weighted loop now fills only the REMAINING slots.
+  for (let draw = result.length; draw < CARD_OFFER_SIZE; draw++) {
     // Sum the positive weights of the remaining candidates.
     let total = 0;
     for (let i = 0; i < candidates.length; i++) {

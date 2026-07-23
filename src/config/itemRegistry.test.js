@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ITEM_REGISTRY, getItem, getItemsByTrack } from './itemRegistry.js';
-import { ITEM_MAX_LEVEL } from './constants.js';
+import {
+  ITEM_MAX_LEVEL,
+  SPREAD_CANNON_GUARANTEE_LEVEL,
+  SPREAD_MAX_WAYS,
+  SPREAD_MAX_ARC_DEG,
+} from './constants.js';
 
 // Story 10.1 — the data-driven item registry: the ONE definition per item that the
 // offer, on-pick application, owned-state, and current level all read from. The four
@@ -68,19 +73,41 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     }
   });
 
-  it('every item OTHER than Overcharge still carries EMPTY stats (10.3–10.5 deferred)', () => {
-    // Story 10.2 authored ONLY Overcharge's numbers. This pin is what stops a later
-    // item story (Spread Cannon 10.3, Nanite Shield 10.4, Afterburner 10.5) from
-    // silently landing its effect numbers here without its own story's wiring —
-    // the fold would apply them with no gameplay seam reading them.
+  it('Nanite Shield + Afterburner still carry EMPTY stats (10.4–10.5 deferred)', () => {
+    // Stories 10.2 and 10.3 authored Overcharge's and Spread Cannon's numbers; this pin
+    // NARROWS to the two still-deferred DEFENSE items. It stops Nanite Shield (10.4) or
+    // Afterburner (10.5) from silently landing its effect numbers here without its own
+    // story's wiring — the fold would apply them with no gameplay seam reading them.
     for (const item of ITEM_REGISTRY) {
-      if (item.id === 'overcharge') continue;
+      if (item.id === 'overcharge' || item.id === 'spread-cannon') continue;
       for (const lvl of item.levels) {
         expect(lvl.stats, `${item.id} L${lvl.level} stats should still be empty`).toEqual(
           {},
         );
       }
     }
+  });
+
+  it('carries `guaranteeFromLevel` on EVERY entry — a number only on spread-cannon', () => {
+    // The field's SHAPE is uniform across the registry (Story 10.3), so cardOffer's
+    // reservation reads one consistent field rather than probing for its existence. A
+    // number means "reserve me an offer slot from that run level while unowned"; null
+    // means no guarantee. `undefined` (the field simply forgotten on a new entry) is NOT
+    // acceptable — hence the own-property check.
+    for (const item of ITEM_REGISTRY) {
+      expect(
+        Object.prototype.hasOwnProperty.call(item, 'guaranteeFromLevel'),
+        `${item.id} is missing guaranteeFromLevel`,
+      ).toBe(true);
+      if (item.id === 'spread-cannon') {
+        expect(item.guaranteeFromLevel).toBe(SPREAD_CANNON_GUARANTEE_LEVEL);
+        expect(Number.isFinite(item.guaranteeFromLevel)).toBe(true);
+      } else {
+        expect(item.guaranteeFromLevel, `${item.id} must not be guaranteed`).toBeNull();
+      }
+    }
+    // PRD §13.3's onboarding beat is specifically "by Lv3".
+    expect(SPREAD_CANNON_GUARANTEE_LEVEL).toBe(3);
   });
 
   it('carries fusion metadata ({partner, epic}) on every Epic-10 item', () => {
@@ -241,6 +268,109 @@ describe('ITEM_REGISTRY — Overcharge per-level stats (Story 10.2, PRD §13.3)'
       for (const k of Object.keys(lvl.stats)) {
         expect(['damageMult', 'fireRateMult']).toContain(k);
       }
+    }
+  });
+});
+
+describe('ITEM_REGISTRY — Spread Cannon per-level stats (Story 10.3, PRD §13.3)', () => {
+  // The exact per-level maps. `spreadWays`/`spreadArcDeg` are ADDITIVE/COUNT fields
+  // (base 0), and `spreadArcDeg` is the volley's TOTAL cone angle centered on aim — NOT
+  // the gap between adjacent bullets. `fireRateMult`/`damageMult` are FRACTIONAL BONUSES
+  // reusing Story 10.2's seams. Every map is the TOTAL at that level.
+  const EXPECTED_SPREAD_STATS = [
+    { spreadWays: 3, spreadArcDeg: 12 },
+    { spreadWays: 5, spreadArcDeg: 16 },
+    { spreadWays: 5, spreadArcDeg: 16, fireRateMult: 0.3 },
+    { spreadWays: 7, spreadArcDeg: 22, fireRateMult: 0.3 },
+    { spreadWays: 9, spreadArcDeg: 22, fireRateMult: 0.3, damageMult: 0.35 },
+  ];
+
+  it('pins all five levels exactly (frozen, totals-at-level)', () => {
+    const sc = getItem('spread-cannon');
+    expect(sc.levels).toHaveLength(EXPECTED_SPREAD_STATS.length);
+    sc.levels.forEach((lvl, i) => {
+      expect(lvl.stats, `spread-cannon L${lvl.level}`).toEqual(EXPECTED_SPREAD_STATS[i]);
+      expect(Object.isFrozen(lvl.stats)).toBe(true);
+    });
+  });
+
+  it('levels are TOTALS, not deltas — the carried-forward rungs are restated', () => {
+    // The single property a delta-authoring slip breaks, and the one a reviewer reading
+    // `desc` alone will mistake for a copy-paste error. The fold reads ONLY the current
+    // level's map, so a level that "only adds fire rate" must still restate the spread it
+    // inherits — otherwise picking Spread Cannon L3 would silently REMOVE the L2 spread.
+    const [l1, l2, l3, l4, l5] = getItem('spread-cannon').levels.map((l) => l.stats);
+
+    // L3's desc is '+30% fire rate' alone, yet it carries the L2 spread verbatim.
+    expect(l3.spreadWays).toBe(l2.spreadWays);
+    expect(l3.spreadArcDeg).toBe(l2.spreadArcDeg);
+    // L4's desc is '7-way spread / 22°' alone, yet it carries the L3 fire rate.
+    expect(l4.fireRateMult).toBe(l3.fireRateMult);
+    // L5's desc is '9-way spread / +35% damage', yet it carries BOTH the L4 arc and the
+    // L3 fire rate. The arc SATURATING at 22° is deliberate: the volley grows denser,
+    // not wider.
+    expect(l5.spreadArcDeg).toBe(l4.spreadArcDeg);
+    expect(l5.fireRateMult).toBe(l3.fireRateMult);
+    // Every level from L1 on carries a spread — the item is never a spread-less card.
+    for (const s of [l1, l2, l3, l4, l5]) {
+      expect(s.spreadWays).toBeGreaterThanOrEqual(3);
+      expect(s.spreadArcDeg).toBeGreaterThan(0);
+    }
+  });
+
+  it('the way count is ODD at every level (a bullet always travels exactly along aim)', () => {
+    for (const lvl of getItem('spread-cannon').levels) {
+      expect(lvl.stats.spreadWays % 2, `L${lvl.level} way count must be odd`).toBe(1);
+    }
+  });
+
+  it('ways rise monotonically and the arc never regresses', () => {
+    const levels = getItem('spread-cannon').levels;
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i].stats.spreadWays).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.spreadWays,
+      );
+      expect(levels[i].stats.spreadArcDeg).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.spreadArcDeg,
+      );
+      expect(levels[i].stats.fireRateMult ?? 0).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.fireRateMult ?? 0,
+      );
+      expect(levels[i].stats.damageMult ?? 0).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.damageMult ?? 0,
+      );
+    }
+  });
+
+  it('the shipped desc strings are UNTOUCHED (a desc rewrite would be a PRD contradiction)', () => {
+    // Spread Cannon's descs read as DELTAS while the stats are TOTALS — a deliberate,
+    // documented mismatch. The resolution is to keep the text exactly as Story 10.1
+    // shipped it, so pin the strings themselves rather than deriving numbers from them
+    // (the Overcharge desc↔stats and clause-count tests stay Overcharge-scoped for this
+    // exact reason).
+    expect(getItem('spread-cannon').levels.map((l) => l.desc)).toEqual([
+      '3-way spread / 12°',
+      '5-way spread / 16°',
+      '+30% fire rate',
+      '7-way spread / 22°',
+      '9-way spread / +35% damage',
+    ]);
+  });
+
+  it('carries no stat key outside the volley/fire rungs the story owns', () => {
+    for (const lvl of getItem('spread-cannon').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect(['spreadWays', 'spreadArcDeg', 'fireRateMult', 'damageMult']).toContain(k);
+      }
+    }
+  });
+
+  it('stays inside the FiringSystem SAFETY clamps at every level (they are not levers)', () => {
+    for (const lvl of getItem('spread-cannon').levels) {
+      // Inclusive, matching the runtime clamps (`v > MAX ? MAX : v`) — a strict `<` here
+      // would redden a legal boundary value and imply the safety constant needs raising.
+      expect(lvl.stats.spreadWays).toBeLessThanOrEqual(SPREAD_MAX_WAYS);
+      expect(lvl.stats.spreadArcDeg).toBeLessThanOrEqual(SPREAD_MAX_ARC_DEG);
     }
   });
 });

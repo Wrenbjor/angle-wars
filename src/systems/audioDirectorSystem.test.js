@@ -315,3 +315,93 @@ describe('AudioDirectorSystem — gameplay neutrality (pure observer)', () => {
     expect(death.deathSeq).toBe(1);
   });
 });
+
+describe('AudioDirectorSystem — the fire cue counts VOLLEYS, not bullets (Story 10.3)', () => {
+  // A gunshot is a per-trigger-pull EVENT. Since Story 10.3 one pull can spawn up to 9
+  // bullets (Spread Cannon Lv5), so the cue reads `volleysFiredCount`; `shotsFiredCount`
+  // keeps its honest meaning (bullets spawned) for every other consumer.
+  it('a 9-bullet volley enqueues exactly ONE fire cue', () => {
+    const sys = build({ firing: { shotsFiredCount: 9, volleysFiredCount: 1 } });
+    sys.fixedUpdate(DT);
+    // Read off the BULLET count instead, this would be 9 — enqueuing 9 cues per tick and
+    // pegging the render loop's per-frame cap on EVERY tick, a flat wall of noise.
+    expect(sys.consumeSfxRequests().fire).toBe(1);
+  });
+
+  it.each([
+    ['null', null],
+    ['a string', '1'],
+    ['NaN', NaN],
+  ])(
+    'falls back to shotsFiredCount for a NON-NUMERIC volley counter (%s) — never silence',
+    (_label, bad) => {
+      // An `!== undefined` probe would take the volley branch for all of these and then
+      // silently drop the cue (`null > 0` is false), so bullets spawn with no gunshot.
+      // Requiring a real number degrades to the pre-10.3 per-bullet cue instead.
+      const sys = build({ firing: { shotsFiredCount: 4, volleysFiredCount: bad } });
+      sys.fixedUpdate(DT);
+      expect(sys.consumeSfxRequests().fire).toBe(4);
+    },
+  );
+
+  it.each([
+    ['a string', '4'],
+    ['null', null],
+    ['NaN', NaN],
+    ['undefined', undefined],
+  ])(
+    'a NON-NUMERIC fallback counter (%s) contributes 0, never a string _pendingFire',
+    (_label, bad) => {
+      // The fallback's own value has to be finiteness-checked as well. `'4' > 0` is
+      // true, and `0 += '4'` yields the STRING '04' — every later tick concatenates
+      // instead of adding, and consumeSfxRequests().fire hands a string to the render
+      // loop's AUDIO_SFX_FIRE_MAX_PER_FRAME comparison. Guarding only the volley
+      // counter moved that failure one branch down rather than removing it.
+      const firing = { shotsFiredCount: bad, volleysFiredCount: null };
+      const sys = build({ firing });
+      sys.fixedUpdate(DT);
+      sys.fixedUpdate(DT);
+      const fire = sys.consumeSfxRequests().fire;
+      expect(fire).toBe(0);
+      expect(typeof fire).toBe('number');
+
+      // And a real number on a later tick still accumulates numerically, rather than
+      // onto a poisoned string accumulator.
+      firing.shotsFiredCount = 3;
+      sys.fixedUpdate(DT);
+      expect(sys.consumeSfxRequests().fire).toBe(3);
+    },
+  );
+
+  it('two volleys banked in one tick enqueue TWO cues (one per trigger interval)', () => {
+    const sys = build({ firing: { shotsFiredCount: 18, volleysFiredCount: 2 } });
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fire).toBe(2);
+  });
+
+  it('a stub exposing ONLY shotsFiredCount still works (pre-10.3 fallback)', () => {
+    // Every single-bullet volley makes the two counters identical, so the fallback is
+    // exactly the pre-10.3 behavior for a source that predates volleysFiredCount.
+    const sys = build({ firing: fakeFiring(2) });
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fire).toBe(2);
+  });
+
+  it('volleysFiredCount 0 with bullets spawned reports no cue (the counter, not the bullets)', () => {
+    // A defensive shape check: the cue follows the volley latch, never the bullet latch.
+    const sys = build({ firing: { shotsFiredCount: 9, volleysFiredCount: 0 } });
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fire).toBe(0);
+  });
+
+  it('accumulates volleys across sub-steps and resets on consume', () => {
+    const firing = { shotsFiredCount: 9, volleysFiredCount: 1 };
+    const sys = build({ firing });
+    sys.fixedUpdate(DT);
+    firing.volleysFiredCount = 2;
+    firing.shotsFiredCount = 18;
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fire).toBe(3);
+    expect(sys.consumeSfxRequests().fire).toBe(0);
+  });
+});

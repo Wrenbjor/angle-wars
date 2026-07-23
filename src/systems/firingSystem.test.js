@@ -15,9 +15,22 @@ import {
   PLAYER_BULLET_MIN_DAMAGE,
   BULLET_SPEED,
   BULLET_POOL_PREWARM,
+  SPREAD_MAX_WAYS,
+  SPREAD_MAX_ARC_DEG,
 } from '../config/constants.js';
+import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 
 const DT = FIXED_STEP_MS;
+
+// The worst build the item framework can AUTHOR (Story 10.3): Spread Cannon Lv5's 9-way
+// volley at the fastest authorable cadence — its own +30% fire rate stacked additively
+// with Overcharge Lv5's +40%. This is the build BULLET_POOL_PREWARM is sized against.
+const WORST_AUTHORABLE_BUILD = Object.freeze({
+  spreadWays: 9,
+  spreadArcDeg: 22,
+  fireRateMult: 1.7,
+  damageMult: 1.95,
+});
 
 // Build a ship + input + firing-system triad. `aim` seeds the aim channel via
 // setAim (normalized exactly as the real sampler would leave it). `playerStats`
@@ -182,17 +195,32 @@ describe('FiringSystem', () => {
     expect(system.bulletPool.freeCount).toBeGreaterThan(0);
   });
 
-  it('never grows the pool past the prewarm under sustained fire (NFR2)', () => {
+  it.each([
+    ['the base single-bullet volley', undefined],
+    // The WORST case the item framework can author (Story 10.3): Spread Cannon Lv5's
+    // 9-way volley at the fastest authorable cadence — its own +30% stacked additively
+    // with Overcharge Lv5's +40%.
+    //
+    // NOTE this case fires from the arena CENTRE, where bullets exit after ~half the
+    // arena and the peak in-flight is only ~146. It is a cadence/no-throw case, NOT a
+    // pin on the prewarm's sizing — the sizing geometry is covered by the dedicated
+    // suite below, which fires along the inset diagonal and the full arena width.
+    ['a 9-way Spread Cannon Lv5 + Overcharge Lv5 volley', WORST_AUTHORABLE_BUILD],
+  ])('never grows the pool past the prewarm under sustained fire — %s (NFR2)', (
+    _label,
+    stats,
+  ) => {
     // At construction the pool is fully prewarmed and nothing is checked out.
     const { system } = makeSystem({
       ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
       aim: [1, 0],
+      playerStats: stats ? { ...createPlayerStats(), ...stats } : undefined,
     });
     expect(system.bulletPool.freeCount).toBe(BULLET_POOL_PREWARM);
     expect(system.bulletPool.activeCount).toBe(0);
 
     // Hold aim active for a sustained run. Ship centered so bullets leave the
-    // arena and despawn, keeping peak in-flight well under the prewarm. If total
+    // arena and despawn, keeping peak in-flight under the prewarm. If total
     // capacity ever exceeded the prewarm, the factory ran — i.e. the steady
     // state allocated. Assert it never does, on every tick.
     for (let i = 0; i < 500; i++) {
@@ -563,37 +591,46 @@ describe('FiringSystem — playerStats cadence + damage (Story 10.2)', () => {
     // must not cash that in as one giant volley. Without the shrink-clamp this fired
     // ~140 bullets in ONE fixed step and grew the pool 64 → 140 permanently, breaking
     // the same prewarm invariant the NFR2 test in this file asserts.
+    // Run BOTH the base gun and a 9-way Spread Cannon Lv5 volley: with a volley the
+    // banked backlog would cash in as ~140 x 9 = 1260 bullets in one step, so the clamp
+    // matters more, not less, once a volley can spawn many bullets per interval.
     for (const releaseAim of [true, false]) {
-      const ps = { ...createPlayerStats(), fireRateMult: 1e-12 };
-      const { input, system } = makeSystem({
-        ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
-        aim: [1, 0],
-        playerStats: ps,
-      });
-      const prewarmTotal =
-        system.bulletPool.activeCount + system.bulletPool.freeCount;
-      expect(prewarmTotal).toBe(BULLET_POOL_PREWARM);
+      for (const spread of [null, { spreadWays: 9, spreadArcDeg: 22 }]) {
+        const ways = spread ? spread.spreadWays : 1;
+        const ps = { ...createPlayerStats(), ...(spread ?? {}), fireRateMult: 1e-12 };
+        const { input, system } = makeSystem({
+          ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+          aim: [1, 0],
+          playerStats: ps,
+        });
+        const prewarmTotal =
+          system.bulletPool.activeCount + system.bulletPool.freeCount;
+        expect(prewarmTotal).toBe(BULLET_POOL_PREWARM);
 
-      if (releaseAim) {
-        input.clearAim();
-        system.fixedUpdate(DT); // non-aiming branch latches the ceiling
-        input.setAim(1, 0);
-      } else {
-        // Aiming the whole time: _accumMs accrues dt/tick toward a 9000ms interval
-        // and never spawns, so it banks the same backlog without the latch.
-        for (let i = 0; i < 400; i++) system.fixedUpdate(DT);
-        expect(system._accumMs).toBeGreaterThan(FIRE_INTERVAL_MS * 50);
+        if (releaseAim) {
+          input.clearAim();
+          system.fixedUpdate(DT); // non-aiming branch latches the ceiling
+          input.setAim(1, 0);
+        } else {
+          // Aiming the whole time: _accumMs accrues dt/tick toward a 9000ms interval
+          // and never spawns, so it banks the same backlog without the latch.
+          for (let i = 0; i < 400; i++) system.fixedUpdate(DT);
+          expect(system._accumMs).toBeGreaterThan(FIRE_INTERVAL_MS * 50);
+        }
+
+        ps.fireRateMult = 1.4; // back to the shipped maximum
+        const before = system.bulletPool.activeCount;
+        system.fixedUpdate(DT);
+        const spawnedThisTick = system.bulletPool.activeCount - before;
+        // At most ONE volley — which is 1 bullet at base and `ways` bullets with a
+        // spread build. Never the banked backlog.
+        expect(system.volleysFiredCount).toBeLessThanOrEqual(1);
+        expect(spawnedThisTick).toBeLessThanOrEqual(ways);
+        // The pool never had to grow: no factory call, no allocation inside the step.
+        expect(system.bulletPool.activeCount + system.bulletPool.freeCount).toBe(
+          prewarmTotal,
+        );
       }
-
-      ps.fireRateMult = 1.4; // back to the shipped maximum
-      const before = system.bulletPool.activeCount;
-      system.fixedUpdate(DT);
-      const spawnedThisTick = system.bulletPool.activeCount - before;
-      expect(spawnedThisTick).toBeLessThanOrEqual(1);
-      // The pool never had to grow: no factory call, no allocation inside the step.
-      expect(system.bulletPool.activeCount + system.bulletPool.freeCount).toBe(
-        prewarmTotal,
-      );
     }
   });
 
@@ -814,7 +851,16 @@ describe('FiringSystem — playerStats cadence + damage (Story 10.2)', () => {
     expect(system.playerStats).toBe(ps);
   });
 
-  it('allocates nothing per tick under an upgraded fire rate (NFR2)', () => {
+  it.each([
+    ['Overcharge Lv5 alone', { fireRateMult: 1.4 }],
+    // Story 10.3's worst authorable build: 9 bullets per volley at the fastest cadence
+    // the framework can produce (Spread Cannon Lv3's +30% stacked additively with
+    // Overcharge Lv5's +40%). ~170 bullets/second through the same pool.
+    [
+      'Spread Cannon Lv5 + Overcharge Lv5 (9 ways at fireRateMult 1.70)',
+      { spreadWays: 9, spreadArcDeg: 22, fireRateMult: 1.7, damageMult: 1.95 },
+    ],
+  ])('allocates nothing per tick under %s (NFR2)', (_label, stats) => {
     // The faster cadence must not outrun the pool: the prewarm still covers the peak
     // in-flight count, so the factory never runs in the steady state.
     //
@@ -826,7 +872,7 @@ describe('FiringSystem — playerStats cadence + damage (Story 10.2)', () => {
     const { system } = makeSystem({
       ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
       aim: [1, 0],
-      playerStats: { ...createPlayerStats(), fireRateMult: 1.4 },
+      playerStats: { ...createPlayerStats(), ...stats },
     });
     const prewarmTotal =
       system.bulletPool.activeCount + system.bulletPool.freeCount;
@@ -838,4 +884,601 @@ describe('FiringSystem — playerStats cadence + damage (Story 10.2)', () => {
       );
     }
   });
+});
+
+// --- Story 10.3 (Spread Cannon): multi-bullet volleys ---------------------------
+describe('FiringSystem — spread volleys (Story 10.3)', () => {
+  // The SHIPPED ladder, read as (ways, TOTAL cone in degrees) — see the registry.
+  const SHIPPED_LEVELS = [
+    { level: 1, ways: 3, arcDeg: 12 },
+    { level: 2, ways: 5, arcDeg: 16 },
+    { level: 3, ways: 5, arcDeg: 16 },
+    { level: 4, ways: 7, arcDeg: 22 },
+    { level: 5, ways: 9, arcDeg: 22 },
+  ];
+
+  // The SIGNED angle (degrees) of a bullet's velocity relative to the aim direction.
+  // Positive is the same rotation sense the fan builds with (aim rotated by +offset).
+  function offsetDeg(bullet, ax, ay) {
+    const dx = bullet.vx / BULLET_SPEED;
+    const dy = bullet.vy / BULLET_SPEED;
+    return (Math.atan2(ax * dy - ay * dx, ax * dx + ay * dy) * 180) / Math.PI;
+  }
+
+  // The expected evenly-spaced, aim-centered offsets for a (ways, arc) volley.
+  function expectedOffsets(ways, arcDeg) {
+    if (ways < 2) return [0];
+    const step = arcDeg / (ways - 1);
+    const half = (ways - 1) / 2;
+    const out = [];
+    for (let i = 0; i < ways; i++) out.push((i - half) * step);
+    return out;
+  }
+
+  function spreadStats(ways, arcDeg, extra = {}) {
+    return { ...createPlayerStats(), spreadWays: ways, spreadArcDeg: arcDeg, ...extra };
+  }
+
+  it('BASE PARITY: no store, a base store, and an explicit 0-ways store all fire ONE bullet', () => {
+    // The load-bearing no-regression guarantee: with no Spread Cannon owned the volley
+    // is byte-for-byte the pre-10.3 single shot — same nose position, same velocity,
+    // same damage, same counters. The base store now CARRIES spreadWays/spreadArcDeg at
+    // their base of 0, so this also pins that adding the fields changed nothing.
+    const ax = 0.6;
+    const ay = 0.8;
+    const reference = { x: null, y: null, vx: null, vy: null };
+    for (const playerStats of [
+      undefined,
+      createPlayerStats(),
+      spreadStats(0, 0),
+      { ...createPlayerStats(), spreadWays: 1, spreadArcDeg: 12 }, // 1 way is still single
+    ]) {
+      const { ship, system } = makeSystem({
+        ship: { x: 400, y: 300 },
+        aim: [ax, ay],
+        playerStats,
+      });
+      system.fixedUpdate(DT);
+      const bullets = activeBullets(system);
+      expect(bullets).toHaveLength(1);
+      const [b] = bullets;
+      expect(b.x).toBeCloseTo(ship.x + ax * ship.radius, 12);
+      expect(b.y).toBeCloseTo(ship.y + ay * ship.radius, 12);
+      expect(b.vx).toBeCloseTo(ax * BULLET_SPEED, 12);
+      expect(b.vy).toBeCloseTo(ay * BULLET_SPEED, 12);
+      expect(b.damage).toBe(PLAYER_BULLET_BASE_DAMAGE);
+      expect(system.shotsFiredCount).toBe(1);
+      expect(system.volleysFiredCount).toBe(1);
+      // Every variant is EXACTLY identical, bit for bit — not merely close.
+      if (reference.x === null) {
+        reference.x = b.x;
+        reference.y = b.y;
+        reference.vx = b.vx;
+        reference.vy = b.vy;
+      } else {
+        expect([b.x, b.y, b.vx, b.vy]).toEqual([
+          reference.x,
+          reference.y,
+          reference.vx,
+          reference.vy,
+        ]);
+      }
+    }
+  });
+
+  it.each(SHIPPED_LEVELS)(
+    'Spread Cannon Lv$level fires $ways bullets across a $arcDeg° TOTAL cone, evenly spaced and aim-centered',
+    ({ ways, arcDeg }) => {
+      const ax = 0;
+      const ay = 1;
+      const { ship, system } = makeSystem({
+        ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+        aim: [ax, ay],
+        playerStats: spreadStats(ways, arcDeg),
+      });
+      system.fixedUpdate(DT);
+      const bullets = activeBullets(system);
+      expect(bullets).toHaveLength(ways);
+
+      const offsets = bullets.map((b) => offsetDeg(b, ax, ay));
+      const expected = expectedOffsets(ways, arcDeg);
+      // Same multiset of offsets, in spawn order.
+      offsets.forEach((o, i) => expect(o).toBeCloseTo(expected[i], 9));
+      // The cone is CENTERED on aim and its TOTAL width is exactly arcDeg — the
+      // property the whole "total cone, not per-bullet gap" reading rests on.
+      expect(Math.min(...offsets)).toBeCloseTo(-arcDeg / 2, 9);
+      expect(Math.max(...offsets)).toBeCloseTo(arcDeg / 2, 9);
+      expect(Math.max(...offsets) - Math.min(...offsets)).toBeCloseTo(arcDeg, 9);
+
+      for (const b of bullets) {
+        // Every bullet leaves at exactly BULLET_SPEED (the direction was rotated, not
+        // scaled) and from the nose ALONG ITS OWN direction.
+        const speed = Math.hypot(b.vx, b.vy);
+        expect(speed).toBeCloseTo(BULLET_SPEED, 9);
+        expect(b.x).toBeCloseTo(ship.x + (b.vx / BULLET_SPEED) * ship.radius, 9);
+        expect(b.y).toBeCloseTo(ship.y + (b.vy / BULLET_SPEED) * ship.radius, 9);
+      }
+    },
+  );
+
+  it.each(SHIPPED_LEVELS)(
+    'Lv$level: the CENTER bullet travels exactly along aim (bit-identical to the base shot)',
+    ({ ways, arcDeg }) => {
+      // Every shipped way count is ODD, so the middle bullet must be the base shot
+      // untouched — not a float-noise rotation of it. This is what makes a spread build
+      // a strict superset of the base gun down the aim line.
+      const ax = 0.6;
+      const ay = 0.8;
+      const base = makeSystem({ ship: { x: 400, y: 300 }, aim: [ax, ay] });
+      base.system.fixedUpdate(DT);
+      const [baseBullet] = activeBullets(base.system);
+
+      const { system } = makeSystem({
+        ship: { x: 400, y: 300 },
+        aim: [ax, ay],
+        playerStats: spreadStats(ways, arcDeg),
+      });
+      system.fixedUpdate(DT);
+      const bullets = activeBullets(system);
+      const center = bullets[(ways - 1) / 2];
+      expect(center.vx).toBe(baseBullet.vx);
+      expect(center.vy).toBe(baseBullet.vy);
+      expect(center.x).toBe(baseBullet.x);
+      expect(center.y).toBe(baseBullet.y);
+    },
+  );
+
+  it('the volley re-aims with the LIVE aim vector (no reconstruction, no stale cone)', () => {
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [1, 0],
+      playerStats: spreadStats(3, 12),
+    });
+    system.fixedUpdate(DT);
+    let bullets = activeBullets(system);
+    expect(bullets).toHaveLength(3);
+    for (const b of bullets) expect(Math.abs(offsetDeg(b, 1, 0))).toBeLessThanOrEqual(6.001);
+
+    const before = new Set(bullets);
+    input.setAim(0, -1); // the stick swings 90°
+    system.fixedUpdate(FIRE_INTERVAL_MS);
+    bullets = activeBullets(system).filter((b) => !before.has(b));
+    expect(bullets.length).toBeGreaterThanOrEqual(3);
+    const offsets = bullets.map((b) => offsetDeg(b, 0, -1));
+    expect(Math.min(...offsets)).toBeCloseTo(-6, 9);
+    expect(Math.max(...offsets)).toBeCloseTo(6, 9);
+  });
+
+  it('a mid-run Spread Cannon pick changes the very next volley through the SHARED store', () => {
+    // The card pick folds the SAME object the system holds — no reconstruction.
+    const ps = createPlayerStats();
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: ps,
+    });
+    system.fixedUpdate(DT);
+    expect(system.shotsFiredCount).toBe(1);
+
+    ps.spreadWays = 5; // the fold's in-place mutation (Lv2)
+    ps.spreadArcDeg = 16;
+    input.setAim(0, 1);
+    system.fixedUpdate(FIRE_INTERVAL_MS);
+    expect(system.shotsFiredCount).toBe(5);
+    expect(system.volleysFiredCount).toBe(1);
+  });
+
+  it('stamps `damage` on EVERY bullet in the volley, including a RECYCLED instance', () => {
+    // entities/Bullet.js's ⚠ obligation, written for this story: Pool.release resets
+    // nothing, so a recycled bullet carries the PREVIOUS shot's damage — finite and
+    // positive, so CollisionSystem's fallback cannot detect it. The fan loop must stamp
+    // every single bullet, not just the first.
+    const ps = spreadStats(9, 22, { damageMult: 1.95 });
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: ps,
+    });
+    system.fixedUpdate(DT);
+    const strong = activeBullets(system);
+    expect(strong).toHaveLength(9);
+    for (const b of strong) expect(b.damage).toBeCloseTo(1.95, 10);
+
+    // Recycle the whole volley back onto the free list, still carrying 1.95.
+    for (const b of strong) system.bulletPool.release(b);
+    for (const b of strong) expect(b.damage).toBeCloseTo(1.95, 10); // release resets nothing
+
+    // A weaker build fires; every recycled instance must carry the NEW damage.
+    ps.damageMult = 1;
+    input.setAim(1, 0);
+    system.fixedUpdate(FIRE_INTERVAL_MS);
+    const recycled = activeBullets(system);
+    expect(recycled).toHaveLength(9);
+    expect(recycled.some((b) => strong.includes(b))).toBe(true); // really reused
+    for (const b of recycled) expect(b.damage).toBe(PLAYER_BULLET_BASE_DAMAGE);
+  });
+
+  it.each([
+    ['NaN', NaN, 1],
+    ['negative', -4, 1],
+    ['zero', 0, 1],
+    ['fractional below 2', 1.5, 1], // floors to 1 → the single shot
+    ['fractional above 2', 4.9, 4], // floors to a whole bullet count
+    ['absurdly large', 1e9, SPREAD_MAX_WAYS], // clamped — the loop-termination guard
+    ['Infinity', Infinity, 1],
+    ['a string', '9', 1],
+    ['undefined', undefined, 1],
+  ])('sanitizes a degenerate spreadWays (%s) — bounded spawns, no throw', (
+    _label,
+    value,
+    expectedWays,
+  ) => {
+    const { system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: { ...createPlayerStats(), spreadWays: value, spreadArcDeg: 22 },
+    });
+    expect(system._spreadWays()).toBe(expectedWays);
+    expect(() => system.fixedUpdate(DT)).not.toThrow(); // the fan loop TERMINATES
+    expect(system.shotsFiredCount).toBe(expectedWays);
+    expect(system.volleysFiredCount).toBe(1);
+    expect(activeBullets(system)).toHaveLength(expectedWays);
+    for (const b of activeBullets(system)) {
+      expect(Number.isFinite(b.vx) && Number.isFinite(b.vy)).toBe(true);
+    }
+  });
+
+  it.each([
+    ['NaN', NaN, 0],
+    ['negative', -30, 0],
+    ['zero', 0, 0],
+    ['Infinity', Infinity, 0],
+    ['absurdly large', 1e6, SPREAD_MAX_ARC_DEG], // clamped, never a wild magnitude
+    ['a string', '22', 0],
+    ['undefined', undefined, 0],
+  ])('sanitizes a degenerate spreadArcDeg (%s) — bounded cone, no throw', (
+    _label,
+    value,
+    expectedArc,
+  ) => {
+    const ax = 0;
+    const ay = 1;
+    const { system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [ax, ay],
+      playerStats: { ...createPlayerStats(), spreadWays: 5, spreadArcDeg: value },
+    });
+    expect(system._spreadArcDeg()).toBe(expectedArc);
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
+    const bullets = activeBullets(system);
+    expect(bullets).toHaveLength(5); // the ways count is unaffected by a junk arc
+    for (const b of bullets) {
+      expect(Math.hypot(b.vx, b.vy)).toBeCloseTo(BULLET_SPEED, 9);
+      expect(Math.abs(offsetDeg(b, ax, ay))).toBeLessThanOrEqual(expectedArc / 2 + 1e-9);
+    }
+    if (expectedArc === 0) {
+      // A 0° cone is degenerate but well-defined: every bullet travels along aim.
+      for (const b of bullets) {
+        expect(b.vx).toBeCloseTo(ax * BULLET_SPEED, 9);
+        expect(b.vy).toBeCloseTo(ay * BULLET_SPEED, 9);
+      }
+    }
+  });
+
+  it('AT the arc clamp, every bullet still travels FORWARD and no two coincide', () => {
+    // What SPREAD_MAX_ARC_DEG actually buys (it is not an overflow guard — cos/sin are
+    // bounded for every finite input, and non-finite values are rejected before the
+    // clamp). At 180° the outermost offsets are exactly ±90°, so a junk arc still yields
+    // a forward-facing fan. Both properties break above it: at 360° the first and last
+    // bullets sit at −180° and +180° — the SAME direction, two bullets in one place — and
+    // a 2-way volley at 360° fires BOTH bullets directly backwards.
+    const ax = 0;
+    const ay = 1;
+    for (const ways of [2, 3, SPREAD_MAX_WAYS]) {
+      const { system } = makeSystem({
+        ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+        aim: [ax, ay],
+        playerStats: { ...createPlayerStats(), spreadWays: ways, spreadArcDeg: 1e6 },
+      });
+      expect(system._spreadArcDeg()).toBe(SPREAD_MAX_ARC_DEG);
+      system.fixedUpdate(DT);
+      const bullets = activeBullets(system);
+      expect(bullets).toHaveLength(ways);
+
+      const offsets = bullets.map((b) => offsetDeg(b, ax, ay));
+      // No bullet fires backwards: every offset is within ±90° of aim, so the forward
+      // component of every velocity is non-negative.
+      for (const o of offsets) expect(Math.abs(o)).toBeLessThanOrEqual(90 + 1e-9);
+      for (const b of bullets) {
+        expect(b.vx * ax + b.vy * ay).toBeGreaterThanOrEqual(-1e-9);
+      }
+      // And no two bullets share a direction (the 360° coincidence failure).
+      for (let i = 0; i < bullets.length; i++) {
+        for (let j = i + 1; j < bullets.length; j++) {
+          expect(Math.abs(offsets[i] - offsets[j])).toBeGreaterThan(1e-9);
+        }
+      }
+    }
+    // Stated as the invariant it is, so raising the constant fails here.
+    expect(SPREAD_MAX_ARC_DEG).toBeLessThanOrEqual(180);
+  });
+
+  it('an OMITTED store keeps the single shot (the two-arg path is untouched by 10.3)', () => {
+    const { system } = makeSystem({ aim: [0, 1], playerStats: undefined });
+    expect(system._spreadWays()).toBe(1);
+    expect(system._spreadArcDeg()).toBe(0);
+    system.fixedUpdate(DT);
+    expect(system.shotsFiredCount).toBe(1);
+  });
+
+  it('rebuilds the offset table ONLY on a (ways, arc) change — never per tick (NFR2)', () => {
+    const ps = spreadStats(5, 16);
+    const { system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: ps,
+    });
+    // The buffers are preallocated at construction and never replaced — a rebuild
+    // writes IN PLACE, so the fixed step allocates nothing.
+    const cos = system._offsetCos;
+    const sin = system._offsetSin;
+    expect(cos).toHaveLength(SPREAD_MAX_WAYS);
+    expect(sin).toHaveLength(SPREAD_MAX_WAYS);
+
+    for (let i = 0; i < 200; i++) system.fixedUpdate(DT);
+    expect(system._tableBuilds).toBe(1); // ONE build for 200 ticks of unchanged level
+    expect(system._offsetCos).toBe(cos);
+    expect(system._offsetSin).toBe(sin);
+
+    // A card pick (the fold mutating the shared store) rebuilds exactly once…
+    ps.spreadWays = 9;
+    ps.spreadArcDeg = 22;
+    for (let i = 0; i < 200; i++) system.fixedUpdate(DT);
+    expect(system._tableBuilds).toBe(2);
+    expect(system._offsetCos).toBe(cos); // …still in place, still the same buffers
+    expect(system._offsetSin).toBe(sin);
+  });
+
+  it('the base gun never touches the offset table at all', () => {
+    const { system } = makeSystem({ aim: [0, 1], playerStats: createPlayerStats() });
+    for (let i = 0; i < 50; i++) system.fixedUpdate(DT);
+    expect(system._tableBuilds).toBe(0);
+  });
+
+  // --- The volley/bullet counter split (the audio seam) -------------------------
+  it('a 9-way volley reports ONE fire event and NINE bullets', () => {
+    const { system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: spreadStats(9, 22),
+    });
+    system.fixedUpdate(DT);
+    expect(system.volleysFiredCount).toBe(1);
+    expect(system.shotsFiredCount).toBe(9);
+  });
+
+  it('both counters reset every tick (per-tick latches, not cumulative)', () => {
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: spreadStats(9, 22),
+    });
+    expect(system.volleysFiredCount).toBe(0); // fresh system, before any tick
+    system.fixedUpdate(DT);
+    expect(system.volleysFiredCount).toBe(1);
+    input.clearAim();
+    system.fixedUpdate(DT);
+    expect(system.volleysFiredCount).toBe(0);
+    expect(system.shotsFiredCount).toBe(0);
+  });
+
+  it('a multi-interval tick counts every VOLLEY once and every BULLET once', () => {
+    const { system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: spreadStats(3, 12),
+    });
+    system.fixedUpdate(FIRE_INTERVAL_MS * 3); // seeded + 3 banked intervals
+    expect(system.volleysFiredCount).toBeGreaterThan(1);
+    expect(system.shotsFiredCount).toBe(system.volleysFiredCount * 3);
+    expect(system.bulletPool.activeCount).toBe(system.shotsFiredCount);
+  });
+
+  it('cadence is unaffected by the way count — spread multiplies bullets, not volleys', () => {
+    // The fire-rate rung is the ONLY thing that changes cadence; adding ways must not
+    // secretly also change how often the gun fires.
+    const T = 900;
+    const TICKS = Math.round(T / DT);
+    const base = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [1, 0],
+      playerStats: createPlayerStats(),
+    });
+    const spread = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [1, 0],
+      playerStats: spreadStats(9, 22),
+    });
+    let baseVolleys = 0;
+    let spreadVolleys = 0;
+    for (let i = 0; i < TICKS; i++) {
+      base.system.fixedUpdate(DT);
+      spread.system.fixedUpdate(DT);
+      baseVolleys += base.system.volleysFiredCount;
+      spreadVolleys += spread.system.volleysFiredCount;
+    }
+    expect(spreadVolleys).toBe(baseVolleys);
+  });
+
+  it('the interval FLOOR still bounds a whole VOLLEY burst (ways × the floor bound)', () => {
+    // The floor's contract, restated for volleys: an absurd multiplier must not let a
+    // single re-aim tick bank an unbounded number of BULLETS either.
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      playerStats: spreadStats(SPREAD_MAX_WAYS, 22, { fireRateMult: 1e9 }),
+    });
+    input.clearAim();
+    system.fixedUpdate(DT);
+    input.setAim(1, 0);
+    system.fixedUpdate(DT);
+    const volleys = Math.floor(DT / FIRE_INTERVAL_FLOOR_MS) + 1;
+    expect(system.volleysFiredCount).toBe(volleys);
+    expect(system.shotsFiredCount).toBe(volleys * SPREAD_MAX_WAYS);
+  });
+});
+
+// --- Story 10.3: BULLET_POOL_PREWARM sizing (NFR2) -------------------------------
+describe('FiringSystem — the bullet pool is sized for the geometry it CLAIMS (NFR2)', () => {
+  // The prewarm's derivation lives in a comment beside the constant. These tests exist
+  // because that comment is prose arithmetic: nothing stopped it from being wrong (it
+  // was — it used the STEADY-STATE volley rate, which ordinary tap-aiming beats), and
+  // nothing stopped a retune of FIRE_INTERVAL_MS / BULLET_SPEED / the arena size from
+  // quietly invalidating it. Two things are pinned here: the bound recomputed from the
+  // LIVE constants, and the actual pool behavior in the geometry the bound assumes.
+  //
+  // Every pre-existing NFR2 case in this file fires from the arena CENTRE or the ship
+  // SPAWN point, where bullets exit after a fraction of the arena — peak in-flight 146
+  // and 11 respectively, against 456 in the sizing geometry. They could not have caught
+  // an undersized prewarm, which is why these cases fire from the inset corner and the
+  // inset edge instead.
+
+  const INSET = ARENA_BORDER_INSET;
+  const INNER_W = ARENA_WIDTH - 2 * INSET;
+  const INNER_H = ARENA_HEIGHT - 2 * INSET;
+  const DIAGONAL = Math.hypot(INNER_W, INNER_H);
+
+  /**
+   * The peak simultaneous in-flight bullet count the firing seam can ACHIEVE, recomputed
+   * from the live constants and the SHIPPED registry rather than restated as a literal.
+   */
+  function bulletPoolBound() {
+    // The largest fireRateMult / spreadWays the registry can fold: every item's best
+    // rung summed (the fold stacks the same field ADDITIVELY across items), the
+    // multiplier onto its base of 1 and the count onto its base of 0.
+    let maxFireRateBonus = 0;
+    let maxWaysBonus = 0;
+    for (const item of ITEM_REGISTRY) {
+      let bestRate = 0;
+      let bestWays = 0;
+      for (const lvl of item.levels) {
+        bestRate = Math.max(bestRate, lvl.stats.fireRateMult ?? 0);
+        bestWays = Math.max(bestWays, lvl.stats.spreadWays ?? 0);
+      }
+      maxFireRateBonus += bestRate;
+      // SUMMED across items, not Math.max'd — `spreadWays` folds through the same
+      // `playerStats[k] += stats[k]` path as `fireRateMult` (PlayerStats.js), so two
+      // items carrying it stack. Taking the max here would model a fold the code does
+      // not perform: Epic 12's Sunburst fusion or any later item carrying spreadWays
+      // would fold to a higher count while this bound still returned 9-ways arithmetic,
+      // leaving `BULLET_POOL_PREWARM >= bound` green while the pool silently began
+      // calling its factory inside the fixed step — the exact regression this helper
+      // exists to catch.
+      maxWaysBonus += bestWays;
+    }
+    const maxFireRateMult = 1 + maxFireRateBonus;
+    // Base 0 for a count field; a build with no spread item still fires one bullet.
+    const maxWays = Math.max(1, maxWaysBonus);
+
+    // The effective interval at that multiplier, through the same clamp FiringSystem
+    // applies.
+    const interval = Math.min(
+      FIRE_INTERVAL_CEIL_MS,
+      Math.max(FIRE_INTERVAL_FLOOR_MS, FIRE_INTERVAL_MS / maxFireRateMult),
+    );
+
+    // Volleys per second. The STEADY rate is 1/interval — but the non-aiming branch
+    // re-seeds `_accumMs` to the interval, so an aim channel toggling on alternate fixed
+    // steps fires every SECOND tick regardless of how long the interval is. Whichever is
+    // larger binds.
+    const steadyVolleysPerSec = 1000 / interval;
+    const toggleVolleysPerSec = 1000 / (2 * FIXED_STEP_MS);
+    const volleysPerSec = Math.max(steadyVolleysPerSec, toggleVolleysPerSec);
+
+    // Longest straight-line flight before the border despawn.
+    const flightSec = DIAGONAL / BULLET_SPEED;
+
+    return Math.ceil(volleysPerSec * maxWays * flightSec);
+  }
+
+  it('the prewarm covers the bound recomputed from the LIVE constants + shipped registry', () => {
+    const bound = bulletPoolBound();
+    // Sanity: the bound is a real, non-degenerate number (a broken derivation that
+    // collapsed to 0 would otherwise pass the assertion below vacuously).
+    expect(bound).toBeGreaterThan(400);
+    expect(BULLET_POOL_PREWARM).toBeGreaterThanOrEqual(bound);
+  });
+
+  it('the TOGGLE path — not the steady state — is what the bound has to cover', () => {
+    // The specific error the original derivation made. If a retune ever makes the steady
+    // rate the binding term this test stops being meaningful, so state the relationship
+    // explicitly rather than leaving it implicit in a Math.max.
+    const interval = FIRE_INTERVAL_MS / 1.7; // the fastest authorable cadence
+    expect(interval).toBeGreaterThan(2 * FIXED_STEP_MS);
+  });
+
+  it.each([
+    // The sizing geometry itself: a bullet crossing the full inset diagonal, which is
+    // the flight time the bound is computed from.
+    [
+      'inset corner, firing across the diagonal',
+      { x: INSET + 1, y: INSET + 1 },
+      [INNER_W / DIAGONAL, INNER_H / DIAGONAL],
+      false,
+    ],
+    // The full arena WIDTH — the longest single-axis flight.
+    ['left inset edge, aiming +x', { x: INSET + 1, y: ARENA_HEIGHT / 2 }, [1, 0], false],
+    // The achievable PEAK: aim toggling inactive→active on alternate fixed steps (stick
+    // deadzone jitter / tap-aiming) fires a volley every second tick — 30 volleys/s at
+    // the 60Hz step, well above the 18.89/s steady cadence the original derivation used.
+    // Measured peak here: 456 in-flight, which is what forced the prewarm past 320.
+    [
+      'inset corner, TOGGLING aim every tick across the diagonal',
+      { x: INSET + 1, y: INSET + 1 },
+      [INNER_W / DIAGONAL, INNER_H / DIAGONAL],
+      true,
+    ],
+    [
+      'left inset edge, TOGGLING aim every tick along +x',
+      { x: INSET + 1, y: ARENA_HEIGHT / 2 },
+      [1, 0],
+      true,
+    ],
+  ])(
+    'never runs the pool factory at the worst authorable build — %s (NFR2)',
+    (_label, shipPos, aim, toggleAim) => {
+      const { input, system } = makeSystem({
+        ship: shipPos,
+        aim,
+        playerStats: { ...createPlayerStats(), ...WORST_AUTHORABLE_BUILD },
+      });
+      const prewarmTotal =
+        system.bulletPool.activeCount + system.bulletPool.freeCount;
+      expect(prewarmTotal).toBe(BULLET_POOL_PREWARM);
+
+      // Long enough for the in-flight population to reach its steady peak: the max
+      // flight is ~1.84s ≈ 110 ticks, so 3000 ticks is ~27 full fill/drain cycles.
+      let peak = 0;
+      for (let i = 0; i < 3000; i++) {
+        if (toggleAim) {
+          if (i % 2 === 0) input.setAim(aim[0], aim[1]);
+          else input.clearAim();
+        }
+        system.fixedUpdate(DT);
+        peak = Math.max(peak, system.bulletPool.activeCount);
+        // The load-bearing assertion: EQUALITY, so the moment the factory runs even
+        // once (the pool only ever grows) this fails.
+        expect(system.bulletPool.activeCount + system.bulletPool.freeCount).toBe(
+          prewarmTotal,
+        );
+      }
+      // And the run genuinely stressed the pool — otherwise the assertion above would
+      // pass vacuously in a geometry where bullets despawn immediately (which is exactly
+      // how the arena-centre and spawn-point cases gave false confidence). 200 sits above
+      // the arena-centre geometry's peak of 146 and far above the spawn point's 11, so
+      // this threshold FAILS for any case that quietly drifts back to a short flight
+      // path. Measured here: 282 / 290 sustained, 442 / 456 toggling.
+      expect(peak).toBeGreaterThan(200);
+      expect(peak).toBeLessThanOrEqual(bulletPoolBound());
+    },
+  );
 });

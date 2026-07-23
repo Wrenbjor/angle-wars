@@ -5,7 +5,8 @@ import { System } from '../core/System.js';
 //
 // Runs LAST in the world pipeline (registered after ScreenFeedbackSystem), so
 // within each fixed tick every source it reads is already final: the fire count
-// (firingSystem.shotsFiredCount), the bullet-kill count (collisionSystem.
+// (firingSystem.volleysFiredCount — fire EVENTS, falling back to shotsFiredCount on a
+// pre-10.3 source), the bullet-kill count (collisionSystem.
 // bulletKillCount — this tick's bullet kills, before BlackHole/Bomb appends), the
 // spawn count (spawnDirector.spawnCount), the bomb shockwave rising edge
 // (bombSystem.shockwaveMs), the death latch (playerDeathSystem.deathSeq increment),
@@ -35,7 +36,8 @@ import { System } from '../core/System.js';
 export class AudioDirectorSystem extends System {
   /**
    * @param {import('./FiringSystem.js').FiringSystem} firingSystem Source of this
-   *   tick's shots-fired count (shotsFiredCount) — the fire SFX cue.
+   *   tick's fire-event count (volleysFiredCount, falling back to shotsFiredCount when
+   *   absent) — the fire SFX cue.
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem Source of
    *   this tick's bullet-kill count (bulletKillCount) — the kill SFX cue.
    * @param {import('./BombSystem.js').BombSystem} bombSystem Source of the bomb
@@ -95,10 +97,31 @@ export class AudioDirectorSystem extends System {
    *   carry this tick's per-tick counts/latches); kept for the System signature.
    */
   fixedUpdate(_dt) {
-    // (1) Fire — accumulate this tick's shots fired (read-only counter on FiringSystem).
+    // (1) Fire — accumulate this tick's fire EVENTS (read-only counter on FiringSystem).
+    //     The cue counts VOLLEYS, not bullets: a gunshot is a per-trigger-pull event, and
+    //     since Story 10.3 one pull can spawn up to 9 bullets (Spread Cannon Lv5). Read
+    //     off `shotsFiredCount` — which now means BULLETS spawned — a spread build would
+    //     enqueue 9 cues per interval and peg AUDIO_SFX_FIRE_MAX_PER_FRAME on every tick,
+    //     turning a stream of shots into a flat wall of noise.
+    //     `volleysFiredCount` is absent on pre-10.3 FiringSystem stubs, so fall back to
+    //     `shotsFiredCount` there — identical for every single-bullet volley.
+    //     The probe is `Number.isFinite`, NOT `!== undefined`: a `null` (or otherwise
+    //     non-numeric) volley counter passes an `!== undefined` test and then fails
+    //     `n > 0` silently, dropping the fire cue entirely while bullets were spawning.
+    //     Requiring a real number falls back for every non-numeric value, so the worst
+    //     case is the pre-10.3 per-bullet cue rather than SILENCE.
+    //     The FALLBACK's own value is finiteness-checked too. `n > 0` is true for the
+    //     string '4', and `this._pendingFire += '4'` on a numeric 0 yields the STRING
+    //     '04' — every later tick then concatenates instead of adding, and
+    //     consumeSfxRequests().fire hands a string to the render loop's
+    //     AUDIO_SFX_FIRE_MAX_PER_FRAME comparison. Guarding only the volley counter
+    //     moved that failure one branch down rather than removing it.
     const fs = this.firingSystem;
     if (fs) {
-      const n = fs.shotsFiredCount;
+      const raw = Number.isFinite(fs.volleysFiredCount)
+        ? fs.volleysFiredCount
+        : fs.shotsFiredCount;
+      const n = Number.isFinite(raw) ? raw : 0;
       if (n > 0) this._pendingFire += n;
     }
 
