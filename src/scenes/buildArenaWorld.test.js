@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildArenaWorld } from './buildArenaWorld.js';
+import { ITEM_REGISTRY } from '../config/itemRegistry.js';
+import { PLAYER_STATS_BASE } from '../state/PlayerStats.js';
 import {
   FIXED_STEP_MS,
   PARTICLE_MAX,
@@ -69,6 +71,7 @@ const RETURN_HANDLES = [
   'scoreState',
   'playerState',
   'progressionState',
+  'playerStats',
   'enemyPools',
   'deathPools',
   'highScoreStorage',
@@ -277,6 +280,20 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.progressionState.banishCharges).toBe(BANISH_INITIAL_CHARGES);
     expect(ctx.progressionState.banishedIds).toBeInstanceOf(Set);
     expect(ctx.progressionState.banishedIds.size).toBe(0);
+    // Story 10.1: an empty remnant set too.
+    expect(ctx.progressionState.remnantIds).toBeInstanceOf(Set);
+    expect(ctx.progressionState.remnantIds.size).toBe(0);
+  });
+
+  it('wires the LevelUpSystem (Story 10.1) with the shared item registry + playerStats store', () => {
+    const ctx = buildArenaWorld();
+    // The offer draws from the shipped ITEM_REGISTRY (the ONE definition source), and the
+    // runtime modifier store is the SAME instance the factory returns (so the on-pick
+    // fold and the item gameplay seams read one store).
+    expect(ctx.levelUpSystem.registry).toBe(ITEM_REGISTRY);
+    expect(ctx.levelUpSystem.playerStats).toBe(ctx.playerStats);
+    // Fresh run: the store is at its base (every field at its base value).
+    expect(ctx.playerStats).toEqual({ ...PLAYER_STATS_BASE });
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {

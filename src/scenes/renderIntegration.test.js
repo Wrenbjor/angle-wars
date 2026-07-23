@@ -367,6 +367,47 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     expect(arenaSrc).toMatch(/r\.kind !== 'reroll'\)\s*continue/);
     expect(arenaSrc).toMatch(/_actionRects[\s\S]*?queueReroll\(\)/);
   });
+
+  // --- Story 10.1: the VARIABLE-LENGTH offer render contract -------------------
+  // The offer is no longer always exactly CARD_OFFER_SIZE: it is SHORT (2 or 1) when
+  // fewer items are eligible and EMPTY when none are — reachable in normal play with the
+  // two starting banish charges against the 4-item registry. Three render-side sites must
+  // bound on the LIVE offer length; all three are Phaser-coupled, so they are pinned here
+  // at the source like VG1-VG14.
+
+  it('VG15: card focus wraps against the LIVE offer length, never a hardcoded 3', () => {
+    // A revert to `(this._cardFocus + dir + 3) % 3` leaves focus on an unrendered panel of
+    // a 2-card offer: no panel highlights, and confirm calls queueSelection(2), which the
+    // sim guard-no-ops — the player presses confirm and nothing happens, silently.
+    expect(arenaSrc).toMatch(
+      /const len = this\.levelUpSystem\.currentOffer\.length;[\s\S]{0,160}?_cardFocus = \(this\._cardFocus \+ dir \+ len\) % len/,
+    );
+    // The load-bearing negative: no modulo against a literal 3 in the card-nav path.
+    expect(arenaSrc).not.toMatch(/_cardFocus \+ dir \+ 3\) % 3/);
+    // And the empty-offer guard, so `% 0` can never yield NaN focus.
+    expect(arenaSrc).toMatch(/if \(len <= 0\) return;/);
+  });
+
+  it('VG16: both overlay pointer hit-test loops clamp to the live offer length', () => {
+    // _cardRects / _cardBanishRects are a fixed 3. Reverting `shown` to
+    // `this._cardRects.length` lets a tap in a hidden short-offer panel set _cardFocus and
+    // latch an out-of-range select (sim-guarded no-op) or short-circuit the banish path —
+    // either way the tap is swallowed and every visible panel loses focus.
+    expect(arenaSrc).toMatch(
+      /const shown = Math\.min\(\s*this\._cardRects\.length,\s*this\.levelUpSystem\.currentOffer\.length,?\s*\)/,
+    );
+    // BOTH loops (banish glyphs first, then card rects) must bound on `shown`.
+    expect(arenaSrc.match(/for \(let i = 0; i < shown; i\+\+\)/g) || []).toHaveLength(2);
+  });
+
+  it('VG17: the card-panel render gates each panel on i < offer.length', () => {
+    // Previously unreachable dead-safety (the offer was ALWAYS three); Story 10.1 makes it
+    // load-bearing. Dropping the `i < offer.length` half is now a hard crash, not a
+    // cosmetic slip: title.setText(offer[i].title) throws every frame a short offer is open.
+    expect(arenaSrc).toMatch(
+      /const shown = cardsOpen && i < offer\.length;[\s\S]{0,160}?if \(!shown\) continue;/,
+    );
+  });
 });
 
 describe('render-integration — touch twin-stick wiring (ArenaScene, Story 7.1)', () => {

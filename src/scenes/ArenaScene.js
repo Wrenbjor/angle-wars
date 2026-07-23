@@ -901,7 +901,12 @@ export class ArenaScene extends Phaser.Scene {
     // each guards its own condition (selectionActive here, gameOver there), which are
     // mutually exclusive (the player is invulnerable, not game-over, during a level-up).
     const moveCardFocus = (dir) => {
-      this._cardFocus = (this._cardFocus + dir + 3) % 3;
+      // Story 10.1: the offer is variable length (0..CARD_OFFER_SIZE), so wrap the focus
+      // against the CURRENT offer length rather than a hardcoded 3 — focus never lands on
+      // an unrendered panel. Guarded when the offer is empty (nothing to focus).
+      const len = this.levelUpSystem.currentOffer.length;
+      if (len <= 0) return;
+      this._cardFocus = (this._cardFocus + dir + len) % len;
     };
     // Expose for the update() gamepad-nav poll (bound to `this` so both paths share it).
     this._moveCardFocus = moveCardFocus;
@@ -973,13 +978,21 @@ export class ArenaScene extends Phaser.Scene {
       if (this._cardConfirmGraceMs > 0) return;
       const px = pointer.x;
       const py = pointer.y;
+      // Story 10.1: the offer is variable length, but _cardRects/_cardBanishRects are a
+      // fixed 3. Clamp BOTH hit-test loops to the LIVE offer length so a tap in a hidden
+      // (short/empty-offer) panel's region can never set focus, select, or banish an
+      // out-of-range slot — mirroring the keyboard/gamepad focus-wrap clamp.
+      const shown = Math.min(
+        this._cardRects.length,
+        this.levelUpSystem.currentOffer.length,
+      );
       // Story 8.5: the per-card banish glyph (top-right of each panel) is hit-tested
       // FIRST and short-circuits — a tap on it banishes THAT card (a specific target the
       // focus-based banish cannot reach on touch) and must NOT also commit a pick. The
       // return fires even when depleted so a tap on the glyph never falls through to a
       // pick; queueBanish is only called when a charge remains (the sim latch also guards
       // it). This is the touch/mouse banish path; keyboard B / gamepad LB stay focus-based.
-      for (let i = 0; i < this._cardBanishRects.length; i++) {
+      for (let i = 0; i < shown; i++) {
         const b = this._cardBanishRects[i];
         if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
           if (this.progressionState.banishCharges > 0) {
@@ -988,7 +1001,7 @@ export class ArenaScene extends Phaser.Scene {
           return;
         }
       }
-      for (let i = 0; i < this._cardRects.length; i++) {
+      for (let i = 0; i < shown; i++) {
         const r = this._cardRects[i];
         if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
           this._cardFocus = i;

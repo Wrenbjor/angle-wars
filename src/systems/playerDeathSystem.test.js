@@ -81,9 +81,11 @@ describe('PlayerDeathSystem', () => {
     // multiplier. Without this, the "unchanged on non-final death" AC has zero coverage.
     const { ship, enemyPool, playerState, system } = makeSystem();
     const progressionState = createProgressionState();
-    applyCard(progressionState, { id: 'card-a', statDelta: 3 });
-    applyCard(progressionState, { id: 'card-a', statDelta: 3 });
-    applyCard(progressionState, { id: 'card-b', statDelta: 1 });
+    // Story 10.1: applyCard increments the owned COUNT (= the item level) and bumps the
+    // legacy debugStat pick counter by 1 per pick (statDelta was retired).
+    applyCard(progressionState, { id: 'card-a' });
+    applyCard(progressionState, { id: 'card-a' });
+    applyCard(progressionState, { id: 'card-b' });
     // Story 8.5: seed the reroll/banish economy fields to NON-default values too, so
     // "untouched by death" is proven against real mutations — a targeted death-path reset
     // of just these fields (to their fresh-run defaults) would otherwise read as untouched.
@@ -105,12 +107,14 @@ describe('PlayerDeathSystem', () => {
     expect(JSON.stringify(progressionState)).toBe(before);
     expect(progressionState).toEqual({
       ownedCards: { 'card-a': 2, 'card-b': 1 },
-      debugStat: 7,
+      debugStat: 3, // 3 picks → pick counter 3 (Story 10.1: no statDelta)
       // Story 8.5: the run-scoped reroll/banish economy fields survive the death path
       // intact at their SEEDED (non-default) values — proving death does not reset them.
       rerollCharges: 3,
       banishCharges: 0,
       banishedIds: new Set(['off-rapid']),
+      // Story 10.1: the run-scoped remnant set survives death too (empty here).
+      remnantIds: new Set(),
     });
   });
 

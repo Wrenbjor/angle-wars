@@ -1,11 +1,12 @@
 import { System } from '../core/System.js';
-import { PLACEHOLDER_CARDS } from '../config/cards.js';
+import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 import {
   LEVELUP_INVULN_FLOOR,
   LEVELUP_LANDING_INVULN_MS,
   REROLL_LEVEL_GRANTS,
 } from '../config/constants.js';
 import { applyCard } from '../state/ProgressionState.js';
+import { recomputePlayerStats } from '../state/PlayerStats.js';
 import { drawCardOffer } from './cardOffer.js';
 
 // LevelUpSystem — the sim-side state machine of the Epic 8 level-up moment (Story 8.3,
@@ -66,16 +67,54 @@ export class LevelUpSystem extends System {
    *   Shared run-scoped card progression — a selection applies its card here, its
    *   ownership drives the weighted offer draw, and (Story 8.5) its reroll/banish charges
    *   and banished-id set drive the reroll/banish tools + grants.
+   * @param {ReadonlyArray<{ id:string, rarity:number, track:string, maxLevel:number }>} [registry=ITEM_REGISTRY]
+   *   The item registry the offer draws from (Story 10.1) — the ONE definition source
+   *   the offer/application/owned-state/level all read. Injectable so tests can drive a
+   *   synthetic pool; defaults to the shipped ITEM_REGISTRY.
+   * @param {Object<string, number>} [playerStats] The runtime modifier store recomputed
+   *   after each pick via the PlayerStats fold (Story 10.1). Optional so the pre-10.1
+   *   test stubs that omit it still run (the fold is skipped when absent).
    * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the weighted
    *   offer draw (Story 8.4). Threaded from buildArenaWorld so the offer routes through
    *   the SAME seedable stream the spawn systems use; injectable so the draw is
    *   deterministic and unit-testable.
    */
-  constructor(levelSystem, playerState, progressionState, rng = Math.random) {
+  constructor(
+    levelSystem,
+    playerState,
+    progressionState,
+    registry = ITEM_REGISTRY,
+    playerStats = null,
+    rng = Math.random,
+  ) {
     super();
+    // Story 10.1 inserted `registry` (and `playerStats`) at positional slots 4/5 — slot 4
+    // is where `rng` used to live. A stale caller threading its rng here would make
+    // `pool.length` undefined, so every draw returns an EMPTY offer and the empty-offer
+    // auto-drain would silently swallow every owed pick for the whole run — no throw, no
+    // visible failure. Fail loudly at construction instead.
+    if (!Array.isArray(registry)) {
+      throw new TypeError(
+        'LevelUpSystem: `registry` (arg 4) must be an array of item definitions — ' +
+          'note that `rng` moved to arg 6 in Story 10.1.',
+      );
+    }
+    // Same trap one slot over: a caller that threaded `rng` at arg 5 would pass the
+    // check above (registry is fine) and bind its rng to `playerStats`, leaving `rng`
+    // defaulted to Math.random — the offer silently leaves the SEEDABLE stream and the
+    // fold writes stat fields onto the rng function, with nothing thrown. `playerStats`
+    // is a plain object or absent; a function is never valid here.
+    if (playerStats != null && typeof playerStats !== 'object') {
+      throw new TypeError(
+        'LevelUpSystem: `playerStats` (arg 5) must be a PlayerStats object or omitted — ' +
+          'note that `rng` moved to arg 6 in Story 10.1.',
+      );
+    }
     this.levelSystem = levelSystem;
     this.playerState = playerState;
     this.progressionState = progressionState;
+    this.registry = registry;
+    this.playerStats = playerStats;
     this._rng = rng;
     // Number of owed selections not yet drained (a COUNT, not a bool).
     this.pendingSelections = 0;
@@ -143,21 +182,31 @@ export class LevelUpSystem extends System {
    */
   fixedUpdate() {
     // (1) Consume the latched choice (read-and-clear). Apply it ONLY when a
-    // selection is actually pending, an offer of three is present, and the index is
-    // a valid slot — otherwise it is a guarded no-op (invalid index / none pending),
-    // no throw. A valid pick applies the card, drains one owed selection, and clears
-    // the offer so step (3) rebuilds a fresh three if more remain.
+    // selection is actually pending, a non-empty offer is present (Story 10.1: the
+    // offer is variable length, 1..CARD_OFFER_SIZE), and the index is a valid slot
+    // within it — otherwise a guarded no-op (invalid index / none pending), no throw.
+    // A valid pick applies the card (re-folding PlayerStats), drains one owed
+    // selection, and clears the offer so step (3) rebuilds if more remain.
     if (this._queuedChoice !== null) {
       const index = this._queuedChoice;
       this._queuedChoice = null;
       if (
         this.pendingSelections > 0 &&
-        this.currentOffer.length === 3 &&
+        this.currentOffer.length >= 1 &&
         Number.isInteger(index) &&
         index >= 0 &&
-        index < 3
+        index < this.currentOffer.length
       ) {
         applyCard(this.progressionState, this.currentOffer[index]);
+        // Story 10.1: re-fold the runtime modifier store from the (now-updated) owned
+        // set — the ONLY place the fold runs (on a level change, never per frame).
+        if (this.playerStats) {
+          recomputePlayerStats(
+            this.playerStats,
+            this.progressionState.ownedCards,
+            this.registry,
+          );
+        }
         this.pendingSelections--;
         this.currentOffer = [];
         // When this pick empties the queue, grant a longer LANDING invulnerability so
@@ -179,18 +228,19 @@ export class LevelUpSystem extends System {
 
     // (1b) Consume the reroll latch, then the banish latch (Story 8.5), in that order.
     // Both read-and-clear their latch and are honored ONLY while a selection is active,
-    // a full 3-card offer is present, and the matching charge is positive (a banish also
-    // requires a valid slot index) — otherwise a guarded no-op that spends no charge and
-    // does not throw. On success each clears currentOffer so step (3) redraws a fresh
-    // weighted trio (reroll: respecting weights/slots/banished; banish: also excluding
-    // the just-banished id). pendingSelections is left unchanged: the same pick is still
-    // owed and the player stays invulnerable. Because both require currentOffer.length ===
-    // 3, a same-tick pick above (which empties the offer) makes them no-op this tick.
+    // a NON-EMPTY offer is present (Story 10.1: variable length, not necessarily 3), and
+    // the matching charge is positive (a banish also requires a valid slot index within
+    // the offer) — otherwise a guarded no-op that spends no charge and does not throw. On
+    // success each clears currentOffer so step (3) redraws a fresh weighted offer
+    // (reroll: respecting weights/slots/banished; banish: also excluding the
+    // just-banished id). pendingSelections is left unchanged: the same pick is still owed
+    // and the player stays invulnerable. Because both require a non-empty offer, a
+    // same-tick pick above (which empties the offer) makes them no-op this tick.
     if (this._queuedReroll) {
       this._queuedReroll = false;
       if (
         this.selectionActive &&
-        this.currentOffer.length === 3 &&
+        this.currentOffer.length >= 1 &&
         this.progressionState.rerollCharges > 0
       ) {
         this.progressionState.rerollCharges--;
@@ -202,10 +252,10 @@ export class LevelUpSystem extends System {
       this._queuedBanish = null;
       if (
         this.selectionActive &&
-        this.currentOffer.length === 3 &&
+        this.currentOffer.length >= 1 &&
         Number.isInteger(index) &&
         index >= 0 &&
-        index < 3 &&
+        index < this.currentOffer.length &&
         this.progressionState.banishCharges > 0
       ) {
         this.progressionState.banishedIds.add(this.currentOffer[index].id);
@@ -239,16 +289,32 @@ export class LevelUpSystem extends System {
     // is pending, clear the offer (overlay closed, time restored).
     if (this.pendingSelections > 0) {
       if (this.currentOffer.length === 0) {
-        // Story 8.4: a fresh weighted-without-replacement draw through the injected
-        // `_rng`, reflecting the just-updated ownership (a post-pick tick of a
-        // multi-level jump re-draws against the newly owned card). Returns a NEW array
-        // per call, preserving the 8.3 freshOffer focus-reset (keyed on array identity).
+        // Story 8.4/10.1: a fresh weighted-without-replacement draw through the injected
+        // `_rng` from the injected registry, reflecting the just-updated ownership (a
+        // post-pick tick of a multi-level jump re-draws against the newly owned card).
+        // Returns a NEW array per call, preserving the 8.3 freshOffer focus-reset (keyed
+        // on array identity). The offer is VARIABLE LENGTH (0..CARD_OFFER_SIZE): only
+        // eligible cards, no excluded card padded in (Story 10.1 exclusion purity).
         this.currentOffer = drawCardOffer({
-          pool: PLACEHOLDER_CARDS,
+          pool: this.registry,
           progressionState: this.progressionState,
           rng: this._rng,
           banishedIds: this.progressionState.banishedIds,
         });
+      }
+      // Story 10.1 empty-offer AUTO-DRAIN: an EMPTY eligible pool (0 cards — every owned
+      // item maxed, or all banished) drains ALL owed picks with NO card applied, grants
+      // the landing invuln (as on a normal final pick), and closes the overlay. Without
+      // this, pendingSelections would stay > 0 with an empty offer and hold the player
+      // invulnerable forever on an overlay with no pickable card.
+      if (this.currentOffer.length === 0) {
+        this.pendingSelections = 0;
+        this.playerState.invulnMs = Math.max(
+          this.playerState.invulnMs,
+          LEVELUP_LANDING_INVULN_MS,
+        );
+        this.currentOffer = [];
+        return;
       }
       if (this.playerState.invulnMs < LEVELUP_INVULN_FLOOR) {
         this.playerState.invulnMs = LEVELUP_INVULN_FLOOR;

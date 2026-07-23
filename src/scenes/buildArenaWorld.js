@@ -42,6 +42,8 @@ import { XpOrbSystem } from '../systems/XpOrbSystem.js';
 import { LevelSystem } from '../systems/LevelSystem.js';
 import { LevelUpSystem } from '../systems/LevelUpSystem.js';
 import { createProgressionState } from '../state/ProgressionState.js';
+import { createPlayerStats } from '../state/PlayerStats.js';
+import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 import { ScreenFeedbackSystem } from '../systems/ScreenFeedbackSystem.js';
 import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 
@@ -151,6 +153,10 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // touched by the death path, so it resets on a fresh run and survives a non-final
   // death (mirrors scoreState.xp).
   const progressionState = createProgressionState();
+  // Runtime player-stat modifier store (Story 10.1): folded from the owned build on
+  // each card pick (LevelUpSystem), read by the item gameplay seams (Epic 10.2–10.5).
+  // A plain-data object beside progressionState; run-scoped, never touched by death.
+  const playerStats = createPlayerStats();
   // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
   // another enemy pool, and deliberately NOT shared into the CollisionSystem /
   // BombSystem / BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire,
@@ -370,6 +376,8 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     levelSystem,
     playerState,
     progressionState,
+    ITEM_REGISTRY,
+    playerStats,
     _rng,
   );
   world.addSystem(levelUpSystem);
@@ -470,6 +478,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     scoreState,
     playerState,
     progressionState,
+    playerStats,
     enemyPools,
     deathPools,
     highScoreStorage: port,

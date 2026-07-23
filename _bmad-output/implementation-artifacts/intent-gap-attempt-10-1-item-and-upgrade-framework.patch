@@ -1,0 +1,1661 @@
+diff --git a/src/config/cards.js b/src/config/cards.js
+deleted file mode 100644
+index 7b6eaeb..0000000
+--- a/src/config/cards.js
++++ /dev/null
+@@ -1,49 +0,0 @@
+-// Placeholder card pool (Story 8.4 / Epic 8 progression).
+-//
+-// The level-up moment (LevelUpSystem + ArenaScene overlay) offers three cards on
+-// a level-up, drawn by a deterministic weighted-without-replacement draw (see
+-// systems/cardOffer.js) from THIS pool. These are PLACEHOLDERS: selecting one only
+-// stacks a debug stat and records ownership in the run-scoped progressionState (see
+-// ProgressionState.js) — there is no real item/upgrade content yet. Epic 10 replaces
+-// this pool with the real weighted item registry; the level-up loop, the ownership-
+-// count model, the weighted draw, and the selection state machine are designed so
+-// that swap needs no rework here.
+-//
+-// Each card is a frozen { id, title, statDelta, rarity, track }:
+-//   - id        : stable unique key (the ownership map is keyed by it).
+-//   - title     : human-readable label the overlay renders.
+-//   - statDelta : the amount this card adds to progressionState.debugStat when
+-//                 applied (a plain numeric placeholder effect).
+-//   - rarity    : the positive BASE weight the draw multiplies by the ownership /
+-//                 level / slot factors (varied across cards so weighting is
+-//                 observable). Draw-only metadata — applyCard ignores it.
+-//   - track     : 'offense' or 'defense' — which build track the card belongs to,
+-//                 for the per-track slot-limit cap (SLOT_LIMIT_OFFENSE /
+-//                 SLOT_LIMIT_DEFENSE). Draw-only metadata.
+-//
+-// The pool is sized 6 offense + 5 defense = 11 so that even with BOTH tracks at
+-// their slot limit (5 offense + 4 defense distinct owned) at least 9 cards still
+-// carry positive weight — the exactly-three draw can never underflow.
+-
+-/**
+- * The Epic-8 placeholder pool the weighted draw (Story 8.4) offers from: 6 offense
+- * + 5 defense = 11 cards with distinct ids/titles and varied rarities. Frozen so no
+- * consumer can mutate the shared registry. Epic 10 replaces the content with real
+- * weighted items.
+- * @type {ReadonlyArray<{ id: string, title: string, statDelta: number, rarity: number, track: 'offense'|'defense' }>}
+- */
+-export const PLACEHOLDER_CARDS = Object.freeze([
+-  // --- Offense (6) ---
+-  Object.freeze({ id: 'off-rapid', title: 'Rapid Fire', statDelta: 1, rarity: 5, track: 'offense' }),
+-  Object.freeze({ id: 'off-spread', title: 'Spread Shot', statDelta: 1, rarity: 4, track: 'offense' }),
+-  Object.freeze({ id: 'off-pierce', title: 'Piercing Rounds', statDelta: 1, rarity: 3, track: 'offense' }),
+-  Object.freeze({ id: 'off-charge', title: 'Charge Beam', statDelta: 1, rarity: 2, track: 'offense' }),
+-  Object.freeze({ id: 'off-homing', title: 'Homing Shots', statDelta: 1, rarity: 2, track: 'offense' }),
+-  Object.freeze({ id: 'off-crit', title: 'Critical Strike', statDelta: 1, rarity: 1, track: 'offense' }),
+-  // --- Defense (5) ---
+-  Object.freeze({ id: 'def-shield', title: 'Energy Shield', statDelta: 1, rarity: 5, track: 'defense' }),
+-  Object.freeze({ id: 'def-armor', title: 'Reinforced Armor', statDelta: 1, rarity: 4, track: 'defense' }),
+-  Object.freeze({ id: 'def-regen', title: 'Regeneration', statDelta: 1, rarity: 3, track: 'defense' }),
+-  Object.freeze({ id: 'def-dodge', title: 'Evasion', statDelta: 1, rarity: 2, track: 'defense' }),
+-  Object.freeze({ id: 'def-thorns', title: 'Thorns', statDelta: 1, rarity: 1, track: 'defense' }),
+-]);
+diff --git a/src/config/cards.test.js b/src/config/cards.test.js
+deleted file mode 100644
+index 74becd0..0000000
+--- a/src/config/cards.test.js
++++ /dev/null
+@@ -1,90 +0,0 @@
+-import { describe, it, expect } from 'vitest';
+-import { PLACEHOLDER_CARDS } from './cards.js';
+-import { drawCardOffer } from '../systems/cardOffer.js';
+-import { createProgressionState } from '../state/ProgressionState.js';
+-import {
+-  SLOT_LIMIT_OFFENSE,
+-  SLOT_LIMIT_DEFENSE,
+-  CARD_OFFER_SIZE,
+-} from './constants.js';
+-
+-// Story 8.4 — the placeholder card POOL invariants. Epic 8's offer is now a weighted
+-// draw of CARD_OFFER_SIZE distinct cards from this pool (see systems/cardOffer.js), so
+-// the invariants guard the shape the weighted draw + slot limits depend on. Epic 10
+-// replaces the content.
+-//
+-// Worst case: BOTH tracks full (SLOT_LIMIT_OFFENSE + SLOT_LIMIT_DEFENSE distinct owned)
+-// zeroes only the unowned-in-a-full-track cards. The pool carries at least
+-// SLOT_LIMIT_OFFENSE + 1 offense and SLOT_LIMIT_DEFENSE + 1 defense cards, so even then
+-// at least (1 + 1) owned-or-offerable cards plus every owned card stay positive — always
+-// >= CARD_OFFER_SIZE positive-weight cards, so a 3-draw can never underflow.
+-
+-describe('PLACEHOLDER_CARDS — pool invariants', () => {
+-  const offense = PLACEHOLDER_CARDS.filter((c) => c.track === 'offense');
+-  const defense = PLACEHOLDER_CARDS.filter((c) => c.track === 'defense');
+-
+-  it('carries enough of each track that a track can fill and a 3-draw still succeeds', () => {
+-    // > the limit so a track can reach its cap AND still leave an owned/offerable card.
+-    expect(offense.length).toBeGreaterThanOrEqual(SLOT_LIMIT_OFFENSE + 1);
+-    expect(defense.length).toBeGreaterThanOrEqual(SLOT_LIMIT_DEFENSE + 1);
+-    // Even both tracks full, the owned-in-track cards stay offerable (only the
+-    // unowned-in-a-full-track cards zero), so >= SLOT_LIMIT_OFFENSE + SLOT_LIMIT_DEFENSE
+-    // positive-weight candidates remain — always >= CARD_OFFER_SIZE.
+-    const worstCasePositive = SLOT_LIMIT_OFFENSE + SLOT_LIMIT_DEFENSE;
+-    expect(worstCasePositive).toBeGreaterThanOrEqual(CARD_OFFER_SIZE);
+-  });
+-
+-  it('every card has a distinct id', () => {
+-    const ids = PLACEHOLDER_CARDS.map((c) => c.id);
+-    expect(new Set(ids).size).toBe(ids.length);
+-  });
+-
+-  it('every card has a non-empty title, numeric statDelta, positive rarity, valid track', () => {
+-    for (const card of PLACEHOLDER_CARDS) {
+-      expect(typeof card.title).toBe('string');
+-      expect(card.title.length).toBeGreaterThan(0);
+-      expect(typeof card.statDelta).toBe('number');
+-      expect(Number.isFinite(card.statDelta)).toBe(true);
+-      expect(typeof card.rarity).toBe('number');
+-      expect(card.rarity).toBeGreaterThan(0);
+-      expect(['offense', 'defense']).toContain(card.track);
+-    }
+-  });
+-
+-  it('varies rarities so weighting is observable (not all equal)', () => {
+-    const rarities = new Set(PLACEHOLDER_CARDS.map((c) => c.rarity));
+-    expect(rarities.size).toBeGreaterThan(1);
+-  });
+-
+-  it('the pool and every entry are frozen (shared immutable pool)', () => {
+-    expect(Object.isFrozen(PLACEHOLDER_CARDS)).toBe(true);
+-    for (const card of PLACEHOLDER_CARDS) {
+-      expect(Object.isFrozen(card)).toBe(true);
+-    }
+-  });
+-
+-  it('BOTH tracks full against the REAL pool: draw still returns exactly 3 distinct OWNED cards (no zero-weight fill)', () => {
+-    // The headline safety claim, proven behaviorally end-to-end: own SLOT_LIMIT_OFFENSE
+-    // distinct offense + SLOT_LIMIT_DEFENSE distinct defense ids from the shipped pool,
+-    // so every track is full and the (few) unowned-in-track cards weigh 0. drawCardOffer
+-    // must still return exactly CARD_OFFER_SIZE distinct cards, and every one must be an
+-    // OWNED (positive-weight) card — no zero-weight safety-net fill slipped in.
+-    const ownedOffenseIds = offense.slice(0, SLOT_LIMIT_OFFENSE).map((c) => c.id);
+-    const ownedDefenseIds = defense.slice(0, SLOT_LIMIT_DEFENSE).map((c) => c.id);
+-    const ownedIds = new Set([...ownedOffenseIds, ...ownedDefenseIds]);
+-    const prog = createProgressionState();
+-    for (const id of ownedIds) prog.ownedCards[id] = 1;
+-
+-    // Drive several draws over a varied rng sequence; every draw must satisfy the claim.
+-    let i = 0;
+-    const seq = [0.02, 0.37, 0.61, 0.88, 0.5, 0.14, 0.73, 0.29, 0.95, 0.44];
+-    const rng = () => seq[i++ % seq.length];
+-    for (let t = 0; t < 25; t++) {
+-      const offer = drawCardOffer({ pool: PLACEHOLDER_CARDS, progressionState: prog, rng });
+-      expect(offer).toHaveLength(CARD_OFFER_SIZE);
+-      const ids = offer.map((c) => c.id);
+-      expect(new Set(ids).size).toBe(ids.length); // distinct
+-      for (const id of ids) expect(ownedIds.has(id)).toBe(true); // all owned/positive
+-    }
+-  });
+-});
+diff --git a/src/config/constants.js b/src/config/constants.js
+index cb72793..babfe93 100644
+--- a/src/config/constants.js
++++ b/src/config/constants.js
+@@ -715,6 +715,24 @@ export const XP_CURVE_BASE = 8;
+ export const XP_CURVE_LINEAR = 6;
+ export const XP_CURVE_QUAD = 0.55;
+ 
++// --- Item & upgrade framework (Story 10.1 / Epic 10) ------------------------
++// The data-driven item registry (src/config/itemRegistry.js) and the runtime
++// PlayerStats fold (src/state/PlayerStats.js) build every arsenal item on ONE
++// definition: an item's level is its owned count (ownedCards[id]), capped here.
++// A maxed item (level >= ITEM_MAX_LEVEL) is a full build and is never offered as
++// an upgrade; a fusion (Epic 12) consumes a maxed item into a Lv3 remnant frozen
++// at ITEM_REMNANT_LEVEL that keeps its stats but stops upgrading. Both bounds are
++// framework invariants (not feel tuning), so they live here as named constants —
++// no inline magic numbers on the level-cap / remnant path.
++//
++// Full item build level (Lv5). Upgrading past this is a guarded no-op; an item at
++// this level weighs 0 in the offer (never re-offered as an upgrade).
++export const ITEM_MAX_LEVEL = 5;
++// Remnant level (Lv3): the frozen level a maxed item is reduced to when consumed
++// by a fusion (Epic 12). markRemnant() freezes ownedCards[id] here; a remnant
++// weighs 0 in the offer and stays exposed to the fusion query surface.
++export const ITEM_REMNANT_LEVEL = 3;
++
+ // --- Level-up moment & card UI (Story 8.3 / Epic 8 progression) --------------
+ // When the derived level crosses a threshold (LevelSystem.levelsGainedThisTick),
+ // the run enters a level-up moment: world time DILATES to a slow crawl (not a
+diff --git a/src/scenes/buildArenaWorld.js b/src/scenes/buildArenaWorld.js
+index ffc0bfd..fd95054 100644
+--- a/src/scenes/buildArenaWorld.js
++++ b/src/scenes/buildArenaWorld.js
+@@ -42,6 +42,8 @@ import { XpOrbSystem } from '../systems/XpOrbSystem.js';
+ import { LevelSystem } from '../systems/LevelSystem.js';
+ import { LevelUpSystem } from '../systems/LevelUpSystem.js';
+ import { createProgressionState } from '../state/ProgressionState.js';
++import { createPlayerStats } from '../state/PlayerStats.js';
++import { ITEM_REGISTRY } from '../config/itemRegistry.js';
+ import { ScreenFeedbackSystem } from '../systems/ScreenFeedbackSystem.js';
+ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
+ 
+@@ -151,6 +153,12 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
+   // touched by the death path, so it resets on a fresh run and survives a non-final
+   // death (mirrors scoreState.xp).
+   const progressionState = createProgressionState();
++  // Runtime player-stat modifier store (Story 10.1): the derived fold every arsenal
++  // item's per-level effects apply through. Built beside progressionState — a plain-data
++  // object at its neutral base; LevelUpSystem recomputes it on a card pick (a level
++  // change), never per frame. Run-scoped like progressionState (survives a non-final
++  // death, resets on a fresh run).
++  const playerStats = createPlayerStats();
+   // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
+   // another enemy pool, and deliberately NOT shared into the CollisionSystem /
+   // BombSystem / BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire,
+@@ -370,6 +378,11 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
+     levelSystem,
+     playerState,
+     progressionState,
++    // Story 10.1: the data-driven item registry the offer draws from (swapped in for
++    // the retired PLACEHOLDER_CARDS pool), plus the runtime PlayerStats store the
++    // system folds every owned item's current-level effects into on a pick.
++    ITEM_REGISTRY,
++    playerStats,
+     _rng,
+   );
+   world.addSystem(levelUpSystem);
+@@ -470,6 +483,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
+     scoreState,
+     playerState,
+     progressionState,
++    playerStats,
+     enemyPools,
+     deathPools,
+     highScoreStorage: port,
+diff --git a/src/scenes/buildArenaWorld.test.js b/src/scenes/buildArenaWorld.test.js
+index 53af646..2c96c6d 100644
+--- a/src/scenes/buildArenaWorld.test.js
++++ b/src/scenes/buildArenaWorld.test.js
+@@ -1,5 +1,7 @@
+ import { describe, it, expect } from 'vitest';
+ import { buildArenaWorld } from './buildArenaWorld.js';
++import { ITEM_REGISTRY } from '../config/itemRegistry.js';
++import { createPlayerStats } from '../state/PlayerStats.js';
+ import {
+   FIXED_STEP_MS,
+   PARTICLE_MAX,
+@@ -69,6 +71,7 @@ const RETURN_HANDLES = [
+   'scoreState',
+   'playerState',
+   'progressionState',
++  'playerStats',
+   'enemyPools',
+   'deathPools',
+   'highScoreStorage',
+@@ -268,15 +271,23 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
+     expect(ctx.levelUpSystem.levelSystem).toBe(ctx.levelSystem);
+     expect(ctx.levelUpSystem.playerState).toBe(ctx.playerState);
+     expect(ctx.levelUpSystem.progressionState).toBe(ctx.progressionState);
++    // Story 10.1: the system draws from the injected ITEM_REGISTRY (not a fixed import)
++    // and folds picks into the SAME shared playerStats the factory returns.
++    expect(ctx.levelUpSystem.registry).toBe(ITEM_REGISTRY);
++    expect(ctx.levelUpSystem.playerStats).toBe(ctx.playerStats);
+     // Fresh run: run-scoped progression starts empty (rebuilt fresh per run, never
+     // reset on death — mirrors scoreState.xp), with the Story 8.5 reroll/banish charge
+-    // economies at their starting values and an empty banished set.
++    // economies at their starting values and an empty banished set, plus an empty
++    // remnant set (Story 10.1) and the PlayerStats store at its neutral base.
+     expect(ctx.progressionState.ownedCards).toEqual({});
+     expect(ctx.progressionState.debugStat).toBe(0);
+     expect(ctx.progressionState.rerollCharges).toBe(REROLL_INITIAL_CHARGES);
+     expect(ctx.progressionState.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+     expect(ctx.progressionState.banishedIds).toBeInstanceOf(Set);
+     expect(ctx.progressionState.banishedIds.size).toBe(0);
++    expect(ctx.progressionState.remnantIds).toBeInstanceOf(Set);
++    expect(ctx.progressionState.remnantIds.size).toBe(0);
++    expect(ctx.playerStats).toEqual(createPlayerStats());
+   });
+ 
+   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {
+diff --git a/src/state/ProgressionState.js b/src/state/ProgressionState.js
+index faff185..c2d6193 100644
+--- a/src/state/ProgressionState.js
++++ b/src/state/ProgressionState.js
+@@ -7,14 +7,16 @@
+ // scoreState/playerState, NEVER touched by the death path — so it resets on a fresh
+ // run and survives a non-final death, exactly like scoreState.xp.
+ //
+-// Shape: { ownedCards, debugStat, rerollCharges, banishCharges, banishedIds }
+-//  - ownedCards    : a map of card id → COUNT (how many times that card has been
+-//                    drafted). The count/level model is the Epic 10 seam: when real
+-//                    items replace the placeholders, an item's level is its owned
+-//                    count, with no change to this loop.
+-//  - debugStat     : a plain running total the placeholder cards stack (each applied
+-//                    card adds its statDelta). Proves the draft loop end-to-end before
+-//                    real item effects exist; Epic 10's items apply real effects here.
++// Shape: { ownedCards, debugStat, rerollCharges, banishCharges, banishedIds, remnantIds }
++//  - ownedCards    : a map of item id → COUNT (how many times that item has been
++//                    drafted). An item's LEVEL is its owned count (Story 10.1),
++//                    capped at the item's maxLevel by applyCard.
++//  - debugStat     : a legacy plain pick counter (+1 per applied pick) kept only for
++//                    the DEV readout. Real per-level item effects fold into the runtime
++//                    PlayerStats store (src/state/PlayerStats.js) on a pick, not here.
++//  - remnantIds    : the Set of item ids reduced to a Lv3 remnant by a fusion (Epic
++//                    12). A remnant keeps its stats, stops upgrading, and weighs 0 in
++//                    the offer. Plumbed here; consumption itself lands in Epic 12.
+ //  - rerollCharges : Story 8.5 reroll economy — the number of trio redraws the run has
+ //                    banked (starts REROLL_INITIAL_CHARGES; LevelUpSystem grants +1 on
+ //                    crossing into each REROLL_LEVEL_GRANTS level, spends one per reroll).
+@@ -30,15 +32,17 @@
+ import {
+   REROLL_INITIAL_CHARGES,
+   BANISH_INITIAL_CHARGES,
++  ITEM_REMNANT_LEVEL,
+ } from '../config/constants.js';
+ 
+ /**
+  * Create the run-scoped card-progression state at the start of a run: no cards
+  * owned, debug stat zero, the reroll/banish charge economies at their starting
+- * values, and an empty banished set. Rebuilt fresh per run (never reset on death —
+- * mirrors scoreState.xp).
++ * values, an empty banished set, and an empty remnant set. Rebuilt fresh per run
++ * (never reset on death — mirrors scoreState.xp).
+  * @returns {{ ownedCards: Object<string, number>, debugStat: number,
+- *   rerollCharges: number, banishCharges: number, banishedIds: Set<string> }}
++ *   rerollCharges: number, banishCharges: number, banishedIds: Set<string>,
++ *   remnantIds: Set<string> }}
+  */
+ export function createProgressionState() {
+   return {
+@@ -47,18 +51,109 @@ export function createProgressionState() {
+     rerollCharges: REROLL_INITIAL_CHARGES,
+     banishCharges: BANISH_INITIAL_CHARGES,
+     banishedIds: new Set(),
++    // Story 10.1: the Set of item ids reduced to a Lv3 remnant (a maxed item
++    // consumed by a fusion — Epic 12). A remnant keeps its stats, stops upgrading,
++    // and weighs 0 in the offer. Per-run, never touched by the death path.
++    remnantIds: new Set(),
+   };
+ }
+ 
+ /**
+- * Apply a drafted card to the progression state (pure mutation): stack its
+- * statDelta onto debugStat and bump the owned COUNT for its id. Drafting the same
+- * card twice yields ownedCards[id] === 2 and adds its statDelta twice — the
+- * ownership-count / level model that Epic 10 builds real item levels on.
++ * Apply a drafted item card to the progression state (pure mutation): the item's
++ * LEVEL is its owned count (ownedCards[id]), incremented here and capped at the
++ * item's maxLevel. Picking the same item twice yields ownedCards[id] === 2 (level
++ * 2); at maxLevel it is a guarded no-op (the level never exceeds the cap). The
++ * legacy `debugStat` stays a plain pick counter (+1 per applied pick) so the DEV
++ * readout keeps working; the real per-level effects fold into PlayerStats via
++ * recomputePlayerStats (LevelUpSystem calls it after the pick), NOT here.
+  * @param {{ ownedCards: Object<string, number>, debugStat: number }} state
+- * @param {{ id: string, statDelta: number }} card
++ * @param {{ id: string, maxLevel?: number }} card
+  */
+ export function applyCard(state, card) {
+-  state.debugStat += card.statDelta;
+-  state.ownedCards[card.id] = (state.ownedCards[card.id] ?? 0) + 1;
++  state.debugStat += 1;
++  const level = state.ownedCards[card.id] ?? 0;
++  const cap = card.maxLevel ?? Infinity;
++  if (level < cap) {
++    state.ownedCards[card.id] = level + 1;
++  }
++}
++
++/**
++ * The item's current level == its owned count (0 when unowned).
++ * @param {{ ownedCards: Object<string, number> }} state
++ * @param {string} id
++ * @returns {number}
++ */
++export function getLevel(state, id) {
++  return state.ownedCards[id] ?? 0;
++}
++
++/**
++ * True once the item has been drafted at least once (level >= 1).
++ * @param {{ ownedCards: Object<string, number> }} state
++ * @param {string} id
++ * @returns {boolean}
++ */
++export function isOwned(state, id) {
++  return (state.ownedCards[id] ?? 0) >= 1;
++}
++
++/**
++ * True when the item is at (or past) its full-build cap — a maxed item is never
++ * re-offered as an upgrade.
++ * @param {{ ownedCards: Object<string, number> }} state
++ * @param {{ id: string, maxLevel?: number }} card
++ * @returns {boolean}
++ */
++export function isMaxed(state, card) {
++  const cap = card.maxLevel ?? Infinity;
++  return (state.ownedCards[card.id] ?? 0) >= cap;
++}
++
++/**
++ * True when the item has been reduced to a Lv3 remnant (consumed by a fusion).
++ * @param {{ remnantIds: Set<string> }} state
++ * @param {string} id
++ * @returns {boolean}
++ */
++export function isRemnant(state, id) {
++  return state.remnantIds.has(id);
++}
++
++/**
++ * Mark an item as a remnant (Epic-12 fusion consumption seam): freeze its level at
++ * ITEM_REMNANT_LEVEL and record it in remnantIds so the offer excludes it (weight 0)
++ * while its state stays readable through the query surface. Idempotent.
++ * @param {{ ownedCards: Object<string, number>, remnantIds: Set<string> }} state
++ * @param {string} id
++ */
++export function markRemnant(state, id) {
++  state.ownedCards[id] = ITEM_REMNANT_LEVEL;
++  state.remnantIds.add(id);
++}
++
++/**
++ * Distinct-owned counts per track — the single shared slot-occupancy helper read by
++ * BOTH the card-offer weighting (a full track stops offering fresh cards) and the
++ * forward-looking fusion query surface, so the two never diverge. Counts each owned
++ * id (level >= 1) once under its track, looked up from the passed registry (an
++ * array of item definitions). A single owned item at a high level counts as 1 (it is
++ * distinct-owned, not total-level). Allocates one small result object.
++ * @param {{ ownedCards: Object<string, number> }} state
++ * @param {ReadonlyArray<{ id: string, track: string }>} registry
++ * @returns {Object<string, number>} track → distinct-owned count
++ */
++export function slotOccupancy(state, registry) {
++  const trackOf = {};
++  for (let i = 0; i < registry.length; i++) {
++    trackOf[registry[i].id] = registry[i].track;
++  }
++  const counts = {};
++  for (const id in state.ownedCards) {
++    if ((state.ownedCards[id] ?? 0) >= 1) {
++      const track = trackOf[id];
++      if (track != null) counts[track] = (counts[track] ?? 0) + 1;
++    }
++  }
++  return counts;
+ }
+diff --git a/src/state/progressionState.test.js b/src/state/progressionState.test.js
+index 007da53..1a87e46 100644
+--- a/src/state/progressionState.test.js
++++ b/src/state/progressionState.test.js
+@@ -1,16 +1,37 @@
+ import { describe, it, expect } from 'vitest';
+-import { createProgressionState, applyCard } from './ProgressionState.js';
++import {
++  createProgressionState,
++  applyCard,
++  getLevel,
++  isOwned,
++  isMaxed,
++  isRemnant,
++  markRemnant,
++  slotOccupancy,
++} from './ProgressionState.js';
+ import {
+   REROLL_INITIAL_CHARGES,
+   BANISH_INITIAL_CHARGES,
++  ITEM_MAX_LEVEL,
++  ITEM_REMNANT_LEVEL,
+ } from '../config/constants.js';
+ 
+-// Story 8.3/8.5 — the run-scoped card-progression state. Pure data + a pure applyCard;
+-// no Phaser, no ticks. Mirrors ScoreState's discipline. Story 8.5 added the reroll/banish
+-// charge economies + the banished-id set.
++// Story 8.3/8.5/10.1 — the run-scoped card-progression state. Pure data + pure helpers;
++// no Phaser, no ticks. Story 10.1 turns the owned COUNT into an item LEVEL (capped at
++// maxLevel), drops statDelta (debugStat is now a legacy pick counter), and adds the
++// framework query surface: getLevel/isOwned/isMaxed/isRemnant/markRemnant/slotOccupancy.
++
++// A tiny registry-shaped fixture for the level-cap + slot-occupancy helpers.
++const CARD_MAX5 = { id: 'x', track: 'offense', maxLevel: ITEM_MAX_LEVEL };
++const REGISTRY = [
++  { id: 'o1', track: 'offense' },
++  { id: 'o2', track: 'offense' },
++  { id: 'd1', track: 'defense' },
++  { id: 'd2', track: 'defense' },
++];
+ 
+ describe('createProgressionState — fresh run-scoped state', () => {
+-  it('starts with no cards owned, a zero debug stat, the starting reroll/banish charges, and an empty banished set', () => {
++  it('starts empty with the starting reroll/banish charges and empty banished/remnant sets', () => {
+     const state = createProgressionState();
+     expect(state.ownedCards).toEqual({});
+     expect(state.debugStat).toBe(0);
+@@ -18,42 +39,117 @@ describe('createProgressionState — fresh run-scoped state', () => {
+     expect(state.banishCharges).toBe(BANISH_INITIAL_CHARGES);
+     expect(state.banishedIds).toBeInstanceOf(Set);
+     expect(state.banishedIds.size).toBe(0);
++    expect(state.remnantIds).toBeInstanceOf(Set);
++    expect(state.remnantIds.size).toBe(0);
+   });
+ 
+-  it('returns a fresh independent object each call (run-scoped rebuild), with a distinct banished Set', () => {
++  it('returns fresh independent objects each call (distinct banished + remnant Sets)', () => {
+     const a = createProgressionState();
+     const b = createProgressionState();
+     expect(a).not.toBe(b);
+     expect(a.ownedCards).not.toBe(b.ownedCards);
+-    // The banished Set is per-instance (a mutation on one run never bleeds into another).
+     expect(a.banishedIds).not.toBe(b.banishedIds);
+-    a.banishedIds.add('off-rapid');
+-    expect(b.banishedIds.size).toBe(0);
++    expect(a.remnantIds).not.toBe(b.remnantIds);
++    a.remnantIds.add('overcharge');
++    expect(b.remnantIds.size).toBe(0);
+   });
+ });
+ 
+-describe('applyCard — stack the stat + record ownership', () => {
+-  it('increments debugStat by statDelta and records the card id at count 1', () => {
++describe('applyCard — the owned-count / level model (capped, pick-counter)', () => {
++  it('records the item at level 1 and bumps the legacy pick counter', () => {
+     const state = createProgressionState();
+-    applyCard(state, { id: 'x', statDelta: 3 });
+-    expect(state.debugStat).toBe(3);
++    applyCard(state, CARD_MAX5);
+     expect(state.ownedCards.x).toBe(1);
++    expect(state.debugStat).toBe(1);
+   });
+ 
+-  it('same card twice → count 2 and doubled debugStat (ownership is a count/level)', () => {
++  it('same item twice → level 2 (owned count is the level)', () => {
+     const state = createProgressionState();
+-    const card = { id: 'x', statDelta: 2 };
+-    applyCard(state, card);
+-    applyCard(state, card);
++    applyCard(state, CARD_MAX5);
++    applyCard(state, CARD_MAX5);
+     expect(state.ownedCards.x).toBe(2);
+-    expect(state.debugStat).toBe(4);
++    expect(state.debugStat).toBe(2);
++  });
++
++  it('caps the level at maxLevel: applying at the cap is a guarded no-op on the level', () => {
++    const state = createProgressionState();
++    for (let i = 0; i < ITEM_MAX_LEVEL + 3; i++) applyCard(state, CARD_MAX5);
++    // Level never exceeds the cap…
++    expect(state.ownedCards.x).toBe(ITEM_MAX_LEVEL);
++    // …though the pick counter still counted every applied pick.
++    expect(state.debugStat).toBe(ITEM_MAX_LEVEL + 3);
+   });
+ 
+-  it('two different cards → both recorded, stats summed', () => {
++  it('two different items → both recorded at level 1', () => {
+     const state = createProgressionState();
+-    applyCard(state, { id: 'a', statDelta: 1 });
+-    applyCard(state, { id: 'b', statDelta: 5 });
++    applyCard(state, { id: 'a', maxLevel: 5 });
++    applyCard(state, { id: 'b', maxLevel: 5 });
+     expect(state.ownedCards).toEqual({ a: 1, b: 1 });
+-    expect(state.debugStat).toBe(6);
++  });
++});
++
++describe('framework query surface', () => {
++  it('getLevel returns the owned count (0 when unowned)', () => {
++    const state = createProgressionState();
++    expect(getLevel(state, 'x')).toBe(0);
++    applyCard(state, CARD_MAX5);
++    expect(getLevel(state, 'x')).toBe(1);
++  });
++
++  it('isOwned flips true once drafted', () => {
++    const state = createProgressionState();
++    expect(isOwned(state, 'x')).toBe(false);
++    applyCard(state, CARD_MAX5);
++    expect(isOwned(state, 'x')).toBe(true);
++  });
++
++  it('isMaxed true only at/above the cap', () => {
++    const state = createProgressionState();
++    expect(isMaxed(state, CARD_MAX5)).toBe(false);
++    for (let i = 0; i < ITEM_MAX_LEVEL - 1; i++) applyCard(state, CARD_MAX5);
++    expect(isMaxed(state, CARD_MAX5)).toBe(false); // one below cap
++    applyCard(state, CARD_MAX5);
++    expect(isMaxed(state, CARD_MAX5)).toBe(true); // at cap
++  });
++
++  it('markRemnant freezes the level at ITEM_REMNANT_LEVEL and records the id', () => {
++    const state = createProgressionState();
++    // Own it up to max first, then a fusion reduces it to a remnant.
++    for (let i = 0; i < ITEM_MAX_LEVEL; i++) applyCard(state, CARD_MAX5);
++    expect(getLevel(state, 'x')).toBe(ITEM_MAX_LEVEL);
++    markRemnant(state, 'x');
++    expect(isRemnant(state, 'x')).toBe(true);
++    expect(getLevel(state, 'x')).toBe(ITEM_REMNANT_LEVEL);
++    expect(state.remnantIds.has('x')).toBe(true);
++  });
++
++  it('isRemnant false for a non-remnant id', () => {
++    const state = createProgressionState();
++    applyCard(state, CARD_MAX5);
++    expect(isRemnant(state, 'x')).toBe(false);
++  });
++});
++
++describe('slotOccupancy — the single shared distinct-owned-per-track helper', () => {
++  it('counts distinct owned ids per track from the registry lookup', () => {
++    const state = createProgressionState();
++    state.ownedCards = { o1: 1, o2: 3, d1: 2 };
++    expect(slotOccupancy(state, REGISTRY)).toEqual({ offense: 2, defense: 1 });
++  });
++
++  it('a single high-level item counts as 1 (distinct-owned, not total level)', () => {
++    const state = createProgressionState();
++    state.ownedCards = { o1: 5 };
++    expect(slotOccupancy(state, REGISTRY)).toEqual({ offense: 1 });
++  });
++
++  it('ignores ids absent from the registry', () => {
++    const state = createProgressionState();
++    state.ownedCards = { o1: 1, ghost: 4 };
++    expect(slotOccupancy(state, REGISTRY)).toEqual({ offense: 1 });
++  });
++
++  it('empty ownership → empty occupancy', () => {
++    expect(slotOccupancy(createProgressionState(), REGISTRY)).toEqual({});
+   });
+ });
+diff --git a/src/systems/LevelUpSystem.js b/src/systems/LevelUpSystem.js
+index 4603f03..fecf2ae 100644
+--- a/src/systems/LevelUpSystem.js
++++ b/src/systems/LevelUpSystem.js
+@@ -1,11 +1,11 @@
+ import { System } from '../core/System.js';
+-import { PLACEHOLDER_CARDS } from '../config/cards.js';
+ import {
+   LEVELUP_INVULN_FLOOR,
+   LEVELUP_LANDING_INVULN_MS,
+   REROLL_LEVEL_GRANTS,
+ } from '../config/constants.js';
+ import { applyCard } from '../state/ProgressionState.js';
++import { recomputePlayerStats } from '../state/PlayerStats.js';
+ import { drawCardOffer } from './cardOffer.js';
+ 
+ // LevelUpSystem — the sim-side state machine of the Epic 8 level-up moment (Story 8.3,
+@@ -66,16 +66,31 @@ export class LevelUpSystem extends System {
+    *   Shared run-scoped card progression — a selection applies its card here, its
+    *   ownership drives the weighted offer draw, and (Story 8.5) its reroll/banish charges
+    *   and banished-id set drive the reroll/banish tools + grants.
++   * @param {ReadonlyArray<object>} registry The Story 10.1 item registry the weighted
++   *   draw offers from (ITEM_REGISTRY, injected instead of importing a fixed pool) —
++   *   each item's rarity/track/maxLevel/level drive the offer weighting and cap.
++   * @param {object} playerStats The Story 10.1 runtime modifier store; after a pick,
++   *   recomputePlayerStats folds every owned item's current-level effects into it (the
++   *   only place stats are recomputed — on a level change, never per frame).
+    * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the weighted
+    *   offer draw (Story 8.4). Threaded from buildArenaWorld so the offer routes through
+    *   the SAME seedable stream the spawn systems use; injectable so the draw is
+    *   deterministic and unit-testable.
+    */
+-  constructor(levelSystem, playerState, progressionState, rng = Math.random) {
++  constructor(
++    levelSystem,
++    playerState,
++    progressionState,
++    registry,
++    playerStats,
++    rng = Math.random,
++  ) {
+     super();
+     this.levelSystem = levelSystem;
+     this.playerState = playerState;
+     this.progressionState = progressionState;
++    this.registry = registry;
++    this.playerStats = playerStats;
+     this._rng = rng;
+     // Number of owed selections not yet drained (a COUNT, not a bool).
+     this.pendingSelections = 0;
+@@ -158,6 +173,17 @@ export class LevelUpSystem extends System {
+         index < 3
+       ) {
+         applyCard(this.progressionState, this.currentOffer[index]);
++        // Story 10.1: recompute the runtime PlayerStats fold on the level change — the
++        // ONLY place stats are derived (never per frame). The registered items carry
++        // empty `stats` today so this is a no-op on real content, but the framework is
++        // live for stories 10.2–10.5.
++        if (this.playerStats) {
++          recomputePlayerStats(
++            this.playerStats,
++            this.progressionState.ownedCards,
++            this.registry,
++          );
++        }
+         this.pendingSelections--;
+         this.currentOffer = [];
+         // When this pick empties the queue, grant a longer LANDING invulnerability so
+@@ -244,7 +270,7 @@ export class LevelUpSystem extends System {
+         // multi-level jump re-draws against the newly owned card). Returns a NEW array
+         // per call, preserving the 8.3 freshOffer focus-reset (keyed on array identity).
+         this.currentOffer = drawCardOffer({
+-          pool: PLACEHOLDER_CARDS,
++          pool: this.registry,
+           progressionState: this.progressionState,
+           rng: this._rng,
+           banishedIds: this.progressionState.banishedIds,
+diff --git a/src/systems/cardOffer.js b/src/systems/cardOffer.js
+index 57fab54..8e09416 100644
+--- a/src/systems/cardOffer.js
++++ b/src/systems/cardOffer.js
+@@ -7,6 +7,7 @@ import {
+   CARD_WEIGHT_LEVEL1_MULT,
+   CARD_WEIGHT_MIDTIER_MULT,
+ } from '../config/constants.js';
++import { slotOccupancy } from '../state/ProgressionState.js';
+ 
+ // cardOffer — the deterministic weighted-without-replacement card draw (Story 8.4,
+ // Phaser-free pure module).
+@@ -40,34 +41,45 @@ const TRACK_LIMITS = {
+ };
+ 
+ /**
+- * True when `id` is in the banished set (Story 8.5 seam). Accepts a Set, an array,
+- * or a null/undefined (empty) set; anything else is treated as empty.
+- * @param {Set<string>|string[]|null|undefined} banishedIds
++ * True when `id` is a member of the given id set. Accepts a Set, an array, or a
++ * null/undefined (empty) set; anything else is treated as empty. Shared by the
++ * banished-id (Story 8.5) and remnant-id (Story 10.1) zeroing checks.
++ * @param {Set<string>|string[]|null|undefined} idSet
+  * @param {string} id
+  * @returns {boolean}
+  */
+-function isBanished(banishedIds, id) {
+-  if (!banishedIds) return false;
+-  if (typeof banishedIds.has === 'function') return banishedIds.has(id);
+-  if (Array.isArray(banishedIds)) return banishedIds.includes(id);
++function idInSet(idSet, id) {
++  if (!idSet) return false;
++  if (typeof idSet.has === 'function') return idSet.has(id);
++  if (Array.isArray(idSet)) return idSet.includes(id);
+   return false;
+ }
+ 
+ /**
+- * The Epic-8 per-candidate weight:
+- *   rarity × (owned ? OWNED : UNOWNED) × (level===1 ? LEVEL1 : MIDTIER)
+- *          × (trackFull && !owned ? 0 : 1) × banishMultiplier
++ * The Epic-8 per-candidate weight, with the Story 10.1 maxed/remnant zeroing folded
++ * in FIRST:
++ *   MAXED (level >= card.maxLevel) or REMNANT → 0 (never re-offered as an upgrade)
++ *   else rarity × (owned ? OWNED : UNOWNED) × (level===1 ? LEVEL1 : MIDTIER)
++ *              × (trackFull && !owned ? 0 : 1) × banishMultiplier
+  * where `level = ownedCards[id] ?? 0`, `owned = level >= 1`, `trackFull` = the count
+  * of distinct owned ids in the candidate's track has reached that track's limit, and
+  * banishMultiplier is 0 for a banished id else 1 (the Story 8.5 seam). A 0 weight
+- * means the card is not offered.
+- * @param {{ id: string, rarity: number, track: string }} card
++ * means the card is not offered. Cards without a `maxLevel` (the legacy hand-built
++ * card shape) never hit the maxed guard, so the pre-10.1 weight is unchanged for them.
++ * @param {{ id: string, rarity: number, track: string, maxLevel?: number }} card
+  * @param {{ ownedCards: Object<string,number>, banishedIds?: (Set<string>|string[]),
+- *           slotCounts: Object<string,number>, limits: Object<string,number> }} ctx
++ *           remnantIds?: (Set<string>|string[]), slotCounts: Object<string,number>,
++ *           limits: Object<string,number> }} ctx
+  * @returns {number} the weight (>= 0)
+  */
+-export function cardWeight(card, { ownedCards, banishedIds, slotCounts, limits }) {
++export function cardWeight(
++  card,
++  { ownedCards, banishedIds, remnantIds, slotCounts, limits },
++) {
+   const level = ownedCards[card.id] ?? 0;
++  // Story 10.1: a maxed (full-build) or remnant item is never offered as an upgrade.
++  if (idInSet(remnantIds, card.id)) return 0;
++  if (card.maxLevel != null && level >= card.maxLevel) return 0;
+   const owned = level >= 1;
+   const ownedMult = owned ? CARD_WEIGHT_OWNED_MULT : CARD_WEIGHT_UNOWNED_MULT;
+   const levelMult =
+@@ -75,7 +87,7 @@ export function cardWeight(card, { ownedCards, banishedIds, slotCounts, limits }
+   const limit = limits[card.track] ?? Infinity;
+   const slotsFull = (slotCounts[card.track] ?? 0) >= limit;
+   const slotFactor = slotsFull && !owned ? 0 : 1;
+-  const banishMultiplier = isBanished(banishedIds, card.id) ? 0 : 1;
++  const banishMultiplier = idInSet(banishedIds, card.id) ? 0 : 1;
+   return card.rarity * ownedMult * levelMult * slotFactor * banishMultiplier;
+ }
+ 
+@@ -90,9 +102,11 @@ export function cardWeight(card, { ownedCards, banishedIds, slotCounts, limits }
+  * filled deterministically from the not-yet-drawn cards in pool order so the result is
+  * always exactly CARD_OFFER_SIZE — this keeps the 8.3 selection latch
+  * (`currentOffer.length === 3`) intact against any future pool shrink.
+- * @param {{ pool: ReadonlyArray<{ id:string, rarity:number, track:string }>,
+- *           progressionState: { ownedCards: Object<string,number> },
+- *           rng?: () => number, banishedIds?: (Set<string>|string[]) }} args
++ * @param {{ pool: ReadonlyArray<{ id:string, rarity:number, track:string, maxLevel?:number }>,
++ *           progressionState: { ownedCards: Object<string,number>,
++ *             banishedIds?: Set<string>, remnantIds?: Set<string> },
++ *           rng?: () => number, banishedIds?: (Set<string>|string[]),
++ *           remnantIds?: (Set<string>|string[]) }} args
+  * @returns {Array<object>} exactly CARD_OFFER_SIZE distinct cards
+  */
+ export function drawCardOffer({
+@@ -100,20 +114,18 @@ export function drawCardOffer({
+   progressionState,
+   rng = Math.random,
+   banishedIds,
++  remnantIds,
+ }) {
+   const ownedCards = progressionState.ownedCards;
++  // Story 10.1: a maxed/remnant item weighs 0. Remnant ids default to the run state's
++  // set so the caller need not thread them (mirrors banishedIds).
++  const remnants = remnantIds ?? progressionState.remnantIds;
+ 
+-  // Derive per-track distinct-owned counts ONCE for this draw: for each owned id
+-  // (count >= 1), bump its track's count using the pool's id→track lookup.
+-  const trackOf = {};
+-  for (let i = 0; i < pool.length; i++) trackOf[pool[i].id] = pool[i].track;
+-  const slotCounts = {};
+-  for (const id in ownedCards) {
+-    if ((ownedCards[id] ?? 0) >= 1) {
+-      const track = trackOf[id];
+-      if (track != null) slotCounts[track] = (slotCounts[track] ?? 0) + 1;
+-    }
+-  }
++  // Derive per-track distinct-owned counts ONCE for this draw via the SHARED
++  // slotOccupancy helper (the same one the fusion query surface reads), so the offer
++  // weighting and fusion checks never diverge. The pool doubles as the id→track
++  // registry — byte-for-byte the counts the inlined lookup produced pre-10.1.
++  const slotCounts = slotOccupancy(progressionState, pool);
+ 
+   // Compute each card's weight once; candidates carries the not-yet-drawn cards in
+   // pool order (splice preserves order), so both the draw and the fill are stable.
+@@ -124,6 +136,7 @@ export function drawCardOffer({
+       weight: cardWeight(pool[i], {
+         ownedCards,
+         banishedIds,
++        remnantIds: remnants,
+         slotCounts,
+         limits: TRACK_LIMITS,
+       }),
+diff --git a/src/systems/cardOffer.test.js b/src/systems/cardOffer.test.js
+index a36334a..72b91b2 100644
+--- a/src/systems/cardOffer.test.js
++++ b/src/systems/cardOffer.test.js
+@@ -1,7 +1,7 @@
+ import { describe, it, expect } from 'vitest';
+ import { cardWeight, drawCardOffer } from './cardOffer.js';
+ import { createProgressionState } from '../state/ProgressionState.js';
+-import { PLACEHOLDER_CARDS } from '../config/cards.js';
++import { ITEM_REGISTRY, getItem } from '../config/itemRegistry.js';
+ import {
+   SLOT_LIMIT_OFFENSE,
+   SLOT_LIMIT_DEFENSE,
+@@ -100,6 +100,46 @@ describe('cardWeight — the Epic-8 weight formula', () => {
+     expect(ownedLvl1).toBeGreaterThan(unowned);
+   });
+ 
++  it('a maxed item (level >= maxLevel) weighs 0 (Story 10.1); one below the cap stays positive', () => {
++    const card = { id: 'x', title: 'x', rarity: 5, track: 'offense', maxLevel: 5 };
++    expect(
++      cardWeight(card, { ownedCards: { x: 5 }, slotCounts: {}, limits: LIMITS }),
++    ).toBe(0);
++    expect(
++      cardWeight(card, { ownedCards: { x: 4 }, slotCounts: {}, limits: LIMITS }),
++    ).toBeGreaterThan(0);
++  });
++
++  it('a remnant id weighs 0 (Story 10.1) regardless of level; a non-remnant is unaffected', () => {
++    const card = { id: 'x', title: 'x', rarity: 5, track: 'offense', maxLevel: 5 };
++    expect(
++      cardWeight(card, {
++        ownedCards: { x: 3 },
++        remnantIds: new Set(['x']),
++        slotCounts: {},
++        limits: LIMITS,
++      }),
++    ).toBe(0);
++    expect(
++      cardWeight(card, {
++        ownedCards: { x: 3 },
++        remnantIds: new Set(['y']),
++        slotCounts: {},
++        limits: LIMITS,
++      }),
++    ).toBeGreaterThan(0);
++  });
++
++  it('a card WITHOUT maxLevel (legacy shape) never hits the maxed guard — pre-10.1 weight unchanged', () => {
++    const card = offCard('x', 5); // no maxLevel field
++    const w = cardWeight(card, {
++      ownedCards: { x: 99 },
++      slotCounts: {},
++      limits: LIMITS,
++    });
++    expect(w).toBeCloseTo(5 * CARD_WEIGHT_OWNED_MULT * CARD_WEIGHT_MIDTIER_MULT);
++  });
++
+   it('a banished id weighs 0 (Story 8.5 seam); a non-banished id is unaffected', () => {
+     const card = offCard('x', 5);
+     expect(
+@@ -298,19 +338,19 @@ describe('drawCardOffer — weighted-without-replacement draw', () => {
+     expect(seen).toEqual(new Set(['a', 'b', 'c']));
+   });
+ 
+-  it('Story 8.5: a banished id over the real pool never appears while the offer stays exactly three distinct', () => {
++  it('Story 8.5/10.1: a banished id over the real ITEM_REGISTRY never appears while the offer stays exactly three distinct', () => {
+     // End-to-end lock of "never appears again" at the draw surface with the SHIPPED
+-    // pool: banish one real id, drive many draws over a varied rng sequence, and assert
+-    // the banished id is never offered while every offer is still exactly three distinct
+-    // pool cards (the 6+5 positive-weight pool stays >= 3 with one banished).
+-    const banishedId = 'off-rapid';
++    // registry: banish one real id, drive many draws over a varied rng sequence, and
++    // assert the banished id is never offered while every offer is still exactly three
++    // distinct registry items (4 items − 1 banished = exactly the 3 non-banished).
++    const banishedId = 'overcharge';
+     const banishedIds = new Set([banishedId]);
+     const prog = createProgressionState();
+     const rng = seqRng([0.07, 0.29, 0.53, 0.81, 0.11, 0.42, 0.68, 0.95, 0.34]);
+     const seen = new Set();
+     for (let t = 0; t < 60; t++) {
+       const offer = drawCardOffer({
+-        pool: PLACEHOLDER_CARDS,
++        pool: ITEM_REGISTRY,
+         progressionState: prog,
+         rng,
+         banishedIds,
+@@ -319,13 +359,46 @@ describe('drawCardOffer — weighted-without-replacement draw', () => {
+       const ids = offer.map((c) => c.id);
+       expect(new Set(ids).size).toBe(ids.length); // distinct
+       for (const c of offer) {
+-        expect(PLACEHOLDER_CARDS).toContain(c);
++        expect(ITEM_REGISTRY).toContain(c);
+         seen.add(c.id);
+       }
+     }
+     expect(seen.has(banishedId)).toBe(false);
+-    // Sanity: other cards ARE reachable (the draw is not degenerately stuck).
+-    expect(seen.size).toBeGreaterThan(CARD_OFFER_SIZE);
++    // The three non-banished items are all reachable (the draw is not degenerately stuck).
++    expect(seen.size).toBe(CARD_OFFER_SIZE);
++  });
++
++  it('Story 10.1: maxed + remnant items are excluded from the real ITEM_REGISTRY draw', () => {
++    // Own 'overcharge' at its cap (maxed) and mark 'nanite-shield' a remnant: both weigh
++    // 0, so the two remaining items ('spread-cannon', 'afterburner') are the positive
++    // pool. The draw still returns exactly three (the zero-weight fill tops up the count),
++    // and neither the maxed nor remnant id is offered as an actual upgrade candidate.
++    const prog = createProgressionState();
++    prog.ownedCards = { overcharge: 5, 'nanite-shield': 3 };
++    prog.remnantIds = new Set(['nanite-shield']);
++    // Direct weights: maxed + remnant are 0; the other two are positive.
++    const slotCounts = {};
++    const wOc = cardWeight(getItem('overcharge'), {
++      ownedCards: prog.ownedCards,
++      remnantIds: prog.remnantIds,
++      slotCounts,
++      limits: LIMITS,
++    });
++    const wNs = cardWeight(getItem('nanite-shield'), {
++      ownedCards: prog.ownedCards,
++      remnantIds: prog.remnantIds,
++      slotCounts,
++      limits: LIMITS,
++    });
++    expect(wOc).toBe(0); // maxed
++    expect(wNs).toBe(0); // remnant
++    const wSc = cardWeight(getItem('spread-cannon'), {
++      ownedCards: prog.ownedCards,
++      remnantIds: prog.remnantIds,
++      slotCounts,
++      limits: LIMITS,
++    });
++    expect(wSc).toBeGreaterThan(0);
+   });
+ 
+   it('the three returned ids are pairwise distinct in any state', () => {
+diff --git a/src/systems/levelUpSystem.test.js b/src/systems/levelUpSystem.test.js
+index 4c893a5..5bc1cd8 100644
+--- a/src/systems/levelUpSystem.test.js
++++ b/src/systems/levelUpSystem.test.js
+@@ -1,7 +1,8 @@
+ import { describe, it, expect } from 'vitest';
+ import { LevelUpSystem } from './LevelUpSystem.js';
+ import { createProgressionState } from '../state/ProgressionState.js';
+-import { PLACEHOLDER_CARDS } from '../config/cards.js';
++import { createPlayerStats } from '../state/PlayerStats.js';
++import { ITEM_REGISTRY } from '../config/itemRegistry.js';
+ import {
+   FIXED_STEP_MS,
+   LEVELUP_INVULN_FLOOR,
+@@ -28,23 +29,36 @@ function seqRng(values = [0.13, 0.47, 0.81, 0.29, 0.63]) {
+   };
+ }
+ 
+-function build({ invulnMs = 0, rng = seqRng() } = {}) {
++function build({
++  invulnMs = 0,
++  rng = seqRng(),
++  registry = ITEM_REGISTRY,
++  playerStats = createPlayerStats(),
++} = {}) {
+   // Story 8.5: the level stub now also carries `level` (the real LevelSystem always
+-  // exposes it) so the reroll-charge grant edge-detect can compute prevLevel.
++  // exposes it) so the reroll-charge grant edge-detect can compute prevLevel. Story
++  // 10.1: the system now takes the item registry (offer pool) + a PlayerStats store.
+   const levelStub = { level: 1, levelsGainedThisTick: 0 };
+   const playerStub = { invulnMs };
+   const prog = createProgressionState();
+-  const sys = new LevelUpSystem(levelStub, playerStub, prog, rng);
+-  return { sys, levelStub, playerStub, prog, rng };
++  const sys = new LevelUpSystem(
++    levelStub,
++    playerStub,
++    prog,
++    registry,
++    playerStats,
++    rng,
++  );
++  return { sys, levelStub, playerStub, prog, rng, registry, playerStats };
+ }
+ 
+ // The three offered cards must be exactly CARD_OFFER_SIZE (3), pairwise distinct, and
+-// every one a member of PLACEHOLDER_CARDS.
+-function expectValidOffer(offer) {
++// every one a member of the offer pool (the real ITEM_REGISTRY by default).
++function expectValidOffer(offer, pool = ITEM_REGISTRY) {
+   expect(offer).toHaveLength(3);
+   const ids = offer.map((c) => c.id);
+   expect(new Set(ids).size).toBe(ids.length);
+-  for (const c of offer) expect(PLACEHOLDER_CARDS).toContain(c);
++  for (const c of offer) expect(pool).toContain(c);
+ }
+ 
+ describe('LevelUpSystem — level-up moment state machine', () => {
+@@ -138,7 +152,7 @@ describe('LevelUpSystem — level-up moment state machine', () => {
+     const card = sys.currentOffer[1];
+     sys.queueSelection(1);
+     sys.fixedUpdate();
+-    expect(prog.debugStat).toBe(card.statDelta);
++    expect(prog.debugStat).toBe(1); // legacy pick counter (+1 per applied pick)
+     expect(prog.ownedCards[card.id]).toBe(1);
+     expect(sys.pendingSelections).toBe(0);
+     expect(sys.currentOffer).toEqual([]);
+@@ -195,7 +209,8 @@ describe('LevelUpSystem — level-up moment state machine', () => {
+     const first = sys.currentOffer[0];
+     sys.queueSelection(0);
+     sys.fixedUpdate();
+-    expect(prog.debugStat).toBe(first.statDelta);
++    expect(prog.debugStat).toBe(1); // legacy pick counter
++    expect(prog.ownedCards[first.id]).toBe(1);
+     expect(sys.pendingSelections).toBe(1);
+     expect(sys.currentOffer).toHaveLength(3);
+     expect(sys.selectionActive).toBe(true);
+@@ -250,6 +265,67 @@ describe('LevelUpSystem — level-up moment state machine', () => {
+     sys.queueSelection(2);
+     expect(sys._queuedChoice).toBe(0);
+   });
++
++  it('Story 10.1: a pick folds the picked item current-level stats into PlayerStats (on-pick recompute)', () => {
++    // Upgrade+fold matrix row at the SYSTEM level: inject a synthetic registry carrying
++    // real per-level stats, pick an item, and assert the shared PlayerStats reflects the
++    // fold (the recompute runs on the pick, not per tick). A 3-item registry so the draw
++    // returns all three and the pick is deterministic over the id set.
++    const registry = [
++      {
++        id: 's1',
++        title: 'S1',
++        track: 'offense',
++        rarity: 5,
++        maxLevel: 5,
++        levels: [
++          { level: 1, desc: 'L1', stats: { damageMult: 0.15 } },
++          { level: 2, desc: 'L2', stats: { damageMult: 0.25 } },
++          { level: 3, desc: 'L3', stats: { damageMult: 0.35 } },
++          { level: 4, desc: 'L4', stats: { damageMult: 0.45 } },
++          { level: 5, desc: 'L5', stats: { damageMult: 0.6 } },
++        ],
++      },
++      {
++        id: 's2',
++        title: 'S2',
++        track: 'defense',
++        rarity: 4,
++        maxLevel: 5,
++        levels: Array.from({ length: 5 }, (_, i) => ({
++          level: i + 1,
++          desc: `L${i + 1}`,
++          stats: { shieldCharges: i + 1 },
++        })),
++      },
++      {
++        id: 's3',
++        title: 'S3',
++        track: 'offense',
++        rarity: 3,
++        maxLevel: 5,
++        levels: Array.from({ length: 5 }, (_, i) => ({
++          level: i + 1,
++          desc: `L${i + 1}`,
++          stats: {},
++        })),
++      },
++    ];
++    const playerStats = createPlayerStats();
++    const { sys, levelStub, prog } = build({ registry, playerStats });
++    levelStub.levelsGainedThisTick = 1;
++    sys.fixedUpdate();
++    levelStub.levelsGainedThisTick = 0;
++    // Pick 's1' wherever it landed in the offer.
++    const idx = sys.currentOffer.findIndex((c) => c.id === 's1');
++    expect(idx).toBeGreaterThanOrEqual(0);
++    sys.queueSelection(idx);
++    sys.fixedUpdate();
++    expect(prog.ownedCards.s1).toBe(1);
++    // The shared PlayerStats folded s1's level-1 stats onto the base (1 + 0.15).
++    expect(playerStats.damageMult).toBeCloseTo(1.15);
++    expect(playerStats.shieldCharges).toBe(0); // s2 not owned
++  });
+ });
+ 
+ describe('LevelUpSystem — Story 8.5 reroll & banish', () => {
+diff --git a/src/systems/playerDeathSystem.test.js b/src/systems/playerDeathSystem.test.js
+index c71e132..aec85df 100644
+--- a/src/systems/playerDeathSystem.test.js
++++ b/src/systems/playerDeathSystem.test.js
+@@ -81,9 +81,11 @@ describe('PlayerDeathSystem', () => {
+     // multiplier. Without this, the "unchanged on non-final death" AC has zero coverage.
+     const { ship, enemyPool, playerState, system } = makeSystem();
+     const progressionState = createProgressionState();
+-    applyCard(progressionState, { id: 'card-a', statDelta: 3 });
+-    applyCard(progressionState, { id: 'card-a', statDelta: 3 });
+-    applyCard(progressionState, { id: 'card-b', statDelta: 1 });
++    // Story 10.1: applyCard now tracks the owned COUNT (an item's level, capped at
++    // maxLevel) and bumps debugStat as a legacy pick counter (+1 per applied pick).
++    applyCard(progressionState, { id: 'card-a' });
++    applyCard(progressionState, { id: 'card-a' });
++    applyCard(progressionState, { id: 'card-b' });
+     // Story 8.5: seed the reroll/banish economy fields to NON-default values too, so
+     // "untouched by death" is proven against real mutations — a targeted death-path reset
+     // of just these fields (to their fresh-run defaults) would otherwise read as untouched.
+@@ -105,12 +107,14 @@ describe('PlayerDeathSystem', () => {
+     expect(JSON.stringify(progressionState)).toBe(before);
+     expect(progressionState).toEqual({
+       ownedCards: { 'card-a': 2, 'card-b': 1 },
+-      debugStat: 7,
++      debugStat: 3, // Story 10.1: pick counter (3 applied picks), not a statDelta sum
+       // Story 8.5: the run-scoped reroll/banish economy fields survive the death path
+       // intact at their SEEDED (non-default) values — proving death does not reset them.
+       rerollCharges: 3,
+       banishCharges: 0,
+       banishedIds: new Set(['off-rapid']),
++      // Story 10.1: the run-scoped remnant set likewise survives the death path.
++      remnantIds: new Set(),
+     });
+   });
+ 
+diff --git a/src/config/itemRegistry.js b/src/config/itemRegistry.js
+new file mode 100644
+index 0000000..34b5a3a
+--- /dev/null
++++ b/src/config/itemRegistry.js
+@@ -0,0 +1,164 @@
++// Item registry — the single data-driven source of truth for every arsenal item
++// (Story 10.1 / Epic 10).
++//
++// This replaces the Epic-8 PLACEHOLDER_CARDS pool. ONE definition per item is read
++// by the card offer (its `rarity`/`track` drive the weighted draw), the on-pick
++// application (its `maxLevel` caps the level, its per-level `stats` fold into
++// PlayerStats), the owned-state queries (level == ownedCards[id]), and the
++// forward-looking fusion checks (its `fusion` partner/epic). Adding an item is
++// content — a new frozen entry — not new plumbing.
++//
++// Each entry is duck-compatible with the retired card shape (it carries `id`,
++// `rarity`, `track`, and `title`, so cardOffer / LevelUpSystem / the ArenaScene
++// card overlay keep working unchanged) PLUS the framework fields:
++//   - id       : stable unique key; the ownership map + every query key off it.
++//   - name     : human-readable item name.
++//   - title    : the label the level-up overlay renders (kept == name so the
++//                existing overlay's `offer[i].title` read stays functional — the
++//                render path is deliberately untouched this story).
++//   - track    : 'offense' | 'defense' — the per-track slot-limit bucket.
++//   - rarity   : the positive BASE weight the draw multiplies by the
++//                ownership/level/slot factors (varied so weighting is observable).
++//   - maxLevel : the full-build level (ITEM_MAX_LEVEL = 5). An item's level is its
++//                owned count capped here; at this level it weighs 0 (never re-offered).
++//   - levels   : five per-level effect descriptors { level, desc, stats }. `desc`
++//                is the human text from the epic; `stats` is a modifier map folded
++//                into PlayerStats at the item's CURRENT level (per-level entries are
++//                totals-AT-that-level, not deltas summed across levels). This story
++//                registers the four items with EMPTY `stats: {}` — each item's real
++//                effect numbers land in its own story (10.2–10.5).
++//   - fusion   : { partner, epic } — the Epic-12 fusion recipe (a Lv5 item + a
++//                Lv3+ partner unlocks the epic), or null. Carried metadata only this
++//                story (fusion consumption is Epic 12); the framework tracks/exposes
++//                remnant state but does not consume it here.
++//
++// Entries and the array are frozen so no consumer can mutate the shared registry.
++
++import { ITEM_MAX_LEVEL } from './constants.js';
++
++// Build one frozen five-entry `levels` array from five human descriptions, each with
++// an EMPTY stats map (this story defers real effect numbers to the item's own story).
++// Freezing each level entry + its stats map keeps the whole definition immutable.
++function makeLevels(descs) {
++  return Object.freeze(
++    descs.map((desc, i) =>
++      Object.freeze({ level: i + 1, desc, stats: Object.freeze({}) }),
++    ),
++  );
++}
++
++/**
++ * The Epic-10 item registry: the four core arsenal items (Overcharge, Spread
++ * Cannon, Nanite Shield, Afterburner) at all five levels, with real id/name/track/
++ * rarity/fusion metadata and empty per-level `stats` (effect numbers deferred to
++ * each item's story). Frozen (array + every entry) so it is a shared immutable
++ * source of truth. The fusion partner/epic ids come from the PRD §13.5 fusion map.
++ * @type {ReadonlyArray<{ id: string, name: string, title: string,
++ *   track: 'offense'|'defense', rarity: number, maxLevel: number,
++ *   levels: ReadonlyArray<{ level: number, desc: string, stats: object }>,
++ *   fusion: { partner: string, epic: string }|null }>}
++ */
++export const ITEM_REGISTRY = Object.freeze([
++  // --- Offense -------------------------------------------------------------
++  // Overcharge: the common fusion key (a normal offense item on its base rarity
++  // weight). Global fire modifiers. Fusion: Overcharge Lv5 + any 2 offense Lv5 →
++  // Critical Resonance (the "any 2 offense" partner is a special multi-partner rule
++  // resolved by Epic 12; recorded here as the sentinel 'any-offense-x2').
++  Object.freeze({
++    id: 'overcharge',
++    name: 'Overcharge',
++    title: 'Overcharge',
++    track: 'offense',
++    rarity: 5,
++    maxLevel: ITEM_MAX_LEVEL,
++    levels: makeLevels([
++      '+15% damage',
++      '+25% damage, +10% fire rate',
++      '+35% damage, +20% fire rate',
++      '+45% damage, +30% fire rate',
++      '+60% damage, +40% fire rate',
++    ]),
++    fusion: Object.freeze({ partner: 'any-offense-x2', epic: 'critical-resonance' }),
++  }),
++  // Spread Cannon: the base-weapon evolution (always offered by ~Lv3 — that
++  // onboarding guarantee is Story 10.3). Fires through the existing firing seam.
++  // Fusion: Spread Cannon Lv5 + Piercing Lance Lv3 → Sunburst.
++  Object.freeze({
++    id: 'spread-cannon',
++    name: 'Spread Cannon',
++    title: 'Spread Cannon',
++    track: 'offense',
++    rarity: 4,
++    maxLevel: ITEM_MAX_LEVEL,
++    levels: makeLevels([
++      '3-way spread, 12°',
++      '5-way spread, 16°',
++      '+30% fire rate',
++      '7-way spread, 22°',
++      '9-way spread, +35% damage',
++    ]),
++    fusion: Object.freeze({ partner: 'piercing-lance', epic: 'sunburst' }),
++  }),
++  // --- Defense -------------------------------------------------------------
++  // Nanite Shield: integrates with the v1 death/collision path — a shielded hit
++  // consumes a charge instead of costing a life (Story 10.4). Fusion: Nanite Lv5 +
++  // Afterburner Lv3 → Phase Armor.
++  Object.freeze({
++    id: 'nanite-shield',
++    name: 'Nanite Shield',
++    title: 'Nanite Shield',
++    track: 'defense',
++    rarity: 5,
++    maxLevel: ITEM_MAX_LEVEL,
++    levels: makeLevels([
++      'Absorb 1 hit, 20s recharge',
++      '15s recharge',
++      '2 charges',
++      '10s recharge',
++      '3 charges + knockback pulse',
++    ]),
++    fusion: Object.freeze({ partner: 'afterburner', epic: 'phase-armor' }),
++  }),
++  // Afterburner: feeds the existing movement seam (Story 10.5). Fusion: Afterburner
++  // Lv5 + Nanite Lv3 → Slipstream (mutually reinforcing with Nanite Shield).
++  Object.freeze({
++    id: 'afterburner',
++    name: 'Afterburner',
++    title: 'Afterburner',
++    track: 'defense',
++    rarity: 3,
++    maxLevel: ITEM_MAX_LEVEL,
++    levels: makeLevels([
++      '+12% move speed',
++      '+20% move speed, dash (3s cd)',
++      '+25% move speed, dash i-frames',
++      '2s dash cd, dash damages on contact',
++      '+35% move speed, burning dash trail',
++    ]),
++    fusion: Object.freeze({ partner: 'nanite-shield', epic: 'slipstream' }),
++  }),
++]);
++
++/**
++ * Look up an item definition by id. Returns the frozen entry, or null when no item
++ * carries that id. The single accessor the offer/application/query surfaces read so
++ * item data has ONE lookup path.
++ * @param {string} id
++ * @returns {(typeof ITEM_REGISTRY)[number]|null}
++ */
++export function getItem(id) {
++  for (let i = 0; i < ITEM_REGISTRY.length; i++) {
++    if (ITEM_REGISTRY[i].id === id) return ITEM_REGISTRY[i];
++  }
++  return null;
++}
++
++/**
++ * All item definitions on a given build track ('offense' | 'defense'), in registry
++ * order. A fresh array per call (never the frozen registry) so callers may sort/slice.
++ * @param {'offense'|'defense'} track
++ * @returns {Array<(typeof ITEM_REGISTRY)[number]>}
++ */
++export function getItemsByTrack(track) {
++  return ITEM_REGISTRY.filter((item) => item.track === track);
++}
+diff --git a/src/config/itemRegistry.test.js b/src/config/itemRegistry.test.js
+new file mode 100644
+index 0000000..7878313
+--- /dev/null
++++ b/src/config/itemRegistry.test.js
+@@ -0,0 +1,119 @@
++import { describe, it, expect } from 'vitest';
++import {
++  ITEM_REGISTRY,
++  getItem,
++  getItemsByTrack,
++} from './itemRegistry.js';
++import { drawCardOffer } from '../systems/cardOffer.js';
++import { createProgressionState } from '../state/ProgressionState.js';
++import { ITEM_MAX_LEVEL, CARD_OFFER_SIZE } from './constants.js';
++
++// Story 10.1 — the data-driven item registry: ONE definition per item that the offer,
++// on-pick application, owned-state, and current level all read from. These tests pin the
++// definition shape the framework depends on, the getItem/getItemsByTrack accessors, and
++// the register→offer matrix row (the offer draws an item using its registry rarity/track).
++
++const EXPECTED_IDS = ['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner'];
++
++describe('ITEM_REGISTRY — definition shape & invariants', () => {
++  it('registers the four Epic-10 items with distinct ids', () => {
++    const ids = ITEM_REGISTRY.map((it) => it.id);
++    expect(ids).toEqual(EXPECTED_IDS);
++    expect(new Set(ids).size).toBe(ids.length);
++  });
++
++  it('every entry carries the full framework shape (id/name/title/track/rarity/maxLevel)', () => {
++    for (const item of ITEM_REGISTRY) {
++      expect(typeof item.id).toBe('string');
++      expect(item.id.length).toBeGreaterThan(0);
++      expect(typeof item.name).toBe('string');
++      expect(item.name.length).toBeGreaterThan(0);
++      // title stays == name so the existing card overlay's `.title` read keeps working.
++      expect(item.title).toBe(item.name);
++      expect(['offense', 'defense']).toContain(item.track);
++      expect(typeof item.rarity).toBe('number');
++      expect(item.rarity).toBeGreaterThan(0);
++      expect(item.maxLevel).toBe(ITEM_MAX_LEVEL);
++    }
++  });
++
++  it('every entry has a five-level array whose entries carry level/desc/empty stats', () => {
++    for (const item of ITEM_REGISTRY) {
++      expect(item.levels).toHaveLength(ITEM_MAX_LEVEL);
++      item.levels.forEach((lvl, i) => {
++        expect(lvl.level).toBe(i + 1);
++        expect(typeof lvl.desc).toBe('string');
++        expect(lvl.desc.length).toBeGreaterThan(0);
++        // This story registers EMPTY stats — effect numbers land in each item's story.
++        expect(lvl.stats).toEqual({});
++      });
++    }
++  });
++
++  it('every entry has a fusion recipe {partner, epic} (never null this epic)', () => {
++    for (const item of ITEM_REGISTRY) {
++      expect(item.fusion).not.toBeNull();
++      expect(typeof item.fusion.partner).toBe('string');
++      expect(item.fusion.partner.length).toBeGreaterThan(0);
++      expect(typeof item.fusion.epic).toBe('string');
++      expect(item.fusion.epic.length).toBeGreaterThan(0);
++    }
++  });
++
++  it('varies rarities so weighting is observable (not all equal)', () => {
++    const rarities = new Set(ITEM_REGISTRY.map((it) => it.rarity));
++    expect(rarities.size).toBeGreaterThan(1);
++  });
++
++  it('the registry, every entry, its levels array, and each stats map are frozen', () => {
++    expect(Object.isFrozen(ITEM_REGISTRY)).toBe(true);
++    for (const item of ITEM_REGISTRY) {
++      expect(Object.isFrozen(item)).toBe(true);
++      expect(Object.isFrozen(item.levels)).toBe(true);
++      for (const lvl of item.levels) {
++        expect(Object.isFrozen(lvl)).toBe(true);
++        expect(Object.isFrozen(lvl.stats)).toBe(true);
++      }
++      expect(Object.isFrozen(item.fusion)).toBe(true);
++    }
++  });
++});
++
++describe('getItem / getItemsByTrack — the single lookup path', () => {
++  it('getItem returns the frozen definition by id', () => {
++    const oc = getItem('overcharge');
++    expect(oc).toBe(ITEM_REGISTRY[0]);
++    expect(oc.name).toBe('Overcharge');
++  });
++
++  it('getItem returns null for an unknown id', () => {
++    expect(getItem('does-not-exist')).toBeNull();
++  });
++
++  it('getItemsByTrack filters by track (2 offense, 2 defense) as fresh arrays', () => {
++    const offense = getItemsByTrack('offense');
++    const defense = getItemsByTrack('defense');
++    expect(offense.map((it) => it.id)).toEqual(['overcharge', 'spread-cannon']);
++    expect(defense.map((it) => it.id)).toEqual(['nanite-shield', 'afterburner']);
++    // Fresh array (not the frozen registry) so callers can sort/slice it.
++    expect(offense).not.toBe(ITEM_REGISTRY);
++  });
++});
++
++describe('register → offer (I/O matrix row): the draw reads the definition', () => {
++  it('drawCardOffer offers registry items using their track/rarity from the definition', () => {
++    const prog = createProgressionState();
++    let i = 0;
++    const seq = [0.1, 0.5, 0.9, 0.3, 0.7];
++    const rng = () => seq[i++ % seq.length];
++    const offer = drawCardOffer({
++      pool: ITEM_REGISTRY,
++      progressionState: prog,
++      rng,
++    });
++    expect(offer).toHaveLength(CARD_OFFER_SIZE);
++    const ids = offer.map((c) => c.id);
++    expect(new Set(ids).size).toBe(ids.length); // distinct
++    for (const c of offer) expect(ITEM_REGISTRY).toContain(c);
++  });
++});
+diff --git a/src/state/PlayerStats.js b/src/state/PlayerStats.js
+new file mode 100644
+index 0000000..b57bac8
+--- /dev/null
++++ b/src/state/PlayerStats.js
+@@ -0,0 +1,85 @@
++// PlayerStats — the runtime player-stat modifier store + its on-change fold
++// (Story 10.1 / Epic 10, plain data, Phaser-free).
++//
++// A single mutable modifier object the gameplay seams will read (Overcharge's global
++// fire modifiers, Afterburner's move-speed, Nanite Shield's charge count, etc. — each
++// wired in its own story 10.2–10.5). It is derived, not authored: recomputePlayerStats
++// folds every owned item's CURRENT-level `stats` contribution onto a fresh base, and it
++// runs ONLY on a level change (an on-pick recompute in LevelUpSystem), never per frame —
++// so the hot loop reads cached derived stats with zero per-frame allocation.
++//
++// The base values encode the neutral identity for each kind of field: a MULTIPLIER
++// field bases at 1 (no scaling) and an ADDITIVE/COUNT field bases at 0 (nothing added).
++// Item `stats` maps add onto that base (a +0.15 damageMult contribution makes the field
++// 1.15). The vocabulary starts minimal here; each item story extends it with the fields
++// its effect needs. Because Story 10.1's registered items carry EMPTY `stats`, the fold
++// is a no-op on real content today — the framework is real; the item numbers are each
++// story's job — and is proven by a synthetic-fixture test.
++
++/**
++ * Create the runtime player-stat modifier store at its neutral base: every multiplier
++ * field at 1 (no scaling) and every additive/count field at 0 (nothing added). Built
++ * fresh per run beside playerState/progressionState; recomputePlayerStats mutates it in
++ * place on each level change.
++ * @returns {{ damageMult: number, fireRateMult: number, moveSpeedMult: number,
++ *   shieldCharges: number }}
++ */
++export function createPlayerStats() {
++  return {
++    // Multiplier fields (base 1 — no scaling).
++    damageMult: 1,
++    fireRateMult: 1,
++    moveSpeedMult: 1,
++    // Additive/count fields (base 0 — nothing added).
++    shieldCharges: 0,
++  };
++}
++
++// Reset every field of `ps` to its neutral base in place (multiplier fields → 1,
++// additive/count fields → 0). Kept in lockstep with createPlayerStats's field set so a
++// recompute starts from the identical base without allocating a new object.
++function resetToBase(ps) {
++  ps.damageMult = 1;
++  ps.fireRateMult = 1;
++  ps.moveSpeedMult = 1;
++  ps.shieldCharges = 0;
++}
++
++// Linear scan for an item id within the PASSED registry (not the global one), so the
++// fold works against synthetic test fixtures as well as ITEM_REGISTRY. Returns the entry
++// or undefined; allocates nothing (no map build, no closure), preserving the zero-per-
++// call-allocation guarantee for a registry of this size.
++function findInRegistry(registry, id) {
++  for (let i = 0; i < registry.length; i++) {
++    if (registry[i].id === id) return registry[i];
++  }
++  return undefined;
++}
++
++/**
++ * Recompute `playerStats` in place: reset every field to its base, then add each owned
++ * item's CURRENT-level `stats` contribution additively. The fold reads ONLY the current
++ * level's entry (per-level `stats` are totals-at-that-level, not deltas summed across
++ * levels), skips levels < 1 and unknown ids, and mutates `playerStats` with no per-call
++ * allocation beyond the passed object. Pure over its inputs: the same owned set + registry
++ * always yields the identical result. Invoked only on a level change (LevelUpSystem's
++ * on-pick), never per frame.
++ * @param {object} playerStats The modifier store to mutate in place (from createPlayerStats).
++ * @param {Object<string, number>} ownedCards id → owned count (an item's level).
++ * @param {ReadonlyArray<{ id: string, levels: Array<{ stats: object }> }>} registry
++ */
++export function recomputePlayerStats(playerStats, ownedCards, registry) {
++  resetToBase(playerStats);
++  for (const id in ownedCards) {
++    const level = ownedCards[id];
++    if (level < 1) continue;
++    const item = findInRegistry(registry, id);
++    if (!item) continue;
++    const entry = item.levels[level - 1];
++    const stats = entry && entry.stats;
++    if (!stats) continue;
++    for (const key in stats) {
++      playerStats[key] = (playerStats[key] ?? 0) + stats[key];
++    }
++  }
++}
+diff --git a/src/state/playerStats.test.js b/src/state/playerStats.test.js
+new file mode 100644
+index 0000000..f6a46ba
+--- /dev/null
++++ b/src/state/playerStats.test.js
+@@ -0,0 +1,122 @@
++import { describe, it, expect } from 'vitest';
++import { createPlayerStats, recomputePlayerStats } from './PlayerStats.js';
++import { ITEM_REGISTRY } from '../config/itemRegistry.js';
++
++// Story 10.1 — the runtime PlayerStats modifier store + its on-change fold. The fold is
++// pure and in-place: reset every field to its base, then add each owned item's CURRENT-
++// level `stats` contribution. It reads the current level only (per-level entries are
++// totals-at-that-level, not deltas across levels), skips unowned/unknown ids, and runs
++// only on a level change. A SYNTHETIC-fixture registry proves the fold (the real Epic-10
++// items carry empty stats today, so the fold is a no-op on real content).
++
++// A synthetic registry with NON-empty per-level stats, so the fold has real content to
++// verify. Two items across the multiplier + additive field vocabularies.
++const FIXTURE = [
++  {
++    id: 'dmg',
++    track: 'offense',
++    maxLevel: 5,
++    levels: [
++      { level: 1, desc: 'L1', stats: { damageMult: 0.1 } },
++      { level: 2, desc: 'L2', stats: { damageMult: 0.25, fireRateMult: 0.1 } },
++      { level: 3, desc: 'L3', stats: { damageMult: 0.35, fireRateMult: 0.2 } },
++      { level: 4, desc: 'L4', stats: { damageMult: 0.45, fireRateMult: 0.3 } },
++      { level: 5, desc: 'L5', stats: { damageMult: 0.6, fireRateMult: 0.4 } },
++    ],
++  },
++  {
++    id: 'shield',
++    track: 'defense',
++    maxLevel: 5,
++    levels: [
++      { level: 1, desc: 'L1', stats: { shieldCharges: 1 } },
++      { level: 2, desc: 'L2', stats: { shieldCharges: 1 } },
++      { level: 3, desc: 'L3', stats: { shieldCharges: 2 } },
++      { level: 4, desc: 'L4', stats: { shieldCharges: 2 } },
++      { level: 5, desc: 'L5', stats: { shieldCharges: 3 } },
++    ],
++  },
++];
++
++describe('createPlayerStats — neutral base store', () => {
++  it('multiplier fields base at 1, additive/count fields base at 0', () => {
++    const ps = createPlayerStats();
++    expect(ps.damageMult).toBe(1);
++    expect(ps.fireRateMult).toBe(1);
++    expect(ps.moveSpeedMult).toBe(1);
++    expect(ps.shieldCharges).toBe(0);
++  });
++
++  it('returns a fresh independent object each call', () => {
++    expect(createPlayerStats()).not.toBe(createPlayerStats());
++  });
++});
++
++describe('recomputePlayerStats — the current-level fold', () => {
++  it('folds a single owned item at its current level onto the base', () => {
++    const ps = createPlayerStats();
++    recomputePlayerStats(ps, { dmg: 1 }, FIXTURE);
++    // base 1 + L1 damageMult 0.1 = 1.1; fireRateMult untouched (L1 has none).
++    expect(ps.damageMult).toBeCloseTo(1.1);
++    expect(ps.fireRateMult).toBe(1);
++    expect(ps.shieldCharges).toBe(0);
++  });
++
++  it('reads the CURRENT level total, not the sum across levels', () => {
++    const ps = createPlayerStats();
++    recomputePlayerStats(ps, { dmg: 3 }, FIXTURE);
++    // L3 totals (0.35 / 0.2) — NOT L1+L2+L3 summed. Proves per-level = totals-at-level.
++    expect(ps.damageMult).toBeCloseTo(1.35);
++    expect(ps.fireRateMult).toBeCloseTo(1.2);
++  });
++
++  it('sums contributions across multiple owned items additively', () => {
++    const ps = createPlayerStats();
++    recomputePlayerStats(ps, { dmg: 5, shield: 3 }, FIXTURE);
++    expect(ps.damageMult).toBeCloseTo(1.6);
++    expect(ps.fireRateMult).toBeCloseTo(1.4);
++    expect(ps.shieldCharges).toBe(2); // shield L3 → 2 charges (additive onto base 0)
++  });
++
++  it('resets to base each call (no accumulation across recomputes)', () => {
++    const ps = createPlayerStats();
++    recomputePlayerStats(ps, { dmg: 5 }, FIXTURE); // damageMult 1.6
++    recomputePlayerStats(ps, { dmg: 1 }, FIXTURE); // now level 1 only
++    expect(ps.damageMult).toBeCloseTo(1.1); // reset then refolded, not 1.6 + 0.1
++  });
++
++  it('skips levels < 1 and unknown ids', () => {
++    const ps = createPlayerStats();
++    recomputePlayerStats(ps, { dmg: 0, mystery: 4 }, FIXTURE);
++    expect(ps.damageMult).toBe(1); // dmg at level 0 folds nothing; mystery unknown
++    expect(ps.fireRateMult).toBe(1);
++    expect(ps.shieldCharges).toBe(0);
++  });
++
++  it('is deterministic: same owned set folded twice → identical stats', () => {
++    const a = createPlayerStats();
++    const b = createPlayerStats();
++    recomputePlayerStats(a, { dmg: 4, shield: 2 }, FIXTURE);
++    recomputePlayerStats(b, { dmg: 4, shield: 2 }, FIXTURE);
++    expect(a).toEqual(b);
++  });
++
++  it('mutates the passed object in place (no per-call reallocation)', () => {
++    const ps = createPlayerStats();
++    const ret = recomputePlayerStats(ps, { dmg: 2 }, FIXTURE);
++    // Fold returns nothing and reuses the passed object — no new store allocated.
++    expect(ret).toBeUndefined();
++    expect(ps.damageMult).toBeCloseTo(1.25);
++  });
++
++  it('the REAL Epic-10 registry has empty stats → the fold is a no-op (base preserved)', () => {
++    const ps = createPlayerStats();
++    // Own every real item at various levels; all carry empty `stats` this story.
++    recomputePlayerStats(
++      ps,
++      { overcharge: 5, 'spread-cannon': 3, 'nanite-shield': 4, afterburner: 2 },
++      ITEM_REGISTRY,
++    );
++    expect(ps).toEqual(createPlayerStats());
++  });
++});

@@ -794,10 +794,14 @@ export const LEVELUP_PROMPT_Y_OFFSET = 50;
 // caps at 5, defense at 4 — the Epic-8 "a run commits to a build" ceiling.
 export const SLOT_LIMIT_OFFENSE = 5;
 export const SLOT_LIMIT_DEFENSE = 4;
-// The offer is exactly this many distinct cards ("exactly three" is a firm Epic-8
-// contract). NOTE: this value is MIRRORED as a literal `3` in LevelUpSystem's selection
-// latch (`currentOffer.length === 3`, `index < 3`) and the ArenaScene card overlay — it
-// is not imported there — so it must not be changed without updating those call sites.
+// The MAXIMUM offer size — the draw returns UP TO this many distinct eligible cards.
+// Story 10.1 dropped the former "exactly three" invariant: the offer is variable length
+// (0..CARD_OFFER_SIZE) and NEVER pads an excluded (banished/maxed/remnant/slot-full)
+// card in to reach a count; when fewer are eligible it is SHORT, and a zero-eligible
+// offer auto-drains (see LevelUpSystem/cardOffer). LevelUpSystem's guards now test
+// `currentOffer.length >= 1` / `index < currentOffer.length`, and the ArenaScene overlay
+// clamps its focus-wrap to the current offer length — no hardcoded 3 remains on those
+// paths.
 export const CARD_OFFER_SIZE = 3;
 // Ownership weight factor: an already-owned card is this much more likely than an
 // unowned one (favors finishing owned builds over starting new ones).
@@ -810,6 +814,21 @@ export const CARD_WEIGHT_LEVEL1_MULT = 1.0;
 // Level factor for any card NOT at level 1 (unowned level 0 or mid-tier levels
 // 2+): the bump that, combined with ownership, favors finishing mid-tier builds.
 export const CARD_WEIGHT_MIDTIER_MULT = 1.4;
+
+// --- Item & upgrade framework (Story 10.1 / Epic 10) ------------------------
+// The data-driven item registry (src/config/itemRegistry.js) replaces the Epic-8
+// placeholder pool: each item is one definition (id/name/track/rarity + five
+// per-level effect descriptors + fusion metadata) that the card offer, on-pick
+// application, owned-state, and current level all read from. An item's LEVEL is
+// its owned count (ownedCards[id]) capped at ITEM_MAX_LEVEL; a maxed item is
+// never re-offered (cardWeight 0). ITEM_REMNANT_LEVEL is the frozen level a maxed
+// item drops to when consumed by a fusion (Epic 12 owns the consumption; this
+// story only tracks + exposes the remnant state). Both are tunable placeholders.
+// Every item levels 1→5 (a full build), matching PRD §13.3/§13.4.
+export const ITEM_MAX_LEVEL = 5;
+// The level a fusion-consumed (remnant) item is frozen at — keeps its Lv3 stats,
+// no longer upgradable (PRD §13.6). The plumbing lands here; Epic 12 consumes it.
+export const ITEM_REMNANT_LEVEL = 3;
 
 // --- Reroll & Banish (Story 8.5 / Epic 8 progression) ------------------------
 // The two build-shaping tools layered onto the 8.3/8.4 draft: REROLL redraws the
