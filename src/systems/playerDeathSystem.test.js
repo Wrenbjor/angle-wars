@@ -8,6 +8,10 @@ import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createPlayerState } from '../state/PlayerState.js';
 import { createScoreState } from '../state/ScoreState.js';
 import {
+  createProgressionState,
+  applyCard,
+} from '../state/ProgressionState.js';
+import {
   FIXED_STEP_MS,
   PLAYER_INVULN_MS,
   PLAYER_START_LIVES,
@@ -66,6 +70,37 @@ describe('PlayerDeathSystem', () => {
     expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
     // The seeker stays active (ship contact never destroys seekers).
     expect(enemyPool.activeCount).toBe(1);
+  });
+
+  it('non-final death leaves run-scoped progressionState untouched (Story 8.3 AC)', () => {
+    // The card-progression state must SURVIVE a non-final death (mirrors scoreState.xp):
+    // the death path never receives or touches it. PlayerDeathSystem takes only
+    // (ship, [enemyPool], playerState) — no progression ref — so a real lethal contact
+    // that respawns the player must leave a separately-held progressionState identical.
+    // Guards against a future death-path edit clearing progression like it resets the
+    // multiplier. Without this, the "unchanged on non-final death" AC has zero coverage.
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    const progressionState = createProgressionState();
+    applyCard(progressionState, { id: 'card-a', statDelta: 3 });
+    applyCard(progressionState, { id: 'card-a', statDelta: 3 });
+    applyCard(progressionState, { id: 'card-b', statDelta: 1 });
+    const before = JSON.stringify(progressionState);
+
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // fully overlapping → lethal contact
+
+    system.fixedUpdate(DT);
+
+    // A real NON-FINAL death occurred (life lost, respawned, not game-over)...
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    // ...and progression is byte-for-byte unchanged by it.
+    expect(JSON.stringify(progressionState)).toBe(before);
+    expect(progressionState).toEqual({
+      ownedCards: { 'card-a': 2, 'card-b': 1 },
+      debugStat: 7,
+    });
   });
 
   it('no contact: no life lost, ship unmoved by this system, not game-over', () => {

@@ -14,10 +14,11 @@ import {
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 22-system registration order (spec Design Notes; Story 6.3 added
+// The canonical 23-system registration order (spec Design Notes; Story 6.3 added
 // MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector;
 // Story 8.1 added XpOrbSystem right after the BombSystem late-bind; Story 8.2 added
-// LevelSystem right after XpOrbSystem).
+// LevelSystem right after XpOrbSystem; Story 8.3 added LevelUpSystem right after
+// LevelSystem, before PlayerDeathSystem).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -34,6 +35,7 @@ const CANONICAL_ORDER = [
   'BombSystem',
   'XpOrbSystem',
   'LevelSystem',
+  'LevelUpSystem',
   'ExtraLifeSystem',
   'PlayerDeathSystem',
   'HighScoreSystem',
@@ -54,6 +56,7 @@ const RETURN_HANDLES = [
   'inputState',
   'scoreState',
   'playerState',
+  'progressionState',
   'enemyPools',
   'deathPools',
   'highScoreStorage',
@@ -72,6 +75,7 @@ const RETURN_HANDLES = [
   'bombSystem',
   'xpOrbSystem',
   'levelSystem',
+  'levelUpSystem',
   'extraLifeSystem',
   'playerDeathSystem',
   'highScoreSystem',
@@ -89,7 +93,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 22 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 23 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -184,6 +188,21 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.levelSystem.scoreState).toBe(ctx.scoreState);
     // Fresh run starts at level 1.
     expect(ctx.levelSystem.level).toBe(1);
+  });
+
+  it('wires the LevelUpSystem (Story 8.3) with the shared levelSystem / playerState / progressionState', () => {
+    const ctx = buildArenaWorld();
+    // Returned as its own handle.
+    expect(ctx.levelUpSystem).toBeDefined();
+    // Its three refs are the SAME shared instances the rest of the world uses: it
+    // edge-detects levelSystem.levelsGainedThisTick, re-arms playerState.invulnMs, and
+    // applies a picked card to progressionState.
+    expect(ctx.levelUpSystem.levelSystem).toBe(ctx.levelSystem);
+    expect(ctx.levelUpSystem.playerState).toBe(ctx.playerState);
+    expect(ctx.levelUpSystem.progressionState).toBe(ctx.progressionState);
+    // Fresh run: run-scoped progression starts empty (rebuilt fresh per run, never
+    // reset on death — mirrors scoreState.xp).
+    expect(ctx.progressionState).toEqual({ ownedCards: {}, debugStat: 0 });
   });
 
   it('applies both load-bearing collision late-binds to the same collisionSystem', () => {

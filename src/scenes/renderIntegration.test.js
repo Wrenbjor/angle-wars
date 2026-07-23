@@ -189,8 +189,12 @@ describe('render-integration — mirror-reflector render wiring (ArenaScene, Sto
 describe('render-integration — render→sim decoupling (ArenaScene.update)', () => {
   const arenaSrc = readSrc('./ArenaScene.js');
 
-  it('advances the sim only through this.fixedTimestep.advance(delta, ...)', () => {
-    expect(arenaSrc).toMatch(/this\.fixedTimestep\.advance\(\s*delta\s*,/);
+  it('advances the sim only through this.fixedTimestep.advance(delta * timeScale, ...)', () => {
+    // Story 8.3 dilates the level-up moment by scaling the render delta fed to the
+    // accumulator (delta * timeScale, timeScale 1 in normal play), so the sim still
+    // advances ONLY through the fixedTimestep.advance seam fed a render-delta-derived
+    // value — never a direct world.fixedUpdate(delta) from the render loop.
+    expect(arenaSrc).toMatch(/this\.fixedTimestep\.advance\(\s*delta\s*\*\s*timeScale\s*,/);
   });
 
   it('steps the world exactly once, and only inside the gameOver-gated callback', () => {
@@ -203,6 +207,117 @@ describe('render-integration — render→sim decoupling (ArenaScene.update)', (
     expect(arenaSrc).toMatch(
       /if\s*\(\s*!this\.playerState\.gameOver\s*\)\s*this\.world\.fixedUpdate\(\s*dt\s*\)/,
     );
+  });
+});
+
+describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)', () => {
+  // Pins the load-bearing Story 8.3 level-up glue in ArenaScene. The scene is
+  // Phaser-coupled and cannot be imported headlessly, so — like the touch / reduced-
+  // motion / black-hole checks — these are SOURCE-TEXT assertions. The sim-side state
+  // machine (LevelUpSystem) carries its own unit coverage; these guard the three
+  // render-loop seams that would silently regress the moment if reverted.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('VG1: dilates the level-up via the selectionActive ? LEVELUP_TIME_SCALE : 1 gate', () => {
+    // Regressing timeScale to a constant 1 (dropping the dilation) would fail this.
+    expect(arenaSrc).toMatch(
+      /const\s+timeScale\s*=\s*this\.levelUpSystem\.selectionActive\s*\?\s*LEVELUP_TIME_SCALE\s*:\s*1/,
+    );
+  });
+
+  it('VG2: suppresses gameplay input while the overlay is open (clear + drop bomb after sample)', () => {
+    // While selectionActive, the sampled input is cleared and any queued bomb dropped
+    // so the ship idles and nav keys never steer it. Dropping this block would let the
+    // ship fly / fire under the modal.
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*this\.levelUpSystem\.selectionActive\s*\)\s*\{\s*this\.inputState\.clear\(\)\s*;\s*this\.inputState\.consumeBomb\(\)\s*;/,
+    );
+  });
+
+  it('VG3: suppresses only ENTERING pause during a selection, never resuming (no soft-lock)', () => {
+    // The guard must be `selectionActive && !this._paused` so a forced pause mid-
+    // selection can still be resumed (a bare `selectionActive` guard would deadlock:
+    // a paused sim never drains the pending pick).
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*this\.levelUpSystem\.selectionActive\s*&&\s*!this\._paused\s*\)\s*return/,
+    );
+  });
+
+  it('VG4: ordering — the input-suppression clear runs AFTER inputSampler.sample()', () => {
+    // VG2 alone only asserts the clear block EXISTS; hoisting it above sample() would
+    // still match VG2 yet let sample() re-populate the intent AFTER the clear, so the
+    // ship would steer under the modal. Pin that sample() precedes the clear block.
+    expect(arenaSrc).toMatch(
+      /this\.inputSampler\.sample\(\)[\s\S]{0,600}?if\s*\(\s*this\.levelUpSystem\.selectionActive\s*\)\s*\{\s*this\.inputState\.clear\(\)/,
+    );
+  });
+
+  it('VG5: hides the whole level-up overlay on the paused early-return (no stacked modal)', () => {
+    // A forced pause can fire mid-selection; without this hide the card modal renders
+    // stacked UNDER the PAUSED overlay. Dropping the sequence re-introduces that stack.
+    // The FULL overlay is five element groups — the four singletons AND the three card
+    // titles (a Text per card): pin all of them, or a dropped title loop leaves the
+    // card titles floating over the PAUSED screen while the rest correctly hides.
+    expect(arenaSrc).toMatch(
+      /this\.levelUpOverlay\.setVisible\(false\);\s*this\.levelUpHeading\.setVisible\(false\);\s*this\.cardPanelGraphics\.setVisible\(false\);\s*this\.levelUpPrompt\.setVisible\(false\)/,
+    );
+    expect(arenaSrc).toMatch(
+      /for\s*\([\s\S]{0,80}?this\.cardTitles\.length[\s\S]{0,80}?this\.cardTitles\[i\]\.setVisible\(false\)/,
+    );
+  });
+
+  it('VG6: arms + gates + decays a confirm-grace so an in-flight confirm cannot instant-pick on open', () => {
+    // The overlay-open / fresh-offer edge (re)arms _cardConfirmGraceMs, every confirm
+    // path returns while it is > 0, AND it decays by delta each frame back to 0.
+    // Removing the arm or the gate re-introduces the instant-auto-pick; removing the
+    // DECAY pins the grace > 0 forever, so every confirm early-returns, the pick never
+    // drains, and selectionActive sticks true — a permanent soft-lock with tests green.
+    expect(arenaSrc).toMatch(
+      /this\._cardConfirmGraceMs\s*=\s*LEVELUP_CONFIRM_GRACE_MS/,
+    );
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*this\._cardConfirmGraceMs\s*>\s*0\s*\)\s*return/,
+    );
+    expect(arenaSrc).toMatch(
+      /this\._cardConfirmGraceMs\s*-=\s*delta/,
+    );
+  });
+
+  it('VG7: resets card focus to 0 on the overlay-open / fresh-offer edge (no stale focus)', () => {
+    // Focus must reset on the false→true rise and on a fresh offer mid multi-level jump,
+    // else a stale _cardFocus carries across overlays / picks.
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*roseActive\s*\|\|\s*freshOffer\s*\)\s*\{\s*this\._cardFocus\s*=\s*0/,
+    );
+  });
+
+  it('VG8: reconciles held touch on the overlay CLOSE edge (no stranded stick on resume)', () => {
+    // A card tap shares pointerdown with the twin-stick sampler; a finger still held
+    // when the overlay closes leaves a stick anchored (masked only while selectionActive).
+    // The true→false edge must resetTouch, mirroring the pause-edge reconcile.
+    expect(arenaSrc).toMatch(
+      /const\s+fellActive\s*=\s*!cardsOpen\s*&&\s*this\._wasSelectionActive;\s*if\s*\(\s*fellActive\s*\)\s*\{\s*this\.inputSampler\.resetTouch\(\)/,
+    );
+  });
+
+  it('VG9: gamepad confirm is restricted to face buttons (indices 0..3), not any button', () => {
+    // A prior regression let ANY pad button confirm card 0. Confirm must be gated to the
+    // face-button index range so d-pad/stick stay free to navigate.
+    expect(arenaSrc).toMatch(/if\s*\(\s*idx\s*>=\s*0\s*&&\s*idx\s*<=\s*3\s*\)/);
+  });
+
+  it('VG10: every card input handler is a no-op while paused (no blind pick on refocus)', () => {
+    // A forced pause (blur/backgrounding, desktop web included) can fire mid-selection
+    // with the overlay hidden but these event listeners still live. Without the pause
+    // guard, a window-refocus pointerdown (by click position, not focus) inside a now-
+    // invisible card rect — or a resume-reflex confirm — silently latches a blind pick
+    // applied on resume. All five handlers (nav L/R, keyboard confirm, gamepad down,
+    // pointerdown) must gate on `selectionActive || this._paused`. Pin all five.
+    const guards = arenaSrc.match(
+      /if\s*\(\s*!this\.levelUpSystem\.selectionActive\s*\|\|\s*this\._paused\s*\)\s*return/g,
+    );
+    expect(guards).not.toBeNull();
+    expect(guards.length).toBe(5);
   });
 });
 

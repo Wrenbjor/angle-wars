@@ -36,6 +36,8 @@ import { GridFieldSystem } from '../systems/GridFieldSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { XpOrbSystem } from '../systems/XpOrbSystem.js';
 import { LevelSystem } from '../systems/LevelSystem.js';
+import { LevelUpSystem } from '../systems/LevelUpSystem.js';
+import { createProgressionState } from '../state/ProgressionState.js';
 import { ScreenFeedbackSystem } from '../systems/ScreenFeedbackSystem.js';
 import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 
@@ -43,9 +45,10 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 22 systems registered in the SAME order (Story 6.3 added
+// state + pools, the SAME 23 systems registered in the SAME order (Story 6.3 added
 // the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
-// after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it), the same enemyPools / deathPools
+// after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it;
+// Story 8.3 added the LevelUpSystem right after LevelSystem), the same enemyPools / deathPools
 // composition (the reflector pool is deliberately in NEITHER), and both load-bearing
 // late-binds
 // (snakeSystem.collisionSystem and blackHoleSystem.collisionSystem). It imports
@@ -135,6 +138,12 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // sections to keep the one shared instance flowing into every consumer.
   const scoreState = createScoreState();
   const playerState = createPlayerState();
+  // Run-scoped card-progression state (Story 8.3): card ownership + the placeholder
+  // debug stat. Built beside scoreState/playerState — a plain-data object with no
+  // dependencies; the LevelUpSystem (below) mutates it on a card selection. Never
+  // touched by the death path, so it resets on a fresh run and survives a non-final
+  // death (mirrors scoreState.xp).
+  const progressionState = createProgressionState();
   // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
   // another enemy pool, and deliberately NOT shared into the CollisionSystem /
   // BombSystem / BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire,
@@ -295,6 +304,21 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const levelSystem = new LevelSystem(scoreState);
   world.addSystem(levelSystem);
 
+  // --- Level-up moment & card draft (Story 8.3 / Epic 8 progression) -------
+  // The level-up state machine: edge-detects LevelSystem.levelsGainedThisTick,
+  // enqueues one owed selection per level crossed, holds the player invulnerable
+  // while any selection is pending, and offers the fixed placeholder trio. Runs
+  // AFTER LevelSystem so it reads THIS tick's levelsGainedThisTick, and BEFORE
+  // PlayerDeathSystem so its invuln top-up gates death the SAME tick (reusing the
+  // existing i-frame gate — no death/collision edit). Writes only its own fields +
+  // playerState.invulnMs + (on a pick) progressionState.
+  const levelUpSystem = new LevelUpSystem(
+    levelSystem,
+    playerState,
+    progressionState,
+  );
+  world.addSystem(levelUpSystem);
+
   // --- Player death / lives -----------------------------------------------
   // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
   // bullet this tick is already released and cannot also kill the player. The
@@ -390,6 +414,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     inputState,
     scoreState,
     playerState,
+    progressionState,
     enemyPools,
     deathPools,
     highScoreStorage: port,
@@ -408,6 +433,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     bombSystem,
     xpOrbSystem,
     levelSystem,
+    levelUpSystem,
     extraLifeSystem,
     playerDeathSystem,
     highScoreSystem,

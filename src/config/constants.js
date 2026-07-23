@@ -598,6 +598,66 @@ export const XP_CURVE_BASE = 8;
 export const XP_CURVE_LINEAR = 6;
 export const XP_CURVE_QUAD = 0.55;
 
+// --- Level-up moment & card UI (Story 8.3 / Epic 8 progression) --------------
+// When the derived level crosses a threshold (LevelSystem.levelsGainedThisTick),
+// the run enters a level-up moment: world time DILATES to a slow crawl (not a
+// freeze — the swarm stays visible), the player is held invulnerable, and a
+// modal three-card overlay opens. The sim-side state machine lives in the
+// Phaser-free LevelUpSystem; ArenaScene owns the overlay render + dilation +
+// input. All values are tunable placeholders (tuned post-launch), mirroring the
+// SCORE_* / overlay-style discipline — no inline magic numbers.
+
+// World time-scale while a selection is pending: the render delta fed to
+// fixedTimestep.advance is scaled by this, so the whole world advances at 0.15×
+// real time (a slow-mo, NOT a hard pause — the swarm keeps crawling). The
+// per-step dt stays FIXED_STEP_MS, so every system integrates a bit-identical
+// slice; only the STEP RATE slows.
+export const LEVELUP_TIME_SCALE = 0.15;
+// Invuln floor (ms) re-armed each pending tick so the player is unhittable for the
+// whole (indefinite) selection. Comfortably above FIXED_STEP_MS (one tick's drain
+// in PlayerDeathSystem) so a re-arm always survives a tick, with a small residual
+// left as a brief landing grace after the overlay closes.
+export const LEVELUP_INVULN_FLOOR = 200;
+// Landing invulnerability (ms) granted the instant the LAST owed pick empties the
+// queue. Longer than the per-tick floor so the ship — stationary while the swarm
+// crawled onto it during the selection — gets a fair window to escape on drop-back
+// to full speed (avoids an unavoidable death the frame the overlay closes).
+export const LEVELUP_LANDING_INVULN_MS = 800;
+// Open-grace (ms) after the card overlay opens during which CONFIRM (not navigation)
+// is ignored, so a confirm edge already in flight when a level-up fires mid-combat
+// (a mashed gamepad button / held Enter-Space / a tap) does not instantly pick the
+// default card before the player registers the cards. Render-owned countdown.
+export const LEVELUP_CONFIRM_GRACE_MS = 180;
+
+// --- Level-up card overlay style (Story 8.3) --------------------------------
+// The modal card overlay: a dimming full-arena rect (reusing COLOR_PAUSE_OVERLAY),
+// a "LEVEL UP" heading, three card panels each with a title, and a prompt line.
+// Placeholder styling only (Epic 4 owns the signature aesthetic; Epic 10 owns the
+// real card content). Mirrors the PAUSE_* / GAMEOVER_* overlay style blocks.
+// Overlay dim alpha (0..1) for the dimming rectangle (fill reuses COLOR_PAUSE_OVERLAY).
+export const LEVELUP_OVERLAY_ALPHA = 0.6;
+// Card panel fill color + alpha at rest, and the brighter/thicker focused variant
+// (the selected card, the bomb-pressed idiom).
+export const COLOR_LEVELUP_PANEL = 0x113322;
+export const LEVELUP_PANEL_ALPHA = 0.5;
+export const COLOR_LEVELUP_PANEL_FOCUS = 0x33ff99;
+export const LEVELUP_PANEL_FOCUS_ALPHA = 0.85;
+// Panel border color + line widths (the focused panel strokes thicker/brighter).
+export const COLOR_LEVELUP_PANEL_BORDER = 0x33ff99;
+export const LEVELUP_PANEL_BORDER_WIDTH = 2;
+export const LEVELUP_PANEL_FOCUS_BORDER_WIDTH = 5;
+// Text color shared by the heading, card titles, and prompt.
+export const COLOR_LEVELUP_TEXT = '#e6fff2';
+// Fonts for the heading, each card's title, and the prompt line.
+export const LEVELUP_HEADING_FONT = '48px monospace';
+export const LEVELUP_CARD_TITLE_FONT = '22px monospace';
+export const LEVELUP_PROMPT_FONT = '20px monospace';
+// Card rect geometry (px, logical): each panel's width/height and the gap between
+// adjacent panels. Three panels are laid out centered horizontally.
+export const LEVELUP_CARD_WIDTH = 300;
+export const LEVELUP_CARD_HEIGHT = 200;
+export const LEVELUP_CARD_GAP = 40;
+
 // --- Colors (0xRRGGBB) ------------------------------------------------------
 export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;

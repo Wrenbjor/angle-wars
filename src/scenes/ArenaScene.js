@@ -37,6 +37,24 @@ import {
   COLOR_PAUSE_TEXT,
   PAUSE_TITLE_FONT,
   PAUSE_PROMPT_FONT,
+  LEVELUP_TIME_SCALE,
+  LEVELUP_CONFIRM_GRACE_MS,
+  MOVE_DEADZONE,
+  LEVELUP_OVERLAY_ALPHA,
+  COLOR_LEVELUP_PANEL,
+  LEVELUP_PANEL_ALPHA,
+  COLOR_LEVELUP_PANEL_FOCUS,
+  LEVELUP_PANEL_FOCUS_ALPHA,
+  COLOR_LEVELUP_PANEL_BORDER,
+  LEVELUP_PANEL_BORDER_WIDTH,
+  LEVELUP_PANEL_FOCUS_BORDER_WIDTH,
+  COLOR_LEVELUP_TEXT,
+  LEVELUP_HEADING_FONT,
+  LEVELUP_CARD_TITLE_FONT,
+  LEVELUP_PROMPT_FONT,
+  LEVELUP_CARD_WIDTH,
+  LEVELUP_CARD_HEIGHT,
+  LEVELUP_CARD_GAP,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_TELEGRAPH_MIN_ALPHA,
   SPAWN_TELEGRAPH_MIN_SCALE,
@@ -50,6 +68,7 @@ import { FixedTimestep } from '../core/FixedTimestep.js';
 import { SimRateSampler } from '../core/SimRateSampler.js';
 import { buildArenaWorld } from './buildArenaWorld.js';
 import { PlayerInputSampler } from '../input/PlayerInputSampler.js';
+import { INPUT_METHOD } from '../input/inputMethod.js';
 import { PLAYER_INVULN_BLINK_MS } from '../config/constants.js';
 import {
   spawnTelegraphProgress,
@@ -206,6 +225,8 @@ export class ArenaScene extends Phaser.Scene {
     this.bombSystem = arena.bombSystem;
     this.xpOrbSystem = arena.xpOrbSystem;
     this.levelSystem = arena.levelSystem;
+    this.levelUpSystem = arena.levelUpSystem;
+    this.progressionState = arena.progressionState;
     this.extraLifeSystem = arena.extraLifeSystem;
     this.playerDeathSystem = arena.playerDeathSystem;
     this.highScoreSystem = arena.highScoreSystem;
@@ -643,12 +664,178 @@ export class ArenaScene extends Phaser.Scene {
       // Esc/P would flip _paused every repeat tick. A single tap still toggles
       // exactly once (the native KeyboardEvent has repeat === false).
       if (event && event.repeat) return;
+      // Story 8.3: while the level-up overlay is open, Esc/P must not ENTER pause (the
+      // modal selection owns the moment — a dilation, not a freeze). But RESUMING must
+      // stay allowed: a forced pause (visibilitychange / backgrounding, desktop web
+      // included) can fire mid-selection, and a paused sim early-returns update() before
+      // LevelUpSystem drains the pick — so if Esc/P could not resume, selectionActive
+      // would stick true forever (deadlock). Suppress only the enter-pause edge.
+      if (this.levelUpSystem.selectionActive && !this._paused) return;
       // Route through setPaused so the render-juice settle runs on the pause edge —
       // shared with the native lifecycle (background / back-button) pause path.
       this.setPaused(togglePause(this._paused, this.playerState.gameOver));
     };
     this.input.keyboard.on('keydown-ESC', togglePauseInput);
     this.input.keyboard.on('keydown-P', togglePauseInput);
+
+    // --- Level-up card overlay (Story 8.3) ----------------------------------
+    // The modal three-card draft shown while LevelUpSystem.selectionActive: a dim
+    // full-arena rect (reusing COLOR_PAUSE_OVERLAY), a "LEVEL UP" heading, three card
+    // panels + titles, and a prompt line. Created hidden + pinned setScrollFactor(0),
+    // layered ABOVE the pause/game-over overlays (built last here). The render loop
+    // toggles visibility, redraws the panels (focus highlight), and sets the titles +
+    // prompt. All positions are computed once here (no per-frame layout).
+    this._cardFocus = 0;
+    // Render-owned level-up UI state (mirrors the flash/hit-stop render countdowns):
+    //  - _wasSelectionActive : previous frame's selectionActive, for the false→true
+    //    edge that resets focus + arms the confirm-grace.
+    //  - _lastOffer          : the currentOffer identity last seen, so a FRESH offer
+    //    after a pick (multi-level jump) also resets focus + re-arms the grace.
+    //  - _cardConfirmGraceMs : real-time countdown during which CONFIRM is ignored.
+    //  - _padNavLatched      : edge latch so a held d-pad/stick direction steps the
+    //    focus once per press, not every polled frame.
+    this._wasSelectionActive = false;
+    this._lastOffer = null;
+    this._cardConfirmGraceMs = 0;
+    this._padNavLatched = false;
+    // Precompute the three panel rects (top-left x/y + size + center), centered
+    // horizontally around cx and vertically around cy — reused for both the draw and
+    // the pointer hit-test so the drawn geometry IS the touch target.
+    const cardsTotalW = LEVELUP_CARD_WIDTH * 3 + LEVELUP_CARD_GAP * 2;
+    const cardsStartX = cx - cardsTotalW / 2;
+    const cardPanelY = cy - LEVELUP_CARD_HEIGHT / 2;
+    this._cardRects = [];
+    for (let i = 0; i < 3; i++) {
+      const rx = cardsStartX + i * (LEVELUP_CARD_WIDTH + LEVELUP_CARD_GAP);
+      this._cardRects.push({
+        x: rx,
+        y: cardPanelY,
+        w: LEVELUP_CARD_WIDTH,
+        h: LEVELUP_CARD_HEIGHT,
+        cx: rx + LEVELUP_CARD_WIDTH / 2,
+        cy: cardPanelY + LEVELUP_CARD_HEIGHT / 2,
+      });
+    }
+    // Dimming rect (reuses the pause overlay color).
+    this.levelUpOverlay = this.add.graphics();
+    this.levelUpOverlay.fillStyle(COLOR_PAUSE_OVERLAY, LEVELUP_OVERLAY_ALPHA);
+    this.levelUpOverlay.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+    this.levelUpOverlay.setVisible(false);
+    this.levelUpOverlay.setScrollFactor(0);
+    // Panel graphics: one Graphics cleared + redrawn each frame (the focused panel
+    // strokes brighter/thicker — the bomb-pressed idiom).
+    this.cardPanelGraphics = this.add.graphics();
+    this.cardPanelGraphics.setScrollFactor(0);
+    this.cardPanelGraphics.setVisible(false);
+    // "LEVEL UP" heading above the panels.
+    this.levelUpHeading = this.add
+      .text(cx, cardPanelY - 60, 'LEVEL UP', {
+        font: LEVELUP_HEADING_FONT,
+        color: COLOR_LEVELUP_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setVisible(false);
+    // One title Text per panel, centered on each card.
+    this.cardTitles = this._cardRects.map((r) =>
+      this.add
+        .text(r.cx, r.cy, '', {
+          font: LEVELUP_CARD_TITLE_FONT,
+          color: COLOR_LEVELUP_TEXT,
+          align: 'center',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setVisible(false),
+    );
+    // Prompt line below the panels (text set per-frame from the active input method).
+    this.levelUpPrompt = this.add
+      .text(cx, cardPanelY + LEVELUP_CARD_HEIGHT + 50, '', {
+        font: LEVELUP_PROMPT_FONT,
+        color: COLOR_LEVELUP_TEXT,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setVisible(false);
+
+    // --- Level-up card input ------------------------------------------------
+    // Card nav + confirm across keyboard, gamepad, AND touch, each guarded on
+    // selectionActive (a no-op otherwise, so the same keys never affect a normal run)
+    // AND !this._paused — a forced pause (blur/backgrounding, desktop web included)
+    // can fire MID-selection with the overlay hidden but these event listeners still
+    // live; without the pause guard a window-refocus pointerdown lands (by click
+    // position, not focus) inside a now-invisible card rect and silently latches a
+    // blind pick applied on resume, and a resume-reflex ENTER/SPACE/face-button does
+    // the same. The pause guard makes every card input a no-op while paused.
+    // Also guarded — for keys — by the event.repeat guard (the held-key lesson). Keyboard:
+    // LEFT/RIGHT + A/D move the focus (wrap 0..2); ENTER/SPACE confirm. Gamepad: the
+    // FACE buttons (indices 0..3) confirm while d-pad/left-stick horizontal navigate
+    // (polled in update() with an edge latch — bound below), so a directional input
+    // never doubles as confirm. Touch/mouse: a pointerdown hit-test on the three rects
+    // selects that card. CONFIRM is additionally ignored during the brief open-grace
+    // (this._cardConfirmGraceMs) so a confirm edge already in flight when a level-up
+    // fires mid-combat cannot instantly pick the default card. These compose with
+    // (never replace) the game-over restart handlers on the same keys/pointer/pad —
+    // each guards its own condition (selectionActive here, gameOver there), which are
+    // mutually exclusive (the player is invulnerable, not game-over, during a level-up).
+    const moveCardFocus = (dir) => {
+      this._cardFocus = (this._cardFocus + dir + 3) % 3;
+    };
+    // Expose for the update() gamepad-nav poll (bound to `this` so both paths share it).
+    this._moveCardFocus = moveCardFocus;
+    const cardNavLeft = (event) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (event && event.repeat) return;
+      moveCardFocus(-1);
+    };
+    const cardNavRight = (event) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (event && event.repeat) return;
+      moveCardFocus(1);
+    };
+    const cardConfirm = (event) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (event && event.repeat) return;
+      if (this._cardConfirmGraceMs > 0) return;
+      this.levelUpSystem.queueSelection(this._cardFocus);
+    };
+    this.input.keyboard.on('keydown-LEFT', cardNavLeft);
+    this.input.keyboard.on('keydown-A', cardNavLeft);
+    this.input.keyboard.on('keydown-RIGHT', cardNavRight);
+    this.input.keyboard.on('keydown-D', cardNavRight);
+    this.input.keyboard.on('keydown-ENTER', cardConfirm);
+    this.input.keyboard.on('keydown-SPACE', cardConfirm);
+    // Gamepad confirm: FACE buttons only (standard-mapping indices 0..3), so d-pad /
+    // stick horizontal are free to NAVIGATE (polled in update()) rather than confirm.
+    // Edge-triggered via the 'down' event; grace-gated like the keyboard/touch confirm.
+    // The pad plugin is present only when enabled, so it is guarded.
+    this.input.gamepad?.on('down', (pad, button) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (this._cardConfirmGraceMs > 0) return;
+      const idx = button && button.index;
+      if (idx >= 0 && idx <= 3) {
+        this.levelUpSystem.queueSelection(this._cardFocus);
+      }
+    });
+    // Touch/mouse: a pointerdown inside a card rect selects it (grace-gated). Base-
+    // resolution pointer.x/y (shake-free, overlay pinned scrollFactor 0) mirrors the
+    // touchControls hit-test, so the drawn panels ARE the hit targets.
+    this.input.on('pointerdown', (pointer) => {
+      if (!this.levelUpSystem.selectionActive || this._paused) return;
+      if (this._cardConfirmGraceMs > 0) return;
+      const px = pointer.x;
+      const py = pointer.y;
+      for (let i = 0; i < this._cardRects.length; i++) {
+        const r = this._cardRects[i];
+        if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+          this._cardFocus = i;
+          this.levelUpSystem.queueSelection(i);
+          break;
+        }
+      }
+    });
 
     // Sampling state for a once-per-second sim ticks/sec measurement. DEV-only —
     // part of the debug readout, so it is initialized only when the readout exists.
@@ -771,6 +958,19 @@ export class ArenaScene extends Phaser.Scene {
       // touch listeners are frozen while paused, so a finger lifted during the pause
       // would never reconcile and would strand a stick (ship drifting on resume) or a
       // bomb latched at the pause edge (detonating on resume). resetTouch reconciles it.
+      // Story 8.3: hide the level-up overlay while paused. A forced pause can fire
+      // MID-selection (its visibility is toggled AFTER this early-return), so without
+      // this the card modal would render stacked UNDER the PAUSED overlay. The
+      // per-frame card render re-shows it on resume (selectionActive is still true).
+      // Placed BEFORE the touch reconcile so the Story 7.1 `resetTouch(); return;`
+      // pause-edge idiom stays adjacent.
+      this.levelUpOverlay.setVisible(false);
+      this.levelUpHeading.setVisible(false);
+      this.cardPanelGraphics.setVisible(false);
+      this.levelUpPrompt.setVisible(false);
+      for (let i = 0; i < this.cardTitles.length; i++) {
+        this.cardTitles[i].setVisible(false);
+      }
       this.touchOverlayGraphics.clear();
       this.inputSampler.resetTouch();
       return;
@@ -779,6 +979,17 @@ export class ArenaScene extends Phaser.Scene {
     // Sample input (render rate) before advancing the sim so this frame's
     // fixed steps consume the latest move intent.
     this.inputSampler.sample();
+
+    // Story 8.3: while the level-up card overlay is open, suppress gameplay input so
+    // the ship idles (no move/aim/fire) and the shared nav keys (arrows / A-D) never
+    // also steer the ship, and drop any queued bomb so a bomb never fires from under
+    // the modal. The nav/confirm handlers run on the scene input plugin, independent
+    // of this cleared InputState. Done AFTER sample() and BEFORE the fixed-step advance
+    // so this tick reads the cleared intent.
+    if (this.levelUpSystem.selectionActive) {
+      this.inputState.clear();
+      this.inputState.consumeBomb();
+    }
 
     // Story 4.4 hit-stop: while the render-owned _hitStopMs countdown is running,
     // FREEZE the whole sim (skip feeding the fixed-timestep accumulator) and decay
@@ -790,10 +1001,16 @@ export class ArenaScene extends Phaser.Scene {
       this._hitStopMs -= delta;
       if (this._hitStopMs < 0) this._hitStopMs = 0;
     } else {
+      // Story 8.3: while a level-up selection is pending, DILATE world time to a slow
+      // crawl by scaling the render delta fed to the accumulator (the swarm stays
+      // visible — a slow-mo, not a freeze). The per-step dt stays FIXED_STEP_MS, so
+      // every system integrates a bit-identical slice; only the STEP RATE slows.
+      // Hit-stop (a hard freeze) still wins above; game-over freezes inside the step.
+      const timeScale = this.levelUpSystem.selectionActive ? LEVELUP_TIME_SCALE : 1;
       // Freeze the simulation on game over at sub-step granularity: each fixed
       // sub-step re-checks gameOver, so no system runs once death latches — even
       // mid-frame during multi-sub-step catch-up — keeping the final score stable.
-      this.fixedTimestep.advance(delta, (dt) => {
+      this.fixedTimestep.advance(delta * timeScale, (dt) => {
         if (!this.playerState.gameOver) this.world.fixedUpdate(dt);
       });
     }
@@ -1104,6 +1321,103 @@ export class ArenaScene extends Phaser.Scene {
       this.gameOverScore.setText(`FINAL SCORE ${this.scoreState.score}`);
     }
 
+    // --- Level-up card overlay (render only; never advances the sim) ---------
+    // Story 8.3: while a selection is pending, show the dim + heading + three panels
+    // (the focused one brighter/thicker) with the currentOffer titles, and a prompt
+    // keyed to the active input method. Hidden (and the panels cleared) otherwise.
+    const cardsOpen = this.levelUpSystem.selectionActive;
+    const offer = this.levelUpSystem.currentOffer;
+    // Edge handling: on the false→true rise (a fresh overlay) OR when a fresh offer
+    // replaces a picked one mid multi-level jump (currentOffer identity change while
+    // active), reset the focus to the first card and (re)arm the confirm-grace so an
+    // in-flight confirm edge does not instantly pick, and drop the pad-nav latch.
+    const roseActive = cardsOpen && !this._wasSelectionActive;
+    const freshOffer = cardsOpen && offer !== this._lastOffer;
+    if (roseActive || freshOffer) {
+      this._cardFocus = 0;
+      this._cardConfirmGraceMs = LEVELUP_CONFIRM_GRACE_MS;
+      this._padNavLatched = false;
+    }
+    // On the true→false CLOSE edge, reconcile touch the same way the pause edge does
+    // (resetTouch above). A card tap shares pointerdown with the twin-stick sampler, so
+    // a finger still held when the overlay closes leaves a stick anchored — masked by
+    // inputState.clear() only while selectionActive. Without this drop, that stale stick
+    // would steer/aim the ship the instant time returns to full speed.
+    const fellActive = !cardsOpen && this._wasSelectionActive;
+    if (fellActive) {
+      this.inputSampler.resetTouch();
+    }
+    this._wasSelectionActive = cardsOpen;
+    this._lastOffer = offer;
+    // Decay the confirm-grace by real render delta (render-owned countdown, like the
+    // flash / hit-stop countdowns, so it settles even under time dilation).
+    if (this._cardConfirmGraceMs > 0) {
+      this._cardConfirmGraceMs -= delta;
+      if (this._cardConfirmGraceMs < 0) this._cardConfirmGraceMs = 0;
+    }
+    // Gamepad navigation (edge-latched): while the overlay is open, poll the pad's
+    // d-pad horizontal + left-stick horizontal and step the focus ONCE per press (a
+    // held direction does not scroll). Confirm stays on the FACE buttons (bound in
+    // create()), so a directional input navigates rather than confirms. Navigation is
+    // allowed during the confirm-grace — only CONFIRM is held off.
+    if (cardsOpen) {
+      const pad = this.inputSampler.getPad();
+      if (pad) {
+        const dpadLeft = pad.buttons && pad.buttons[14] && pad.buttons[14].pressed;
+        const dpadRight = pad.buttons && pad.buttons[15] && pad.buttons[15].pressed;
+        const sx = pad.leftStick ? pad.leftStick.x : 0;
+        let dir = 0;
+        if (dpadLeft || sx <= -MOVE_DEADZONE) dir = -1;
+        else if (dpadRight || sx >= MOVE_DEADZONE) dir = 1;
+        if (dir !== 0) {
+          if (!this._padNavLatched) {
+            this._moveCardFocus(dir);
+            this._padNavLatched = true;
+          }
+        } else {
+          this._padNavLatched = false;
+        }
+      } else {
+        this._padNavLatched = false;
+      }
+    }
+    this.levelUpOverlay.setVisible(cardsOpen);
+    this.levelUpHeading.setVisible(cardsOpen);
+    this.cardPanelGraphics.setVisible(cardsOpen);
+    this.levelUpPrompt.setVisible(cardsOpen);
+    const cpg = this.cardPanelGraphics;
+    cpg.clear();
+    for (let i = 0; i < this._cardRects.length; i++) {
+      const r = this._cardRects[i];
+      const title = this.cardTitles[i];
+      const shown = cardsOpen && i < offer.length;
+      title.setVisible(shown);
+      if (!shown) continue;
+      const focused = i === this._cardFocus;
+      cpg.fillStyle(
+        focused ? COLOR_LEVELUP_PANEL_FOCUS : COLOR_LEVELUP_PANEL,
+        focused ? LEVELUP_PANEL_FOCUS_ALPHA : LEVELUP_PANEL_ALPHA,
+      );
+      cpg.fillRect(r.x, r.y, r.w, r.h);
+      cpg.lineStyle(
+        focused ? LEVELUP_PANEL_FOCUS_BORDER_WIDTH : LEVELUP_PANEL_BORDER_WIDTH,
+        COLOR_LEVELUP_PANEL_BORDER,
+        1,
+      );
+      cpg.strokeRect(r.x, r.y, r.w, r.h);
+      title.setText(offer[i].title);
+    }
+    if (cardsOpen) {
+      const method = this.inputSampler.activeMethod;
+      this.levelUpPrompt.setText(
+        method === INPUT_METHOD.TOUCH
+          ? 'Tap a card to choose'
+          : method === INPUT_METHOD.GAMEPAD
+            ? 'Stick / D-pad to choose  ·  A to confirm'
+            : '← → or A / D to choose  ·  Enter / Space to confirm',
+      );
+    }
+
     // DEV-only developer readout: the per-frame array + string build and setText
     // are gated so a production build tree-shakes them off the render path.
     if (import.meta.env.DEV) {
@@ -1114,6 +1428,7 @@ export class ArenaScene extends Phaser.Scene {
           `sim ticks/s: ${this._simRateSampler.ticksPerSec.toFixed(1)}  (target ${(1000 / FIXED_STEP_MS).toFixed(1)})`,
           `sim ticks  : ${this.simClock.ticks}`,
           `sim time   : ${(this.simClock.simTimeMs / 1000).toFixed(1)}s`,
+          `cards      : ${Object.keys(this.progressionState.ownedCards).length}  stat ${this.progressionState.debugStat}`,
         ].join('\n'),
       );
     }
