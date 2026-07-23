@@ -143,7 +143,9 @@ origin: migrated from legacy ledger (review of spec-2-3-snake-enemy.md), 2026-07
 source_spec: `{project-root}/_bmad-output/implementation-artifacts/spec-2-3-snake-enemy.md`
 location: `SnakeSystem` (base-heading reflection at parallel-incidence walls)
 reason: Adversarial and edge-case layers converged. Reachable (e.g. a top-edge snake with base heading π/2 grazing a side wall while the slither pushes sideways). Collision stays correct and the grind is self-correcting at the next corner/reflection; it mirrors the grazing-incidence wall-hug deferred for the Pinwheel (Story 2.2). Real but minor feel/balance, entangled with post-launch motion tuning — not a defect against this story's literal ACs.
-status: open
+status: done 2026-07-23
+resolution: closed by human decision: Self-correcting minor feel artifact of the spec-committed base-heading reflection; mirrors the accepted pinwheel grazing. Collision stays correct. Accept as shipped.
+decision: 2026-07-23 Accept the grind as shipped — Self-correcting minor feel artifact of the spec-committed base-heading reflection; mirrors the accepted pinwheel grazing. Collision stays correct. Accept as shipped.
 
 ### DW-17: `SnakeSystem._spawnOne` pins the head just inside a random edge and trails the body OUTWARD behind it, so on spawn up to ~`(SNAKE_SEGMENT_COUNT−1)·SNAKE_SEGMENT_SPACING` (≈154px) of live, collidable, drawn segments sit outside the arena border until the head slithers inward and pulls them in. The player is clamped inside the border so those off-border segments cannot unfairly kill, but a bullet near the edge could score one and the renderer briefly draws segments outside the border. Spawn-safety/placement is owned by Story 2.6 and the visual is Epic 4.
 
