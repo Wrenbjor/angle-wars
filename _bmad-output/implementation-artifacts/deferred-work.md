@@ -363,7 +363,9 @@ origin: review-budget-followup
 source_spec: `spec-7-6-store-release-scaffolding.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260721-001456-df79; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-23
+resolution: closed by human decision: Story finalized green; accept without an additional independent review.
+decision: 2026-07-23 Close, accept done + green — Story finalized green; accept without an additional independent review.
 
 - source_spec: `spec-9-1-player-dps-telemetry.md`
   summary: The DPS estimator's incremental running-sum (evict-then-add) and the test's exact-equality decay assertions (`toBe(0)`) are exact only while per-kill damage is integer (v1 one-shot, `DPS_DAMAGE_PER_KILL = 1`); Story 9.3's armored-HP fractional per-kill crediting will introduce float drift (potential slightly-negative `dps`) and make the exact-equality tests flaky.
