@@ -239,6 +239,43 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.orbitBladeRadiusMult).toBe(1); // the `*Mult` field bases at 1
   });
 
+  // --- Seeker Drones (Story 11.2) ------------------------------------------
+  it('folds the SHIPPED Seeker Drones rungs 1..5 to the exact fields', () => {
+    // Drives the REAL registry, not a fixture: a re-authoring slip in itemRegistry.js has
+    // to fail here as well as in the registry's own suite. count 1→5, damage 3/3/3/3/4.8,
+    // period 1500/1500/1071/1071/1071, homing 0/0/0/1/1.
+    const expected = [
+      { seekerDroneCount: 1, seekerDroneDamage: 3, seekerDronePeriodMs: 1500, seekerDroneHoming: 0 },
+      { seekerDroneCount: 2, seekerDroneDamage: 3, seekerDronePeriodMs: 1500, seekerDroneHoming: 0 },
+      { seekerDroneCount: 3, seekerDroneDamage: 3, seekerDronePeriodMs: 1071, seekerDroneHoming: 0 },
+      { seekerDroneCount: 4, seekerDroneDamage: 3, seekerDronePeriodMs: 1071, seekerDroneHoming: 1 },
+      { seekerDroneCount: 5, seekerDroneDamage: 4.8, seekerDronePeriodMs: 1071, seekerDroneHoming: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'seeker-drones': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.seekerDroneCount, `L${level} count`).toBe(e.seekerDroneCount);
+      expect(ps.seekerDroneDamage, `L${level} damage`).toBeCloseTo(e.seekerDroneDamage, 10);
+      expect(ps.seekerDronePeriodMs, `L${level} period`).toBe(e.seekerDronePeriodMs);
+      expect(ps.seekerDroneHoming, `L${level} homing`).toBe(e.seekerDroneHoming);
+      // Seeker Drones touches nothing on the fire/volley/movement/defense/blade seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+      expect(ps.orbitBladeCount).toBe(0);
+    }
+  });
+
+  it('leaves the four Seeker Drone fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.seekerDroneCount).toBe(0);
+    expect(ps.seekerDroneDamage).toBe(0);
+    expect(ps.seekerDronePeriodMs).toBe(0);
+    expect(ps.seekerDroneHoming).toBe(0);
+  });
+
   it('leaves all five Afterburner fields at base when it is UNOWNED', () => {
     const ps = createPlayerStats();
     recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);

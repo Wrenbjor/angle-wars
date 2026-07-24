@@ -23,6 +23,7 @@ const EXPECTED_IDS = [
   'overcharge',
   'spread-cannon',
   'orbit-blade',
+  'seeker-drones',
   'nanite-shield',
   'afterburner',
 ];
@@ -140,6 +141,11 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
       partner: 'overcharge',
       epic: 'tesla-circuit',
     });
+    // Story 11.2: Seeker Drones Lv5 + Nanite Shield Lv3 → Swarm Protocol (Epic 12 resolves it).
+    expect(getItem('seeker-drones').fusion).toEqual({
+      partner: 'nanite-shield',
+      epic: 'swarm-protocol',
+    });
     expect(getItem('nanite-shield').fusion).toEqual({
       partner: 'afterburner',
       epic: 'phase-armor',
@@ -199,6 +205,7 @@ describe('getItem / getItemsByTrack', () => {
       'overcharge',
       'spread-cannon',
       'orbit-blade',
+      'seeker-drones',
     ]);
     expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
     // Every returned entry actually belongs to the requested track.
@@ -627,6 +634,138 @@ describe('ITEM_REGISTRY — Afterburner stats (Story 10.5)', () => {
       '+25% speed + dash i-frames',
       '2s dash cooldown + dash damages on contact',
       '+35% speed + burning dash trail',
+    ]);
+  });
+});
+
+// --- Seeker Drones (Story 11.2) ----------------------------------------------
+describe('ITEM_REGISTRY — Seeker Drones per-level stats (Story 11.2, PRD §13.3)', () => {
+  // The exact per-level maps. All four fields are ADDITIVE/COUNT fields (base 0):
+  // `seekerDroneCount` is the drone count, `seekerDroneDamage` the per-shot damage,
+  // `seekerDronePeriodMs` the fire period, `seekerDroneHoming` the Lv4+ homing flag. Every
+  // map is the TOTAL at that level.
+  const EXPECTED_DRONE_STATS = [
+    { seekerDroneCount: 1, seekerDroneDamage: 3, seekerDronePeriodMs: 1500 },
+    { seekerDroneCount: 2, seekerDroneDamage: 3, seekerDronePeriodMs: 1500 },
+    { seekerDroneCount: 3, seekerDroneDamage: 3, seekerDronePeriodMs: 1071 },
+    {
+      seekerDroneCount: 4,
+      seekerDroneDamage: 3,
+      seekerDronePeriodMs: 1071,
+      seekerDroneHoming: 1,
+    },
+    {
+      seekerDroneCount: 5,
+      seekerDroneDamage: 4.8,
+      seekerDronePeriodMs: 1071,
+      seekerDroneHoming: 1,
+    },
+  ];
+
+  it('pins all five levels exactly (frozen, totals-at-level)', () => {
+    const sd = getItem('seeker-drones');
+    expect(sd.levels).toHaveLength(EXPECTED_DRONE_STATS.length);
+    sd.levels.forEach((lvl, i) => {
+      expect(lvl.stats, `seeker-drones L${lvl.level}`).toEqual(EXPECTED_DRONE_STATS[i]);
+      expect(Object.isFrozen(lvl.stats)).toBe(true);
+    });
+  });
+
+  it('levels are TOTALS, not deltas — the carried-forward rungs are restated', () => {
+    // The fold reads ONLY the current level's map, so a level whose desc reads as a delta
+    // must still restate the fields it inherits — otherwise picking L3 ('+40% fire rate')
+    // would silently REMOVE the drones, and L4 ('homing shots') would drop the count/period.
+    const [l1, l2, l3, l4, l5] = getItem('seeker-drones').levels.map((l) => l.stats);
+    // L2's desc is '2 drones' alone, yet it restates L1's damage + period.
+    expect(l2.seekerDroneDamage).toBe(l1.seekerDroneDamage);
+    expect(l2.seekerDronePeriodMs).toBe(l1.seekerDronePeriodMs);
+    // L3's desc is '3 drones / +40% fire rate', yet it restates the damage.
+    expect(l3.seekerDroneDamage).toBe(l2.seekerDroneDamage);
+    // L4's desc is '4 drones / homing shots', yet it restates the L3 damage + period.
+    expect(l4.seekerDroneDamage).toBe(l3.seekerDroneDamage);
+    expect(l4.seekerDronePeriodMs).toBe(l3.seekerDronePeriodMs);
+    // L5's desc is '5 drones / +60% damage', yet it restates the L4 period AND homing.
+    expect(l5.seekerDronePeriodMs).toBe(l4.seekerDronePeriodMs);
+    expect(l5.seekerDroneHoming).toBe(l4.seekerDroneHoming);
+    // Every level from L1 on grants at least one drone with a real damage + period.
+    for (const s of [l1, l2, l3, l4, l5]) {
+      expect(s.seekerDroneCount).toBeGreaterThanOrEqual(1);
+      expect(s.seekerDroneDamage).toBeGreaterThan(0);
+      expect(s.seekerDronePeriodMs).toBeGreaterThan(0);
+    }
+  });
+
+  it('the +40% fire rate is the period ÷ 1.4 and the +60% damage is ×1.6 (PRD math)', () => {
+    const [, , l3, , l5] = getItem('seeker-drones').levels.map((l) => l.stats);
+    // 1500 / 1.4 ≈ 1071 (rounded).
+    expect(l3.seekerDronePeriodMs).toBe(Math.round(1500 / 1.4));
+    // 3 × 1.6 = 4.8.
+    expect(l5.seekerDroneDamage).toBeCloseTo(3 * 1.6, 10);
+  });
+
+  it('the homing flag exists ONLY from Lv4 (PRD §13.3)', () => {
+    const levels = getItem('seeker-drones').levels;
+    for (const lvl of levels.slice(0, 3)) {
+      expect(lvl.stats.seekerDroneHoming, `L${lvl.level} must not home`).toBeUndefined();
+    }
+    expect(levels[3].stats.seekerDroneHoming).toBe(1);
+    expect(levels[4].stats.seekerDroneHoming).toBe(1);
+  });
+
+  it('drone count rises monotonically and the fire period never gets slower', () => {
+    const levels = getItem('seeker-drones').levels;
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i].stats.seekerDroneCount).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.seekerDroneCount,
+      );
+      expect(levels[i].stats.seekerDronePeriodMs).toBeLessThanOrEqual(
+        levels[i - 1].stats.seekerDronePeriodMs,
+      );
+      expect(levels[i].stats.seekerDroneDamage).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.seekerDroneDamage,
+      );
+    }
+  });
+
+  it('carries no stat key outside the four drone rungs the story owns', () => {
+    for (const lvl of getItem('seeker-drones').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect([
+          'seekerDroneCount',
+          'seekerDroneDamage',
+          'seekerDronePeriodMs',
+          'seekerDroneHoming',
+        ]).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item authoring any Seeker Drone field (the additive-fold tripwire)', () => {
+    // The fold ADDS, so a SECOND item authoring `seekerDronePeriodMs` would make the drones
+    // fire SLOWER, and a second `seekerDroneCount` author would inflate the count. An Epic
+    // 11/12 author who wants a second drone-affecting item must fold a RATE or a `*Mult`.
+    for (const key of [
+      'seekerDroneCount',
+      'seekerDroneDamage',
+      'seekerDronePeriodMs',
+      'seekerDroneHoming',
+    ]) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual([
+        'seeker-drones',
+      ]);
+    }
+  });
+
+  it('keeps the PRD §13.3 desc strings verbatim (prose, never rewritten to the totals)', () => {
+    expect(getItem('seeker-drones').levels.map((l) => l.desc)).toEqual([
+      '1 drone / fires every 1.5s',
+      '2 drones',
+      '3 drones / +40% fire rate',
+      '4 drones / homing shots',
+      '5 drones / +60% damage',
     ]);
   });
 });

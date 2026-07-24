@@ -923,6 +923,79 @@ export const ORBIT_BLADE_POOL_PREWARM = ORBIT_BLADE_MAX_COUNT;
 // the neon/bloom background at additive blend. Epic 4 owns the real aesthetic.
 export const COLOR_ORBIT_BLADE = 0xff3355;
 
+// --- Seeker Drones (Story 11.2 / PRD §13.3) ---------------------------------
+// The second Epic-11 "exotic" offense item: autonomous shooters that ride a ring
+// around the ship and fire pooled shots at the nearest combat enemy on their own
+// cadence. Introduces TWO pooled systems the SeekerDroneSystem owns — the drones
+// themselves and their SHOTS (which at Lv4+ HOME onto the nearest enemy). Each shot
+// routes its hit through the shared CollisionSystem.applyPlayerDamage seam, so a shot
+// is a PROJECTILE: the armored archetype resists it exactly as it resists a bullet
+// (intended — drones are not on the melee/AoE full-damage list).
+//
+// The geometry/feel/colour values below are tunable placeholders; the *_MAX_* /
+// *_BASE_* / lifetime values are SAFETY guards (like SHIELD_MAX_CHARGES /
+// FIRE_INTERVAL_FLOOR_MS), documented as such — never balance levers.
+
+// Ring radius (px) from the ship centre to each drone's centre. Tunable feel.
+export const SEEKER_DRONE_ORBIT_RADIUS = 72;
+// Drone collision/render half-extent (px). Drones do NOT collide with enemies (only
+// their shots do); this is the placeholder filled-circle size. Tunable feel.
+export const SEEKER_DRONE_RADIUS = 8;
+// Slow decorative period (ms per full revolution) the drone ring spins at, purely
+// cosmetic — the drones fire regardless of where the ring has rotated to. Tunable feel.
+export const SEEKER_DRONE_ROTATE_PERIOD_MS = 4000;
+// Drone-shot collision/render half-extent (px). Used for both the shot↔enemy overlap
+// term (shot.radius + enemy.radius) and the placeholder filled circle. Tunable feel.
+export const SEEKER_DRONE_SHOT_RADIUS = 5;
+// Drone-shot flight speed (px/s). A shot spawns aimed at the nearest enemy and (Lv4+)
+// re-aims each tick at this constant speed. Tunable feel.
+export const SEEKER_DRONE_SHOT_SPEED = 700;
+// SAFETY guard: the maximum lifetime (ms) of a drone shot. A shot expires when it
+// leaves the arena OR reaches this age — load-bearing because a homing shot that never
+// connects would otherwise circle forever and never leave the arena, so this is what
+// keeps the live shot count bounded. Not a balance lever.
+export const SEEKER_DRONE_SHOT_LIFETIME_MS = 3000;
+// Junk-fold fallback / base for the per-shot damage. `seekerDroneDamage` comes off the
+// shared player-stat store, so a non-finite / non-positive value degrades to this
+// authored base (3, the shipped L1 value) rather than throwing or dealing zero damage.
+// A shot is a PROJECTILE (resisted by the armored archetype), which is why the base sits
+// low — a balance placeholder, framed like the Orbit Blade constants.
+export const SEEKER_DRONE_BASE_DAMAGE = 3;
+// Junk-fold fallback for the fire period (ms between a drone's shots). A non-finite /
+// non-positive `seekerDronePeriodMs` degrades to this authored base (the L1 1.5s
+// cadence) so the fire-cadence accumulator drain is always bounded.
+export const SEEKER_DRONE_BASE_PERIOD_MS = 1500;
+// Absolute LOWER bound (ms) on the effective fire period — a SAFETY guard framed exactly
+// like FIRE_INTERVAL_FLOOR_MS, never a balance lever. `_periodMs()` only rejects
+// non-finite / non-positive folds; a finite BUT tiny-positive corrupted period (e.g.
+// 0.5ms) would still pass, and then the step-6 `while (fireAccumMs >= period)` loop runs
+// `1 + floor(dt/period)` iterations per drone per tick — a same-tick shot burst that grows
+// the shot pool past its prewarm. Clamping the finite-positive branch up to this floor
+// keeps the accumulator drain bounded: it sits comfortably above the fixed step
+// (FIXED_STEP_MS ≈ 16.7ms), so even a floored period yields at most ~1 shot/drone/tick. It
+// sits far below every authored value (the L1 1.5s cadence), so no shipped build reaches it.
+export const SEEKER_DRONE_PERIOD_FLOOR_MS = 100;
+// Absolute UPPER bound on the live drone count — a SAFETY clamp in the shape of
+// ORBIT_BLADE_MAX_COUNT / SHIELD_MAX_CHARGES, bounding what a corrupted
+// `seekerDroneCount` fold can ask the pool to acquire. The shipped maximum is 5 (Lv5),
+// so it sits well above every authorable value and no shipped build ever reaches it.
+export const SEEKER_DRONE_MAX_COUNT = 8;
+// Idle drone instances prewarmed into the pool at construction, so a card pick that
+// raises the count acquires from the free list with no factory allocation. Sized to the
+// safety clamp — the most drones the system can ever hold live at once.
+export const SEEKER_DRONE_POOL_PREWARM = SEEKER_DRONE_MAX_COUNT;
+// Idle drone-shot instances prewarmed into the shot pool at construction. Sized above
+// the worst-case steady-state in-flight count (5 drones × a shot every ~1.07s, each
+// living ≤ 3s) so steady-state spawns recycle from the free list with no factory
+// allocation. A SAFETY sizing guard, not a hard cap on live shots.
+export const SEEKER_DRONE_SHOT_POOL_PREWARM = 64;
+// Placeholder drone colour (0xRRGGBB) — a bright neon teal that reads clearly against
+// the neon/bloom background at additive blend. Epic 4 owns the real aesthetic.
+export const COLOR_SEEKER_DRONE = 0x33ffaa;
+// Placeholder drone-shot colour (0xRRGGBB) — a lighter teal, distinct from the drones
+// so a shot reads as its own moving element.
+export const COLOR_DRONE_SHOT = 0x66ffcc;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.

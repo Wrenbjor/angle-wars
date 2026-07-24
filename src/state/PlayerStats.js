@@ -133,6 +133,38 @@ export const PLAYER_STATS_BASE = Object.freeze({
   orbitBladeDamage: 0,
   orbitBladePeriodMs: 0,
   orbitBladeRadiusMult: 1,
+  // Seeker Drones (Story 11.2). The second Epic-11 EXOTIC item: autonomous shooters
+  // that ride a ring around the ship and fire pooled shots at the nearest enemy. All
+  // four fields are ADDITIVE/COUNT fields (base 0 — no Seeker Drones owned means NO
+  // drones, NO shots and no target scan, exactly the pre-11.2 behavior).
+  //
+  // These are the DERIVED PARAMETERS only. The live drone POOL, the shot POOL, the
+  // per-drone fire accumulators and the ring's rotation PHASE are RUNTIME state on
+  // systems/SeekerDroneSystem.js, for exactly the reason the shield's live charge count,
+  // the dash's live window and the blade's live phase are: this fold RESETS every field
+  // and re-derives the whole store on EVERY card pick, so a live timer/pool kept here
+  // would be reset by picking any unrelated item.
+  //  - seekerDroneCount    : the number of live drones (1..5 shipped). ⚠ Like every other
+  //                          non-`Mult` field it folds ADDITIVELY, so a hypothetical
+  //                          SECOND drone-count item would ADD drones. Seeker Drones is
+  //                          the only such item; an Epic-11/12 author adding one must fold
+  //                          a RATE or a `*Mult`, not stack another count here.
+  //  - seekerDroneDamage   : per-shot damage, routed through the shared
+  //                          CollisionSystem.applyPlayerDamage seam. A shot is a
+  //                          PROJECTILE, so the armored archetype resists it exactly as it
+  //                          resists a bullet (intended). 3/3/3/3/4.8 shipped.
+  //  - seekerDronePeriodMs : the fire period (ms between a drone's shots). An ABSOLUTE
+  //                          INTERVAL onto a base of 0, NEVER a fraction (the same
+  //                          authoring rule shieldRechargeMs / orbitBladePeriodMs follow).
+  //                          A smaller value fires FASTER. It is also the presence signal
+  //                          for a valid cadence: SeekerDroneSystem fails safe to a base
+  //                          period on 0/junk. 1500/1500/1071/1071/1071 shipped.
+  //  - seekerDroneHoming   : the Lv4+ homing FLAG (>= 1 enables) — a shot re-aims toward
+  //                          the nearest enemy each fixed step. Off (0) below Lv4.
+  seekerDroneCount: 0,
+  seekerDroneDamage: 0,
+  seekerDronePeriodMs: 0,
+  seekerDroneHoming: 0,
 });
 
 /**

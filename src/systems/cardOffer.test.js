@@ -332,11 +332,17 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
     expect(ids).not.toContain('z2');
   });
 
-  it('ESCALATION repro: banishing overcharge + nanite-shield + orbit-blade over the real registry returns exactly the 2 eligible cards, overcharge absent', () => {
-    // The exact case that broke the old exactly-three fill: with 3 of the 5 registry
-    // items banished (Story 11.1 added orbit-blade, so banishing 3 leaves 2), the offer
-    // must be the 2 remaining ELIGIBLE cards — never a banished card padded back in.
-    const banishedIds = new Set(['overcharge', 'nanite-shield', 'orbit-blade']);
+  it('ESCALATION repro: banishing 4 of the 6 real-registry items returns exactly the 2 eligible cards, banished absent', () => {
+    // The exact case that broke the old exactly-three fill: with all but 2 registry items
+    // banished (Story 11.1 added orbit-blade, Story 11.2 added seeker-drones — so banishing
+    // 4 leaves 2), the offer must be the 2 remaining ELIGIBLE cards — never a banished card
+    // padded back in.
+    const banishedIds = new Set([
+      'overcharge',
+      'nanite-shield',
+      'orbit-blade',
+      'seeker-drones',
+    ]);
     const prog = createProgressionState();
     const rng = seqRng([0.07, 0.29, 0.53, 0.81, 0.11, 0.42]);
     for (let t = 0; t < 30; t++) {
@@ -346,6 +352,7 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
       expect(ids).not.toContain('overcharge');
       expect(ids).not.toContain('nanite-shield');
       expect(ids).not.toContain('orbit-blade');
+      expect(ids).not.toContain('seeker-drones');
       expect(ids).toContain('spread-cannon');
       expect(ids).toContain('afterburner');
     }

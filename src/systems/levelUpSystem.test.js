@@ -340,12 +340,17 @@ describe('LevelUpSystem — level-up moment state machine', () => {
 });
 
 describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
-  // A SHORT offer: pre-banish 3 of the 5 registry items (Story 11.1 added orbit-blade,
-  // so banishing 3 leaves 2), then cross a level. The offer is exactly the 2 eligible
-  // cards; a pick against a 2-card offer applies normally.
+  // A SHORT offer: pre-banish 4 of the 6 registry items (Story 11.1 added orbit-blade,
+  // Story 11.2 added seeker-drones, so banishing 4 leaves 2), then cross a level. The offer
+  // is exactly the 2 eligible cards; a pick against a 2-card offer applies normally.
   it('short offer (2 eligible): offer holds exactly 2 cards, and a pick applies', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'nanite-shield', 'orbit-blade']);
+    prog.banishedIds = new Set([
+      'overcharge',
+      'nanite-shield',
+      'orbit-blade',
+      'seeker-drones',
+    ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.currentOffer).toHaveLength(2);
@@ -363,7 +368,12 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
 
   it('short offer: a pick at index === offer.length (out of the short range) is a guarded no-op', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'nanite-shield', 'orbit-blade']);
+    prog.banishedIds = new Set([
+      'overcharge',
+      'nanite-shield',
+      'orbit-blade',
+      'seeker-drones',
+    ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.currentOffer).toHaveLength(2);
@@ -375,11 +385,18 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     expect(sys.selectionActive).toBe(true);
   });
 
-  // An EMPTY offer: all 5 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
+  // An EMPTY offer: all 6 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
   // with no card applied, the overlay closes, and the landing invuln is granted.
   it('empty offer (0 eligible): the owed pick auto-drains, no card applied, landing invuln granted', () => {
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: 0 });
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set([
+      'overcharge',
+      'spread-cannon',
+      'orbit-blade',
+      'seeker-drones',
+      'nanite-shield',
+      'afterburner',
+    ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.currentOffer).toEqual([]);
@@ -395,7 +412,14 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     // would clobber it down to 800 — fails here (mirrors the pick-path max guard).
     const bigShield = LEVELUP_LANDING_INVULN_MS + 1200;
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: bigShield });
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set([
+      'overcharge',
+      'spread-cannon',
+      'orbit-blade',
+      'seeker-drones',
+      'nanite-shield',
+      'afterburner',
+    ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.pendingSelections).toBe(0); // drained
@@ -405,7 +429,14 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
 
   it('empty offer drains ALL owed picks of a multi-level jump at once', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set([
+      'overcharge',
+      'spread-cannon',
+      'orbit-blade',
+      'seeker-drones',
+      'nanite-shield',
+      'afterburner',
+    ]);
     levelStub.levelsGainedThisTick = 3; // owes 3
     sys.fixedUpdate();
     expect(sys.pendingSelections).toBe(0); // all drained, not just one
@@ -414,7 +445,14 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
 
   it('empty offer never holds the player invulnerable: no lingering pending across ticks', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set([
+      'overcharge',
+      'spread-cannon',
+      'orbit-blade',
+      'seeker-drones',
+      'nanite-shield',
+      'afterburner',
+    ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     levelStub.levelsGainedThisTick = 0;
@@ -775,7 +813,13 @@ describe('LevelUpSystem — a PAID reroll can displace the guaranteed card (Stor
   // suppression is ONE-SHOT — the guarantee returns on the next rebuild while unowned.
 
   it('a reroll at run level >= 3 with spread-cannon unowned CAN yield an offer without it', () => {
-    const { sys, levelStub, prog } = build();
+    // A curated rng so the SUPPRESSED weighted redraw deterministically excludes
+    // spread-cannon: once the guarantee is lifted, spread-cannon competes on weight only
+    // and could re-appear by chance in the 6-item registry, so the seed is pinned (Story
+    // 11.2 grew the offense track, which shifted the weighted draw off the old default).
+    const { sys, levelStub, prog } = build({
+      rng: seqRng([0.05, 0.05, 0.05, 0.29, 0.29]),
+    });
     levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -786,16 +830,20 @@ describe('LevelUpSystem — a PAID reroll can displace the guaranteed card (Stor
 
     sys.queueReroll();
     sys.fixedUpdate();
-    // The charge was spent AND the paid redraw was actually free of the guarantee — with
-    // only 4 registry items and 3 slots, an unsuppressed reservation would still hold
-    // slot 0.
+    // The charge was spent AND the paid redraw was actually free of the guarantee — the
+    // suppression lifted the slot-0 reservation, and the curated seed kept spread-cannon out
+    // of the weighted redraw too.
     expect(prog.rerollCharges).toBe(REROLL_INITIAL_CHARGES - 1);
     expect(sys.currentOffer).toHaveLength(CARD_OFFER_SIZE);
     expect(sys.currentOffer.map((c) => c.id)).not.toContain('spread-cannon');
   });
 
   it('the suppression is ONE-SHOT: the NEXT level-up offer has the guarantee back', () => {
-    const { sys, levelStub, prog } = build();
+    // Curated rng (see the sibling test) so the suppressed redraw deterministically excludes
+    // spread-cannon over the 6-item registry.
+    const { sys, levelStub, prog } = build({
+      rng: seqRng([0.05, 0.05, 0.05, 0.29, 0.29]),
+    });
     levelStub.level = SPREAD_CANNON_GUARANTEE_LEVEL;
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -819,8 +867,12 @@ describe('LevelUpSystem — a PAID reroll can displace the guaranteed card (Stor
 
   it('the suppression is ONE-SHOT: a post-pick rebuild in the SAME multi-level jump has it back', () => {
     // The other rebuild path. A 2-level jump owes two picks; a reroll on the first is
-    // exempt, but the rebuild after the pick drains is guaranteed again.
-    const { sys, levelStub } = build();
+    // exempt, but the rebuild after the pick drains is guaranteed again. Curated rng (see
+    // the sibling tests) so the suppressed redraw deterministically excludes spread-cannon
+    // over the 6-item registry.
+    const { sys, levelStub } = build({
+      rng: seqRng([0.05, 0.05, 0.05, 0.29, 0.29]),
+    });
     levelStub.level = 5;
     levelStub.levelsGainedThisTick = 2;
     sys.fixedUpdate();

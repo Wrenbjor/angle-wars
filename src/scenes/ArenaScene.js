@@ -25,6 +25,10 @@ import {
   XP_ORB_RADIUS,
   COLOR_ORBIT_BLADE,
   ORBIT_BLADE_RADIUS,
+  COLOR_SEEKER_DRONE,
+  SEEKER_DRONE_RADIUS,
+  COLOR_DRONE_SHOT,
+  SEEKER_DRONE_SHOT_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -251,6 +255,9 @@ export class ArenaScene extends Phaser.Scene {
     // Story 11.1: the Orbit Blade runtime. Held so the per-frame render can draw one
     // filled circle per active blade from its pool.
     this.orbitBladeSystem = arena.orbitBladeSystem;
+    // Story 11.2: the Seeker Drones runtime. Held so the per-frame render can draw one
+    // filled circle per active drone AND per active shot from its two pools.
+    this.seekerDroneSystem = arena.seekerDroneSystem;
     this.scoringSystem = arena.scoringSystem;
     this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
@@ -455,6 +462,13 @@ export class ArenaScene extends Phaser.Scene {
     // reads as the player's own weapon. Epic 4 owns the real aesthetic. Zero per-frame
     // allocation (mirrors the xp-orb/particle render).
     this.orbitBladeGraphics = this.add.graphics();
+    // Seeker Drone drones + shots (Story 11.2) are placeholder filled neon dots (one per
+    // active drone, one per active shot), cleared and redrawn each render frame from the
+    // SeekerDroneSystem's two pools. Drawn above the enemy/xp layers with the drones — the
+    // ring hugs the ship like the blades, and the shots read as the player's own fire. Epic
+    // 4 owns the real aesthetic. Zero per-frame allocation (mirrors the orbit-blade render).
+    this.seekerDroneGraphics = this.add.graphics();
+    this.droneShotGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -495,6 +509,8 @@ export class ArenaScene extends Phaser.Scene {
         this.armoredGraphics,
         this.xpOrbGraphics,
         this.orbitBladeGraphics,
+        this.seekerDroneGraphics,
+        this.droneShotGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
@@ -1559,6 +1575,24 @@ export class ArenaScene extends Phaser.Scene {
     obg.fillStyle(COLOR_ORBIT_BLADE, 1);
     this.orbitBladeSystem.pool.forEachActive((b) => {
       obg.fillCircle(b.x, b.y, ORBIT_BLADE_RADIUS);
+    });
+
+    // Redraw active Seeker Drones + their shots from the two pools: clear once each, then a
+    // filled neon dot per live drone at its synced ring position and per live shot at its
+    // in-flight position. Additive blend + camera bloom make each glow. Rendering reads the
+    // sim state; it never advances it. Zero per-frame allocation (mirrors the orbit-blade
+    // render). (Story 11.2)
+    const sdg = this.seekerDroneGraphics;
+    sdg.clear();
+    sdg.fillStyle(COLOR_SEEKER_DRONE, 1);
+    this.seekerDroneSystem.pool.forEachActive((d) => {
+      sdg.fillCircle(d.x, d.y, SEEKER_DRONE_RADIUS);
+    });
+    const dsg = this.droneShotGraphics;
+    dsg.clear();
+    dsg.fillStyle(COLOR_DRONE_SHOT, 1);
+    this.seekerDroneSystem.shotPool.forEachActive((s) => {
+      dsg.fillCircle(s.x, s.y, SEEKER_DRONE_SHOT_RADIUS);
     });
 
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is

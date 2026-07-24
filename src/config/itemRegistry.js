@@ -268,6 +268,97 @@ export const ITEM_REGISTRY = Object.freeze([
     // actual fusion consumption; this only registers the metadata.
     fusion: Object.freeze({ partner: 'overcharge', epic: 'tesla-circuit' }),
   }),
+  Object.freeze({
+    id: 'seeker-drones',
+    name: 'Seeker Drones',
+    title: 'Seeker Drones',
+    track: 'offense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.2 — the second Epic-11 EXOTIC offense item (PRD §13.3): autonomous
+    // shooters that ride a ring around the ship and fire pooled shots at the nearest
+    // combat enemy on their own cadence. Four fold fields, all read by SeekerDroneSystem:
+    //   - seekerDroneCount    : drone count (additive/count field, base 0 — an unowned
+    //                           Seeker Drones means NO drones, no shots, no target scan);
+    //   - seekerDroneDamage   : per-shot damage, routed through the shared
+    //                           CollisionSystem.applyPlayerDamage seam. A shot is a
+    //                           PROJECTILE, so the armored archetype resists it exactly as
+    //                           it resists a bullet (intended — drones are not on the
+    //                           melee/AoE full-damage list, which is why the base is low);
+    //   - seekerDronePeriodMs : fire period in ms between a drone's shots — a smaller
+    //                           value fires FASTER (1500 → 1071). An ABSOLUTE INTERVAL onto
+    //                           a base of 0, never a fraction (the same authoring rule
+    //                           shieldRechargeMs / orbitBladePeriodMs follow);
+    //   - seekerDroneHoming   : the Lv4+ homing FLAG (>= 1 enables) — a shot re-aims toward
+    //                           the nearest enemy each fixed step. Authored ONLY at Lv4/Lv5.
+    //
+    // The live drone/shot pools, the per-drone fire accumulators and the ring's rotation
+    // phase are RUNTIME state on SeekerDroneSystem, for the same reason the shield's live
+    // charge count and the blade's live phase are: the fold RESETS every field and
+    // re-derives the whole store on EVERY card pick.
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header): L2 restates the
+    // L1 damage/period, L3 restates the damage, L4 restates the damage/period AND adds
+    // homing, L5 restates the period/homing while raising the damage — even though each
+    // `desc` reads as a delta. The `desc` strings stay exactly as PRD §13.3 shipped them —
+    // player-facing prose, never rewritten to match the totals. The count 1→2→3→4→5,
+    // damage 3/3/3/3/4.8 (×1.6 at Lv5), period 1500/1500/1071/1071/1071 (÷1.4 = +40% rate
+    // from Lv3), homing from Lv4.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '1 drone / fires every 1.5s',
+        stats: Object.freeze({
+          seekerDroneCount: 1,
+          seekerDroneDamage: 3,
+          seekerDronePeriodMs: 1500,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '2 drones',
+        stats: Object.freeze({
+          seekerDroneCount: 2,
+          seekerDroneDamage: 3,
+          seekerDronePeriodMs: 1500,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '3 drones / +40% fire rate',
+        stats: Object.freeze({
+          seekerDroneCount: 3,
+          seekerDroneDamage: 3,
+          seekerDronePeriodMs: 1071,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '4 drones / homing shots',
+        stats: Object.freeze({
+          seekerDroneCount: 4,
+          seekerDroneDamage: 3,
+          seekerDronePeriodMs: 1071,
+          seekerDroneHoming: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '5 drones / +60% damage',
+        stats: Object.freeze({
+          seekerDroneCount: 5,
+          seekerDroneDamage: 4.8,
+          seekerDronePeriodMs: 1071,
+          seekerDroneHoming: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Seeker Drones is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Seeker Drones Lv5 + Nanite Shield Lv3 → Swarm Protocol (PRD §13.5). Epic 12 owns
+    // the actual fusion consumption; this only registers the metadata.
+    fusion: Object.freeze({ partner: 'nanite-shield', epic: 'swarm-protocol' }),
+  }),
   // --- Defense ---
   Object.freeze({
     id: 'nanite-shield',
