@@ -6,7 +6,7 @@ status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true
 baseline_revision: '02666a7f73847a287bb7dd932c6890467bdd3c89'
-final_revision: '3e1f748e274052fa971fdf00e1d7cea9e4a1de3d'
+final_revision: '3db5c69917ae6a547993aba3a94ba9f5c6c05470'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings: []
@@ -103,6 +103,22 @@ No spec amendments.
 ### 2026-07-24 — Review pass
 - intent_gap: 0
 - bad_spec: 0
+- patch: 8: (high 0, medium 1, low 7)
+- defer: 0
+- reject: 8: (high 0, medium 0, low 8)
+- addressed_findings:
+  - `[medium]` `[patch]` Released expiring primary fragment in `FlakSystem.js` before `triggerAirburst` call when secondary airburst occurs, freeing pool slots for sub-fragments.
+  - `[low]` `[patch]` Added `insetMargin = ARENA_BORDER_INSET + FLAK_FRAGMENT_RADIUS + 2` to border detonation coordinate clamping in `FlakSystem.js`.
+  - `[low]` `[patch]` Pre-allocated `_drawFlakFragment` render callback in `ArenaScene.js` for zero per-frame allocation.
+  - `[low]` `[patch]` Added `Number.isFinite` guards for `x`, `y`, and `count` arguments in `FlakSystem.js` `triggerAirburst`.
+  - `[low]` `[patch]` Added unit test in `flakSystem.test.js` for secondary airburst when primary fragment hits arena border wall.
+  - `[low]` `[patch]` Added unit test in `flakSystem.test.js` verifying telegraphing enemies (`telegraphMs > 0`) are ignored by fragments.
+  - `[low]` `[patch]` Added unit test in `flakSystem.test.js` verifying `_killedThisTick` deduplication for multi-fragment hits in a single frame.
+  - `[low]` `[patch]` Added unit test in `flakSystem.test.js` verifying hard live fragment cap during secondary airbursts in `fixedUpdate`.
+
+### 2026-07-24 — Review pass
+- intent_gap: 0
+- bad_spec: 0
 - patch: 4: (high 0, medium 1, low 3)
 - defer: 0
 - reject: 5: (high 0, medium 1, low 4)
@@ -137,4 +153,25 @@ No spec amendments.
 - `npx vitest run src/state/playerStats.test.js src/systems/firingSystem.test.js src/systems/collisionSystem.test.js` -- expected: extended suites pass.
 - `npm test` -- expected: entire test suite passes without regressions.
 - `npm run build` -- expected: production build succeeds.
+
+## Auto Run Result
+
+Status: done
+Summary: Executed follow-up review pass on Story 11.6 Flak Burst. Applied 8 patches for pool release timing, arena border coordinate clamping, zero-allocation render closure pre-allocation, and 5 new edge-case unit tests.
+Files Changed:
+- `src/systems/FlakSystem.js`: Fixed primary fragment pool release order during secondary airbursts, added finite checks, and expanded border coordinate clamping.
+- `src/scenes/ArenaScene.js`: Pre-allocated `_drawFlakFragment` closure in render loop.
+- `src/systems/flakSystem.test.js`: Added 5 new unit tests for wall secondary airbursts, telegraphing enemies, single-frame kill deduplication, pool capping, and NaN coordinate sanitization.
+- `_bmad-output/implementation-artifacts/spec-11-6-flak-burst.md`: Added Review Triage Log entry and updated final revision hash.
+Review Findings Breakdown:
+- Patches applied: 8 (1 medium, 7 low)
+- Deferred: 0
+- Rejected: 8 (noise / out of scope / verified as intended design)
+Follow-up Review Recommended: true (Score: 10 — 1 medium, 7 low)
+Verification Performed:
+- `npx vitest run src/systems/flakSystem.test.js`: 15/15 passed.
+- `npm test`: 75/75 test files passed (2022 tests passed).
+- `npm run build`: Production build succeeded.
+Residual Risks: None.
+
 

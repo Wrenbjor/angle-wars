@@ -312,4 +312,70 @@ describe('FlakSystem & Flak Burst Mechanics (Story 11.6)', () => {
 
     expect(flakBulletsCount).toBe(1);
   });
+
+  it('triggers secondary airburst when a primary fragment hits arena border wall', () => {
+    recomputePlayerStats(playerStats, { 'flak-burst': 5 }, ITEM_REGISTRY);
+    // Spawn a primary fragment near left wall with velocity pointing left
+    flakSystem.triggerAirburst(15, 300, 1, 0.5, true);
+    let primaryFrag;
+    flakSystem.flakPool.forEachActive((f) => { primaryFrag = f; });
+    primaryFrag.vx = -320;
+    primaryFrag.vy = 0;
+
+    flakSystem.fixedUpdate(16.666);
+
+    // Primary fragment expires at border and triggers 4 secondary sub-fragments
+    expect(flakSystem.flakPool.activeCount).toBe(4);
+  });
+
+  it('ignores telegraphing enemies (telegraphMs > 0) during fragment movement and collision', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 410;
+    seeker.y = 300;
+    seeker.telegraphMs = 500;
+
+    flakSystem.triggerAirburst(400, 300, 1, 0.5, true);
+    flakSystem.fixedUpdate(16.666);
+
+    expect(flakSystem.flakPool.activeCount).toBe(1);
+  });
+
+  it('prevents multiple fragments from double-hitting an enemy killed in the same tick', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 405;
+    seeker.y = 300;
+    seeker.hp = 1;
+
+    flakSystem.triggerAirburst(400, 300, 2, 0.5, false);
+    flakSystem.fixedUpdate(16.666);
+
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+  });
+
+  it('enforces FLAK_MAX_LIVE_FRAGMENTS cap during secondary airbursts in fixedUpdate', () => {
+    recomputePlayerStats(playerStats, { 'flak-burst': 5 }, ITEM_REGISTRY);
+    // Acquire 118 fragments manually
+    for (let i = 0; i < 118; i++) {
+      const f = flakSystem.flakPool.acquire();
+      f.lifetimeMs = 5000;
+    }
+    expect(flakSystem.flakPool.activeCount).toBe(118);
+
+    // Trigger primary airburst (with canAirburst = true) for 2 fragments -> active count 120
+    flakSystem.triggerAirburst(400, 300, 2, 0.5, true);
+    expect(flakSystem.flakPool.activeCount).toBe(120);
+
+    // Update to trigger secondary airbursts on the 2 fragments (2 * 4 = 8 secondary sub-fragments)
+    // Capped at 120 total live fragments!
+    flakSystem.fixedUpdate(700);
+    expect(flakSystem.flakPool.activeCount).toBeLessThanOrEqual(FLAK_MAX_LIVE_FRAGMENTS);
+  });
+
+  it('clamps out-of-bounds or NaN detonation coordinates inside arena bounds', () => {
+    flakSystem.triggerAirburst(NaN, -100, 4, 0.5, false);
+    let frag;
+    flakSystem.flakPool.forEachActive((f) => { frag = f; });
+    expect(frag.x).toBeGreaterThan(0);
+    expect(frag.y).toBeGreaterThan(0);
+  });
 });

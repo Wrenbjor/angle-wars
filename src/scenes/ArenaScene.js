@@ -1678,9 +1678,10 @@ export class ArenaScene extends Phaser.Scene {
     flg.clear();
     if (this.flakSystem && this.flakSystem.flakPool) {
       flg.fillStyle(COLOR_FLAK_FRAGMENT, 1);
-      this.flakSystem.flakPool.forEachActive((f) => {
-        flg.fillCircle(f.x, f.y, f.radius);
-      });
+      if (!this._drawFlakFragment) {
+        this._drawFlakFragment = (f) => this.flakGraphics.fillCircle(f.x, f.y, f.radius);
+      }
+      this.flakSystem.flakPool.forEachActive(this._drawFlakFragment);
     }
 
 
