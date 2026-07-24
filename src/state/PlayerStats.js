@@ -200,6 +200,44 @@ export const PLAYER_STATS_BASE = Object.freeze({
   mineDetonateRadius: 0,
   minePull: 0,
   mineChain: 0,
+  // Piercing Lance (Story 11.4). The fourth Epic-11 EXOTIC item and the first PIERCING
+  // projectile: a slow, heavy bolt auto-fired on a cadence FROM the ship TOWARD the nearest
+  // combat enemy that punches THROUGH a line of enemies (pierce 2 → 7). Three are
+  // ADDITIVE/COUNT fields and two (`lanceTrail`/`lanceBackward`) are FLAGS — all base at 0, so
+  // no Piercing Lance owned means NO bolts, no pierce and no trail (exactly the pre-11.4
+  // behavior).
+  //
+  // These are the DERIVED PARAMETERS only. The live bolt POOL, the trail-node POOL and the
+  // fire ACCUMULATOR are RUNTIME state on systems/PiercingLanceSystem.js, for exactly the
+  // reason the shield's live charge count, the dash's live window, the blade's live phase, the
+  // drone's live pool and the mine's live pool are: this fold RESETS every field and
+  // re-derives the whole store on EVERY card pick, so a live timer/pool kept here would be
+  // reset by picking any unrelated item.
+  //  - lancePeriodMs  : the interval (ms) between bolt cadences AND the OWNERSHIP GATE —
+  //                     0 means unowned (no bolts at all), which is why it bases at 0. An
+  //                     ABSOLUTE INTERVAL onto a base of 0, never a fraction (the same
+  //                     authoring rule shieldRechargeMs / seekerDronePeriodMs / mineDropPeriodMs
+  //                     follow). A smaller value fires FASTER. ⚠ Like every other non-`Mult`
+  //                     field it folds ADDITIVELY, so a hypothetical SECOND lance-cadence item
+  //                     would make bolts SLOWER; Piercing Lance is the only such item — an
+  //                     Epic-12 author adding one must fold a RATE or a `*Mult`.
+  //  - lancePierce    : the number of distinct enemies ONE bolt punches through (2 → 7). A
+  //                     bolt spends one charge per distinct enemy, then is released. Clamped to
+  //                     an integer in [1, LANCE_MAX_PIERCE] against a corrupted fold.
+  //  - lanceDamage    : per-bolt damage, routed through the shared
+  //                     CollisionSystem.applyPlayerDamage seam. A bolt is a PROJECTILE, so the
+  //                     armored archetype resists it exactly as it resists a bullet — the
+  //                     Lv3 +50% (4 → 6) one-shots armored (hp 5) by MAGNITUDE, not by an
+  //                     armor-bypass classification. 4/4/6/6/6 shipped.
+  //  - lanceTrail     : the Lv4+ trail FLAG (>= 1 enables) — a bolt drops a 0.5s lingering
+  //                     damage trail along its path. Off (0) below Lv4.
+  //  - lanceBackward  : the Lv5 backward FLAG (>= 1 enables) — a second bolt fires antipodal
+  //                     (backward) each cadence. Off (0) below Lv5.
+  lancePeriodMs: 0,
+  lancePierce: 0,
+  lanceDamage: 0,
+  lanceTrail: 0,
+  lanceBackward: 0,
 });
 
 /**

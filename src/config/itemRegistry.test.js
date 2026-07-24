@@ -25,6 +25,7 @@ const EXPECTED_IDS = [
   'orbit-blade',
   'seeker-drones',
   'mine-layer',
+  'piercing-lance',
   'nanite-shield',
   'afterburner',
 ];
@@ -214,6 +215,7 @@ describe('getItem / getItemsByTrack', () => {
       'orbit-blade',
       'seeker-drones',
       'mine-layer',
+      'piercing-lance',
     ]);
     expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
     // Every returned entry actually belongs to the requested track.
@@ -904,6 +906,129 @@ describe('ITEM_REGISTRY — Mine Layer per-level stats (Story 11.3, PRD §13.3)'
       'drops every 1.3s',
       'mines pull enemies inward',
       'detonation chains to adjacent mines',
+    ]);
+  });
+});
+
+// --- Piercing Lance (Story 11.4) --------------------------------------------
+describe('ITEM_REGISTRY — Piercing Lance per-level stats (Story 11.4, PRD §13.3)', () => {
+  // The exact per-level maps. `lancePeriodMs`/`lancePierce`/`lanceDamage` are ADDITIVE/COUNT
+  // fields (base 0), and `lanceTrail`/`lanceBackward` are FLAGS. `lancePeriodMs` is ALSO the
+  // ownership gate (0 = unowned). Every map is the TOTAL at that level.
+  const EXPECTED_LANCE_STATS = [
+    { lancePeriodMs: 2000, lancePierce: 2, lanceDamage: 4 },
+    { lancePeriodMs: 2000, lancePierce: 4, lanceDamage: 4 },
+    { lancePeriodMs: 1400, lancePierce: 4, lanceDamage: 6 },
+    { lancePeriodMs: 1400, lancePierce: 7, lanceDamage: 6, lanceTrail: 1 },
+    {
+      lancePeriodMs: 1400,
+      lancePierce: 7,
+      lanceDamage: 6,
+      lanceTrail: 1,
+      lanceBackward: 1,
+    },
+  ];
+
+  it('pins all five levels exactly (frozen, totals-at-level)', () => {
+    const pl = getItem('piercing-lance');
+    expect(pl.levels).toHaveLength(EXPECTED_LANCE_STATS.length);
+    pl.levels.forEach((lvl, i) => {
+      expect(lvl.stats, `piercing-lance L${lvl.level}`).toEqual(EXPECTED_LANCE_STATS[i]);
+      expect(Object.isFrozen(lvl.stats)).toBe(true);
+    });
+  });
+
+  it('the track/rarity/maxLevel/guarantee and fusion shape match the framework contract', () => {
+    const pl = getItem('piercing-lance');
+    expect(pl.track).toBe('offense');
+    expect(pl.rarity).toBeGreaterThan(0);
+    expect(pl.maxLevel).toBe(ITEM_MAX_LEVEL);
+    expect(pl.guaranteeFromLevel).toBeNull();
+    // Piercing Lance Lv5 + Overcharge Lv3 → Railgun (PRD §13.5); Epic 12 owns the consumption.
+    expect(pl.fusion).toEqual({ partner: 'overcharge', epic: 'railgun' });
+  });
+
+  it('levels are TOTALS, not deltas — the carried-forward rungs are restated', () => {
+    const [l1, l2, l3, l4, l5] = getItem('piercing-lance').levels.map((l) => l.stats);
+    // L2's desc is 'pierces 4 enemies', yet it restates L1's period and damage.
+    expect(l2.lancePeriodMs).toBe(l1.lancePeriodMs);
+    expect(l2.lanceDamage).toBe(l1.lanceDamage);
+    // L3's desc is '+50% damage / faster fire' alone, yet it restates the L2 pierce.
+    expect(l3.lancePierce).toBe(l2.lancePierce);
+    // L4's desc names the trail, yet it restates the L3 period/damage.
+    expect(l4.lancePeriodMs).toBe(l3.lancePeriodMs);
+    expect(l4.lanceDamage).toBe(l3.lanceDamage);
+    // L5's desc names only the backward bolt, yet it restates the L4 pierce/trail.
+    expect(l5.lancePierce).toBe(l4.lancePierce);
+    expect(l5.lanceTrail).toBe(l4.lanceTrail);
+    // Every level from L1 on fires a bolt with a real period/pierce/damage.
+    for (const s of [l1, l2, l3, l4, l5]) {
+      expect(s.lancePeriodMs).toBeGreaterThan(0);
+      expect(s.lancePierce).toBeGreaterThanOrEqual(1);
+      expect(s.lanceDamage).toBeGreaterThan(0);
+    }
+  });
+
+  it('the trail flag exists ONLY from Lv4 and the backward flag ONLY at Lv5 (PRD §13.3)', () => {
+    const levels = getItem('piercing-lance').levels;
+    for (const lvl of levels.slice(0, 3)) {
+      expect(lvl.stats.lanceTrail, `L${lvl.level} must not trail`).toBeUndefined();
+    }
+    expect(levels[3].stats.lanceTrail).toBe(1);
+    expect(levels[4].stats.lanceTrail).toBe(1);
+    for (const lvl of levels.slice(0, 4)) {
+      expect(lvl.stats.lanceBackward, `L${lvl.level} must not fire backward`).toBeUndefined();
+    }
+    expect(levels[4].stats.lanceBackward).toBe(1);
+  });
+
+  it('pierce rises monotonically, the period never gets slower, the damage never shrinks', () => {
+    const levels = getItem('piercing-lance').levels;
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i].stats.lancePierce).toBeGreaterThanOrEqual(levels[i - 1].stats.lancePierce);
+      expect(levels[i].stats.lancePeriodMs).toBeLessThanOrEqual(
+        levels[i - 1].stats.lancePeriodMs,
+      );
+      expect(levels[i].stats.lanceDamage).toBeGreaterThanOrEqual(levels[i - 1].stats.lanceDamage);
+    }
+  });
+
+  it('carries no stat key outside the five lance rungs the story owns', () => {
+    for (const lvl of getItem('piercing-lance').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect([
+          'lancePeriodMs',
+          'lancePierce',
+          'lanceDamage',
+          'lanceTrail',
+          'lanceBackward',
+        ]).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item authoring any Piercing Lance field (the additive-fold tripwire)', () => {
+    for (const key of [
+      'lancePeriodMs',
+      'lancePierce',
+      'lanceDamage',
+      'lanceTrail',
+      'lanceBackward',
+    ]) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual(['piercing-lance']);
+    }
+  });
+
+  it('keeps the PRD §13.3 desc strings verbatim (prose, never rewritten to the totals)', () => {
+    expect(getItem('piercing-lance').levels.map((l) => l.desc)).toEqual([
+      'pierces 2 enemies / fires every 2s',
+      'pierces 4 enemies',
+      '+50% damage / faster fire',
+      'pierces 7 / leaves a damage trail',
+      'fires a second bolt backward',
     ]);
   });
 });

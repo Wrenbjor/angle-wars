@@ -1083,6 +1083,93 @@ export const COLOR_MINE_UNARMED = 0x886644;
 // note). Epic 4 owns the real aesthetic.
 export const COLOR_MINE_ARMED = 0xffaa22;
 
+// --- Piercing Lance (Story 11.4 / PRD §13.3) --------------------------------
+// The fourth Epic-11 "exotic" offense item and the first PIERCING projectile: a slow,
+// heavy bolt auto-fired on a cadence FROM the ship TOWARD the nearest combat enemy that
+// punches THROUGH a line of enemies (pierce 2 → 7) instead of stopping at the first — so
+// a dense column clears in one shot. Each hit routes through the shared
+// CollisionSystem.applyPlayerDamage seam, so a bolt is a PROJECTILE: the armored archetype
+// resists it exactly as it resists a bullet (the +50% damage curve one-shots armored at
+// Lv3+ purely by MAGNITUDE, 6 > ARMORED_HP 5, NOT by a melee/AoE armor-bypass). At Lv4+ a
+// bolt leaves a 0.5s lingering damage TRAIL along its path; at Lv5 it also fires a second
+// bolt backward (antipodal). PiercingLanceSystem owns the bolt pool + the trail-node pool +
+// the fire accumulator; the shared player-stat store owns only the derived
+// period/pierce/damage/trail/backward.
+//
+// The geometry/feel values below are tunable placeholders; the *_MAX_* / *_BASE_* / floor /
+// lifetime / cap values are SAFETY/authored constants (like SEEKER_DRONE_PERIOD_FLOOR_MS /
+// MINE_MAX_CAP / MINE_DETONATE_DAMAGE), documented as such — never balance levers.
+
+// Bolt flight speed (px/s). A bolt spawns aimed at the nearest enemy and flies STRAIGHT
+// at this constant speed (no re-aim — unlike a homing drone shot). Anchored to
+// SEEKER_DRONE_SHOT_SPEED (700); a straight constant-velocity flight guarantees the bolt
+// leaves the arena, so no time-lifetime is needed. Tunable feel.
+export const LANCE_BOLT_SPEED = 700;
+// Bolt collision/render half-extent (px). Used for the bolt↔enemy overlap term
+// (bolt.radius + enemy.radius) — a heavy bolt, so twice BULLET_RADIUS (4). Tunable feel.
+export const LANCE_BOLT_RADIUS = 8;
+// Junk-fold fallback / base for the per-bolt damage. `lanceDamage` comes off the shared
+// store, so a non-finite / non-positive value degrades to this authored base (4, the
+// shipped L1 damage) rather than throwing or dealing zero damage. A bolt is a PROJECTILE
+// (resisted by the armored archetype); the base 4 makes armored (hp 5) a 2-hit kill at
+// Lv1–2 and the Lv3 +50% (→ 6) crosses the one-shot threshold. Framed like
+// SEEKER_DRONE_BASE_DAMAGE. Not a lever.
+export const LANCE_BOLT_BASE_DAMAGE = 4;
+// Absolute LOWER bound (ms) on the effective fire period — a SAFETY guard framed exactly
+// like SEEKER_DRONE_PERIOD_FLOOR_MS / MINE_DROP_PERIOD_FLOOR_MS, never a balance lever.
+// `_periodMs()` maps a non-finite / non-positive fold to 0 (unowned), but a finite BUT
+// tiny-positive corrupted period (e.g. 0.5ms) would still pass, and then the fire
+// `while (_fireAccumMs >= period)` loop runs `1 + floor(dt/period)` iterations per tick — a
+// same-tick bolt burst. Clamping the finite-positive branch up to this floor keeps the
+// drain bounded: it sits comfortably above the fixed step (FIXED_STEP_MS ≈ 16.7ms), so even
+// a floored period fires at most ~1 cadence/tick. Far below every authored value (the L1 2s
+// cadence), so no shipped build reaches it.
+export const LANCE_PERIOD_FLOOR_MS = 100;
+// Junk-fold fallback / base for the pierce count (distinct enemies one bolt punches
+// through). `lancePierce` comes off the shared store; a non-finite / < 1 value degrades to
+// this authored base (2, the shipped L1 pierce). Framed like MINE_BASE_CAP. Not a lever.
+export const LANCE_BASE_PIERCE = 2;
+// Absolute UPPER bound on the pierce count — a SAFETY clamp in the shape of MINE_MAX_CAP /
+// SEEKER_DRONE_MAX_COUNT, bounding what a corrupted `lancePierce` fold can make one bolt
+// punch through. The shipped maximum is 7 (Lv4/Lv5), so it sits with deliberate headroom
+// above every authorable value and no shipped build reaches it. Not a balance lever.
+export const LANCE_MAX_PIERCE = 16;
+// Idle bolt instances prewarmed into the bolt pool at construction, so a fire never hits the
+// factory once running. Sized above the worst-case steady-state in-flight count (Lv5 fires
+// 2 bolts every 1.4s, each crossing the ~1560px arena at 700px/s in ~2.2s → ~4 live, plus
+// pierce survivors) — a SAFETY sizing guard, not a hard cap on live bolts.
+export const LANCE_BOLT_POOL_PREWARM = 8;
+// SAFETY/authored: the lifetime (ms) of a Lv4+ trail node — the "0.5s damage trail". A node
+// deals its damage to each overlapping combat enemy (at most once) until it reaches this age,
+// then expires. Constant across levels. Not a balance lever.
+export const LANCE_TRAIL_LIFETIME_MS = 500;
+// Cadence (ms) at which a trail-stamped bolt drops a trail node along its path (a per-bolt
+// accumulator). Small relative to the lifetime so the path reads as a continuous trail rather
+// than sparse dots. Tunable feel.
+export const LANCE_TRAIL_DROP_MS = 50;
+// Trail-node collision/render half-extent (px). The node↔enemy overlap term
+// (node.radius + enemy.radius) — wider than the bolt so the lingering hazard is forgiving to
+// clip. Tunable feel.
+export const LANCE_TRAIL_NODE_RADIUS = 12;
+// SAFETY/authored: the damage a trail node deals to each combat enemy that overlaps it. Low
+// (1, one bullet's worth) — the trail is a chip-damage hazard, not a second full bolt.
+// Routed through the shared applyPlayerDamage seam (a PROJECTILE, armor-respecting). Not a
+// lever.
+export const LANCE_TRAIL_DAMAGE = 1;
+// Absolute UPPER bound on the live trail-node count — a SAFETY clamp in the shape of
+// MINE_MAX_CAP, bounding what the trail can hold live at once (oldest evicted past the cap).
+// Worst case ~40 nodes (Lv5, ~4 trail bolts × ~10 nodes each over a 0.5s life) sits
+// comfortably below it, so no shipped build reaches it. Not a balance lever.
+export const LANCE_TRAIL_NODE_MAX = 64;
+// Placeholder BOLT colour (0xRRGGBB) — a hot violet/magenta that reads as a heavy, high-energy
+// projectile against the neon/bloom background at additive blend, distinct from every other
+// COLOR_* (the black hole's 0x9933ff purple and the pinwheel's 0xff66cc pink are the nearest).
+// Epic 4 owns the real aesthetic.
+export const COLOR_LANCE_BOLT = 0xcc33ff;
+// Placeholder TRAIL-node colour (0xRRGGBB) — a dimmer violet of the same family as the bolt, so
+// the lingering trail reads as the bolt's fading wake rather than its own element.
+export const COLOR_LANCE_TRAIL = 0x772299;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.

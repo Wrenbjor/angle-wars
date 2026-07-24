@@ -30,6 +30,7 @@ import { DashSystem } from '../systems/DashSystem.js';
 import { OrbitBladeSystem } from '../systems/OrbitBladeSystem.js';
 import { SeekerDroneSystem } from '../systems/SeekerDroneSystem.js';
 import { MineLayerSystem } from '../systems/MineLayerSystem.js';
+import { PiercingLanceSystem } from '../systems/PiercingLanceSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
@@ -68,7 +69,9 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 // before ScoringSystem, mirroring the dash's load-bearing slot; Story 11.2 added the
 // SeekerDroneSystem immediately after OrbitBladeSystem and before ScoringSystem, the same
 // load-bearing slot; Story 11.3 added the MineLayerSystem immediately after SeekerDroneSystem
-// and before ScoringSystem, the same load-bearing slot), the same
+// and before ScoringSystem, the same load-bearing slot; Story 11.4 added the
+// PiercingLanceSystem immediately after MineLayerSystem and before ScoringSystem, the same
+// load-bearing slot), the same
 // enemyPools / deathPools composition (the reflector pool is deliberately in NEITHER;
 // the armored pool IS in both), and both load-bearing
 // late-binds
@@ -402,6 +405,33 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   );
   world.addSystem(mineLayerSystem);
 
+  // --- Piercing Lance (Story 11.4 / Epic 11) ------------------------------
+  // The fourth Epic-11 EXOTIC item and the first PIERCING projectile: a slow, heavy bolt
+  // auto-fired on a cadence FROM the ship TOWARD the nearest combat enemy that punches THROUGH a
+  // line of enemies (pierce 2 → 7), so a dense column clears in one shot. Owns its own bolt Pool
+  // + a Lv4+ trail-node Pool + the fire accumulator (the shared playerStats store owns only the
+  // derived period/pierce/damage/trail/backward). Registered IMMEDIATELY after MineLayerSystem
+  // and BEFORE ScoringSystem — the same load-bearing slot the mine, drone, blade and dash use:
+  //   - AFTER CollisionSystem, so a lance kill appends to per-tick kill latches that system has
+  //     ALREADY RESET this tick (registering earlier would drop them into arrays about to be
+  //     cleared);
+  //   - BEFORE ScoringSystem — and therefore before DpsTelemetrySystem, XpOrbSystem,
+  //     GridFieldSystem and ParticleSystem — so a lance kill is SCORED and produces the full
+  //     kill feedback (XP orb, ripple, spray, SFX), exactly like a bullet kill.
+  // Scoped to `enemyPools` (the five COMBAT archetypes), never `deathPools` — the Black Hole and
+  // the Mirror Reflector are out of scope (the same scoping MineLayerSystem / SeekerDroneSystem
+  // apply). Routes every hit (bolt or trail node) through collisionSystem.applyPlayerDamage, so a
+  // bolt is a PROJECTILE the armored archetype resists exactly as it resists a bullet — its Lv3+
+  // one-shot of armored is purely by MAGNITUDE (lanceDamage 6 > ARMORED_HP 5), not an armor
+  // bypass (unlike the mine's full-damage AoE detonation).
+  const piercingLanceSystem = new PiercingLanceSystem(
+    ship,
+    enemyPools,
+    collisionSystem,
+    playerStats,
+  );
+  world.addSystem(piercingLanceSystem);
+
   // --- Scoring ------------------------------------------------------------
   // ScoringSystem runs immediately after CollisionSystem so this tick's kills
   // are already recorded, and before PlayerDeathSystem. It owns no pool; it
@@ -658,6 +688,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     orbitBladeSystem,
     seekerDroneSystem,
     mineLayerSystem,
+    piercingLanceSystem,
     scoringSystem,
     dpsTelemetrySystem,
     blackHoleSystem,

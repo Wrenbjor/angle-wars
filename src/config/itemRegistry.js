@@ -458,6 +458,104 @@ export const ITEM_REGISTRY = Object.freeze([
     // the metadata (the partner `gravity-well` lands in Story 11.7).
     fusion: Object.freeze({ partner: 'gravity-well', epic: 'singularity-field' }),
   }),
+  Object.freeze({
+    id: 'piercing-lance',
+    name: 'Piercing Lance',
+    title: 'Piercing Lance',
+    track: 'offense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.4 — the fourth Epic-11 EXOTIC offense item (PRD §13.3) and the first PIERCING
+    // projectile: a slow, heavy bolt auto-fired on a cadence FROM the ship TOWARD the nearest
+    // combat enemy that punches THROUGH a line of enemies instead of stopping at the first, so
+    // a dense column clears in one shot. Five fold fields, all read by PiercingLanceSystem:
+    //   - lancePeriodMs  : the interval (ms) between bolt cadences (additive/count field, base
+    //                      0 — an unowned Piercing Lance means NO bolts, no pierce, no trail).
+    //                      Also the OWNERSHIP GATE: 0 = unowned. A smaller value fires FASTER
+    //                      (2000 → 1400). An ABSOLUTE INTERVAL onto a base of 0, never a
+    //                      fraction (the same authoring rule mineDropPeriodMs / seekerDronePeriodMs
+    //                      follow);
+    //   - lancePierce    : distinct enemies ONE bolt punches through (2 → 4 → 7);
+    //   - lanceDamage    : per-bolt damage, routed through the shared
+    //                      CollisionSystem.applyPlayerDamage seam (armor-respecting). A bolt is
+    //                      a PROJECTILE — the armored archetype (hp 5) resists it, so the Lv3
+    //                      +50% (4 → 6) one-shots armored by MAGNITUDE (hits-to-kill 2 → 1),
+    //                      NOT by an armor-bypass classification (contrast the mine's AoE 90);
+    //   - lanceTrail     : the Lv4+ trail FLAG (>= 1 enables) — a bolt drops a 0.5s lingering
+    //                      damage trail along its path;
+    //   - lanceBackward  : the Lv5 backward FLAG (>= 1 enables) — a second bolt fires antipodal
+    //                      (backward) each cadence.
+    //
+    // The live bolt/trail pools and the fire accumulator are RUNTIME state on
+    // PiercingLanceSystem, for the same reason the shield's live charge count and the mine's
+    // live pool are: the fold RESETS every field and re-derives the whole store on EVERY card
+    // pick. Per-bolt pierce / damage / trail are STAMPED at FIRE time, so a bolt fired at Lv1
+    // keeps its 2-pierce / 4-damage / no-trail shape even after a later upgrade (the drone-shot
+    // convention).
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header): L2 restates the L1
+    // period/damage, L3 restates the L2 pierce, L4 ('leaves a damage trail') restates every
+    // field it inherits, L5 ('fires a second bolt backward') restates the trail too — even
+    // though each `desc` reads as a delta. The `desc` strings stay exactly as PRD §13.3 shipped
+    // them — player-facing prose, never rewritten to match the totals. The period
+    // 2000/2000/1400/1400/1400, pierce 2/4/4/7/7, damage 4/4/6/6/6, trail from Lv4, backward
+    // from Lv5.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: 'pierces 2 enemies / fires every 2s',
+        stats: Object.freeze({
+          lancePeriodMs: 2000,
+          lancePierce: 2,
+          lanceDamage: 4,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: 'pierces 4 enemies',
+        stats: Object.freeze({
+          lancePeriodMs: 2000,
+          lancePierce: 4,
+          lanceDamage: 4,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+50% damage / faster fire',
+        stats: Object.freeze({
+          lancePeriodMs: 1400,
+          lancePierce: 4,
+          lanceDamage: 6,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: 'pierces 7 / leaves a damage trail',
+        stats: Object.freeze({
+          lancePeriodMs: 1400,
+          lancePierce: 7,
+          lanceDamage: 6,
+          lanceTrail: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: 'fires a second bolt backward',
+        stats: Object.freeze({
+          lancePeriodMs: 1400,
+          lancePierce: 7,
+          lanceDamage: 6,
+          lanceTrail: 1,
+          lanceBackward: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Piercing Lance is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Piercing Lance Lv5 + Overcharge Lv3 → Railgun (PRD §13.5). Epic 12 owns the actual
+    // fusion consumption; this only registers the metadata.
+    fusion: Object.freeze({ partner: 'overcharge', epic: 'railgun' }),
+  }),
   // --- Defense ---
   Object.freeze({
     id: 'nanite-shield',

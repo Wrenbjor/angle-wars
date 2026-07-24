@@ -32,6 +32,10 @@ import {
   COLOR_MINE_ARMED,
   COLOR_MINE_UNARMED,
   MINE_RADIUS,
+  COLOR_LANCE_BOLT,
+  COLOR_LANCE_TRAIL,
+  LANCE_BOLT_RADIUS,
+  LANCE_TRAIL_NODE_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -264,6 +268,9 @@ export class ArenaScene extends Phaser.Scene {
     // Story 11.3: the Mine Layer runtime. Held so the per-frame render can draw one filled
     // circle per active mine from its pool, armed-vs-unarmed by colour.
     this.mineLayerSystem = arena.mineLayerSystem;
+    // Story 11.4: the Piercing Lance runtime. Held so the per-frame render can draw one filled
+    // circle per active bolt AND per active trail node from its two pools.
+    this.piercingLanceSystem = arena.piercingLanceSystem;
     this.scoringSystem = arena.scoringSystem;
     this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
@@ -482,6 +489,15 @@ export class ArenaScene extends Phaser.Scene {
     // exotic weapons; reads sim state only. Epic 4 owns the real aesthetic. Zero per-frame
     // allocation (mirrors the orbit-blade/drone render).
     this.mineGraphics = this.add.graphics();
+    // Piercing Lance bolts + trail nodes (Story 11.4) are placeholder filled neon dots (one per
+    // active bolt, one per active trail node), cleared and redrawn each render frame from the
+    // PiercingLanceSystem's two pools. The bolt is a hot-violet LANCE_BOLT_RADIUS dot; the trail
+    // node a dimmer, wider LANCE_TRAIL_NODE_RADIUS dot, so a bolt's fading wake reads at a
+    // glance (the epic's legibility note). Drawn above the enemy/xp layers with the other exotic
+    // weapons; reads sim state only. Epic 4 owns the real aesthetic. Zero per-frame allocation
+    // (mirrors the mine/drone render).
+    this.lanceBoltGraphics = this.add.graphics();
+    this.lanceTrailGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -525,6 +541,8 @@ export class ArenaScene extends Phaser.Scene {
         this.seekerDroneGraphics,
         this.droneShotGraphics,
         this.mineGraphics,
+        this.lanceTrailGraphics,
+        this.lanceBoltGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
@@ -1620,6 +1638,24 @@ export class ArenaScene extends Phaser.Scene {
     this.mineLayerSystem.pool.forEachActive((m) => {
       mg.fillStyle(m.ageMs >= m.armMs ? COLOR_MINE_ARMED : COLOR_MINE_UNARMED, 1);
       mg.fillCircle(m.x, m.y, MINE_RADIUS);
+    });
+
+    // Redraw active Piercing Lance bolts + trail nodes from the two pools: clear each once, then
+    // a dimmer wider COLOR_LANCE_TRAIL dot per live trail node (drawn under the bolts, as the
+    // fading wake) and a hot-violet COLOR_LANCE_BOLT dot per live bolt. Additive blend + camera
+    // bloom make each glow. Rendering reads the sim state; it never advances it. Zero per-frame
+    // allocation (mirrors the mine/drone render). (Story 11.4)
+    const ltg = this.lanceTrailGraphics;
+    ltg.clear();
+    ltg.fillStyle(COLOR_LANCE_TRAIL, 1);
+    this.piercingLanceSystem.trailPool.forEachActive((n) => {
+      ltg.fillCircle(n.x, n.y, LANCE_TRAIL_NODE_RADIUS);
+    });
+    const lbg = this.lanceBoltGraphics;
+    lbg.clear();
+    lbg.fillStyle(COLOR_LANCE_BOLT, 1);
+    this.piercingLanceSystem.pool.forEachActive((b) => {
+      lbg.fillCircle(b.x, b.y, LANCE_BOLT_RADIUS);
     });
 
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is

@@ -332,17 +332,18 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
     expect(ids).not.toContain('z2');
   });
 
-  it('ESCALATION repro: banishing 5 of the 7 real-registry items returns exactly the 2 eligible cards, banished absent', () => {
+  it('ESCALATION repro: banishing 6 of the 8 real-registry items returns exactly the 2 eligible cards, banished absent', () => {
     // The exact case that broke the old exactly-three fill: with all but 2 registry items
     // banished (Story 11.1 added orbit-blade, Story 11.2 added seeker-drones, Story 11.3 added
-    // mine-layer — so banishing 5 leaves 2), the offer must be the 2 remaining ELIGIBLE cards —
-    // never a banished card padded back in.
+    // mine-layer, Story 11.4 added piercing-lance — so banishing 6 leaves 2), the offer must be
+    // the 2 remaining ELIGIBLE cards — never a banished card padded back in.
     const banishedIds = new Set([
       'overcharge',
       'nanite-shield',
       'orbit-blade',
       'seeker-drones',
       'mine-layer',
+      'piercing-lance',
     ]);
     const prog = createProgressionState();
     const rng = seqRng([0.07, 0.29, 0.53, 0.81, 0.11, 0.42]);
