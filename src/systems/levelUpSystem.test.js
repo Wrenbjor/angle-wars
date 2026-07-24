@@ -39,7 +39,7 @@ function build({ invulnMs = 0, rng = seqRng(), registry = ITEM_REGISTRY, playerS
   return { sys, levelStub, playerStub, prog, rng, playerStats: ps };
 }
 
-// A full offer is CARD_OFFER_SIZE distinct registry items (the 4-item registry yields 3).
+// A full offer is CARD_OFFER_SIZE distinct registry items (the 5-item registry yields 3).
 function expectValidOffer(offer, registry = ITEM_REGISTRY) {
   expect(offer).toHaveLength(CARD_OFFER_SIZE);
   const ids = offer.map((c) => c.id);
@@ -340,11 +340,12 @@ describe('LevelUpSystem — level-up moment state machine', () => {
 });
 
 describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
-  // A SHORT offer: pre-banish 2 of the 4 registry items, then cross a level. The offer
-  // is exactly the 2 eligible cards; a pick against a 2-card offer applies normally.
+  // A SHORT offer: pre-banish 3 of the 5 registry items (Story 11.1 added orbit-blade,
+  // so banishing 3 leaves 2), then cross a level. The offer is exactly the 2 eligible
+  // cards; a pick against a 2-card offer applies normally.
   it('short offer (2 eligible): offer holds exactly 2 cards, and a pick applies', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'nanite-shield']);
+    prog.banishedIds = new Set(['overcharge', 'nanite-shield', 'orbit-blade']);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.currentOffer).toHaveLength(2);
@@ -362,7 +363,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
 
   it('short offer: a pick at index === offer.length (out of the short range) is a guarded no-op', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'nanite-shield']);
+    prog.banishedIds = new Set(['overcharge', 'nanite-shield', 'orbit-blade']);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.currentOffer).toHaveLength(2);
@@ -374,11 +375,11 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     expect(sys.selectionActive).toBe(true);
   });
 
-  // An EMPTY offer: all 4 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
+  // An EMPTY offer: all 5 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
   // with no card applied, the overlay closes, and the landing invuln is granted.
   it('empty offer (0 eligible): the owed pick auto-drains, no card applied, landing invuln granted', () => {
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: 0 });
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.currentOffer).toEqual([]);
@@ -394,7 +395,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     // would clobber it down to 800 — fails here (mirrors the pick-path max guard).
     const bigShield = LEVELUP_LANDING_INVULN_MS + 1200;
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: bigShield });
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     expect(sys.pendingSelections).toBe(0); // drained
@@ -404,7 +405,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
 
   it('empty offer drains ALL owed picks of a multi-level jump at once', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
     levelStub.levelsGainedThisTick = 3; // owes 3
     sys.fixedUpdate();
     expect(sys.pendingSelections).toBe(0); // all drained, not just one
@@ -413,7 +414,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
 
   it('empty offer never holds the player invulnerable: no lingering pending across ticks', () => {
     const { sys, levelStub, prog } = build();
-    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner']);
+    prog.banishedIds = new Set(['overcharge', 'spread-cannon', 'orbit-blade', 'nanite-shield', 'afterburner']);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
     levelStub.levelsGainedThisTick = 0;

@@ -183,6 +183,91 @@ export const ITEM_REGISTRY = Object.freeze([
     // Spread Cannon Lv5 + Piercing Lance Lv3 → Sunburst (PRD §13.5).
     fusion: Object.freeze({ partner: 'piercing-lance', epic: 'sunburst' }),
   }),
+  Object.freeze({
+    id: 'orbit-blade',
+    name: 'Orbit Blade',
+    title: 'Orbit Blade',
+    track: 'offense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.1 — the first Epic-11 EXOTIC offense item (PRD §13.3): a ring of
+    // rotating melee blades. Four fold fields, all read by OrbitBladeSystem:
+    //   - orbitBladeCount   : blade count (additive/count field, base 0 — an unowned
+    //                         Orbit Blade means NO blades and no sweep);
+    //   - orbitBladeDamage  : per-blade contact damage, routed through the shared
+    //                         CollisionSystem.applyPlayerDamage seam (armor-respecting);
+    //   - orbitBladePeriodMs: rotation period in ms per full revolution — a smaller
+    //                         value spins FASTER (1200 → 1000 → 700). An ABSOLUTE
+    //                         INTERVAL onto a base of 0, never a fraction (the same
+    //                         authoring rule shieldRechargeMs / dashCooldownMs follow);
+    //   - orbitBladeRadiusMult: the Lv5 +25% ring-radius bonus — a `*Mult` FRACTIONAL
+    //                         bonus onto a base of 1 (0.25 → 1.25× radius), authored
+    //                         ONLY at Lv5.
+    //
+    // The live rotation phase and the blade pool are RUNTIME state on OrbitBladeSystem,
+    // for the same reason the shield's live charge count and the dash's live window are:
+    // the fold RESETS every field and re-derives the whole store on EVERY card pick.
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header): L2 restates
+    // the L1 damage/period, L3 restates the damage, L4 restates the period, L5 restates
+    // the damage — even though each `desc` reads as a delta. The `desc` strings stay
+    // exactly as PRD §13.3 shipped them — player-facing prose, never rewritten to match
+    // the totals. The count 1→2→3→4→5, damage 90/90/90/126/126, period 1200/1200/1000/
+    // 1000/700, +25% radius only at Lv5.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '1 blade / 90 dmg / 1.2s rotation',
+        stats: Object.freeze({
+          orbitBladeCount: 1,
+          orbitBladeDamage: 90,
+          orbitBladePeriodMs: 1200,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '2 opposed blades',
+        stats: Object.freeze({
+          orbitBladeCount: 2,
+          orbitBladeDamage: 90,
+          orbitBladePeriodMs: 1200,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '3 blades / 1.0s rotation',
+        stats: Object.freeze({
+          orbitBladeCount: 3,
+          orbitBladeDamage: 90,
+          orbitBladePeriodMs: 1000,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '4 blades / +40% damage',
+        stats: Object.freeze({
+          orbitBladeCount: 4,
+          orbitBladeDamage: 126,
+          orbitBladePeriodMs: 1000,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '5 blades / 0.7s / +25% radius',
+        stats: Object.freeze({
+          orbitBladeCount: 5,
+          orbitBladeDamage: 126,
+          orbitBladePeriodMs: 700,
+          orbitBladeRadiusMult: 0.25,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Orbit Blade is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Orbit Blade Lv5 + Overcharge Lv3 → Tesla Circuit (PRD §13.5). Epic 12 owns the
+    // actual fusion consumption; this only registers the metadata.
+    fusion: Object.freeze({ partner: 'overcharge', epic: 'tesla-circuit' }),
+  }),
   // --- Defense ---
   Object.freeze({
     id: 'nanite-shield',

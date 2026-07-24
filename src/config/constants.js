@@ -877,6 +877,52 @@ export const DASH_CONTACT_DAMAGE = 1;
 // 2x above every authorable value and can never act as a balance lever.
 export const MOVE_SPEED_MULT_MAX = 3;
 
+// --- Orbit Blade (Story 11.1 / PRD §13.3) -----------------------------------
+// The first Epic-11 "exotic" offense item: a ring of rotating melee blades around
+// the ship. Each blade is a pooled {x,y,radius} entity that OrbitBladeSystem spins
+// at the folded level's period and routes contact damage through the shared
+// CollisionSystem.applyPlayerDamage seam — so armor, scoring, XP and the kill
+// latches behave exactly as for a bullet. Because a blade carries 90 damage and every
+// current enemy (armored included, hp 5) dies at <= its own hp, one blade contact is a
+// full-damage kill (the melee answer to the projectile-resistant armored archetype).
+//
+// The geometry/feel/colour values below are tunable placeholders; the *_MAX_* /
+// *_BASE_* / floor values are SAFETY guards (like SHIELD_MAX_CHARGES /
+// FIRE_INTERVAL_FLOOR_MS), documented as such — never balance levers.
+
+// Ring radius (px) from the ship centre to each blade's centre. Tunable feel.
+export const ORBIT_BLADE_ORBIT_RADIUS = 56;
+// Blade collision/render half-extent (px). Used for both the overlap test
+// (blade.radius + enemy.radius) and the placeholder filled circle. Tunable feel.
+export const ORBIT_BLADE_RADIUS = 10;
+// Absolute UPPER bound on the live blade count — a SAFETY clamp in the shape of
+// SHIELD_MAX_CHARGES, bounding what a corrupted `orbitBladeCount` fold can ask the
+// pool to acquire. The shipped maximum is 5 (Lv5), so it sits well above every
+// authorable value and no shipped build ever reaches it.
+export const ORBIT_BLADE_MAX_COUNT = 8;
+// Junk-fold fallback / floor for the per-blade damage. `orbitBladeDamage` comes off
+// the shared player-stat store, so a non-finite / non-positive value degrades to this
+// authored base (90) rather than throwing or dealing zero damage. Also the shipped L1
+// value — a full-damage melee hit against the armored archetype (hp 5 <= 90+ε).
+export const ORBIT_BLADE_BASE_DAMAGE = 90;
+// Junk-fold fallback for the rotation period (ms per full revolution). A non-finite /
+// non-positive `orbitBladePeriodMs` degrades to this authored base (the L1 1.2s spin)
+// so the angular-speed divide is always safe.
+export const ORBIT_BLADE_BASE_PERIOD_MS = 1200;
+// Per-enemy re-hit cadence (ms): a surviving enemy that stays overlapping a blade is
+// hit at most once per this window, not every tick — the same anti-machine-gun guard
+// DashSystem's per-dash stamp provides, here generalized to a monotonic elapsed clock.
+// Unobservable with shipped content (every current enemy dies in one contact), but it
+// is the correct guard for any future high-hp enemy.
+export const ORBIT_BLADE_HIT_COOLDOWN_MS = 250;
+// Idle blade instances prewarmed into the pool at construction, so a card pick that
+// raises the count acquires from the free list with no factory allocation. Sized to the
+// safety clamp — the most blades the system can ever hold live at once.
+export const ORBIT_BLADE_POOL_PREWARM = ORBIT_BLADE_MAX_COUNT;
+// Placeholder blade colour (0xRRGGBB) — a hot red-magenta that reads clearly against
+// the neon/bloom background at additive blend. Epic 4 owns the real aesthetic.
+export const COLOR_ORBIT_BLADE = 0xff3355;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.

@@ -27,6 +27,7 @@ import { ArmoredSystem } from '../systems/ArmoredSystem.js';
 import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { DashSystem } from '../systems/DashSystem.js';
+import { OrbitBladeSystem } from '../systems/OrbitBladeSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
@@ -53,7 +54,7 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 27 systems registered in the SAME order (Story 6.3 added
+// state + pools, the SAME 28 systems registered in the SAME order (Story 6.3 added
 // the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
 // after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it;
 // Story 8.3 added the LevelUpSystem right after LevelSystem; Story 9.1 added the
@@ -61,7 +62,8 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 // the enemy section, after MirrorReflectorSystem and before SpawnDirector; Story 10.4
 // added the NaniteShieldSystem after ExtraLifeSystem and before PlayerDeathSystem;
 // Story 10.5 added the DashSystem immediately after CollisionSystem and before
-// ScoringSystem), the same
+// ScoringSystem; Story 11.1 added the OrbitBladeSystem immediately after DashSystem and
+// before ScoringSystem, mirroring the dash's load-bearing slot), the same
 // enemyPools / deathPools composition (the reflector pool is deliberately in NEITHER;
 // the armored pool IS in both), and both load-bearing
 // late-binds
@@ -318,6 +320,30 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // a guarded no-op and movement is exactly the pre-10.5 path.
   playerMovementSystem.dashSystem = dashSystem;
 
+  // --- Orbit Blade (Story 11.1 / Epic 11) ---------------------------------
+  // The first Epic-11 EXOTIC item: a ring of rotating melee blades. Owns its own blade
+  // Pool + the accumulating rotation phase (the shared playerStats store owns only the
+  // derived count/damage/period/radius-mult). Registered IMMEDIATELY after DashSystem and
+  // BEFORE ScoringSystem — mirroring the dash's load-bearing slot exactly:
+  //   - AFTER CollisionSystem, so a blade kill appends to per-tick kill latches that
+  //     system has ALREADY RESET this tick (registering earlier would drop them into
+  //     arrays about to be cleared);
+  //   - BEFORE ScoringSystem — and therefore before DpsTelemetrySystem, XpOrbSystem,
+  //     GridFieldSystem and ParticleSystem — so a blade kill is SCORED and produces the
+  //     full kill feedback (XP orb, ripple, spray, SFX), exactly like a bullet kill.
+  // Scoped to `enemyPools` (the five COMBAT archetypes), never `deathPools` — the Black
+  // Hole and the Mirror Reflector are out of scope (the same scoping DashSystem._sweep /
+  // NaniteShieldSystem._pulse apply). Routes every hit through
+  // collisionSystem.applyPlayerDamage, so armor/scoring/XP behave as for a bullet — which
+  // is what makes a 90-damage blade a FULL-damage kill against the armored archetype.
+  const orbitBladeSystem = new OrbitBladeSystem(
+    ship,
+    enemyPools,
+    collisionSystem,
+    playerStats,
+  );
+  world.addSystem(orbitBladeSystem);
+
   // --- Scoring ------------------------------------------------------------
   // ScoringSystem runs immediately after CollisionSystem so this tick's kills
   // are already recorded, and before PlayerDeathSystem. It owns no pool; it
@@ -571,6 +597,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     spawnDirector,
     collisionSystem,
     dashSystem,
+    orbitBladeSystem,
     scoringSystem,
     dpsTelemetrySystem,
     blackHoleSystem,

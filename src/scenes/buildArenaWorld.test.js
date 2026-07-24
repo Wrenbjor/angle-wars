@@ -62,6 +62,7 @@ const CANONICAL_ORDER = [
   'SpawnDirector',
   'CollisionSystem',
   'DashSystem',
+  'OrbitBladeSystem',
   'ScoringSystem',
   'DpsTelemetrySystem',
   'BlackHoleSystem',
@@ -112,6 +113,7 @@ const RETURN_HANDLES = [
   'spawnDirector',
   'collisionSystem',
   'dashSystem',
+  'orbitBladeSystem',
   'scoringSystem',
   'dpsTelemetrySystem',
   'blackHoleSystem',
@@ -137,7 +139,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 27 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 28 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -548,12 +550,50 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     const order = ctx.world.systems.map((s) => s.constructor.name);
     const dash = order.indexOf('DashSystem');
     expect(dash).toBe(order.indexOf('CollisionSystem') + 1);
-    expect(order.indexOf('ScoringSystem')).toBe(dash + 1);
+    // Story 11.1 inserted OrbitBladeSystem immediately after DashSystem (mirroring the
+    // dash's load-bearing slot), so ScoringSystem is now dash + 2, not dash + 1.
+    expect(order.indexOf('OrbitBladeSystem')).toBe(dash + 1);
+    expect(order.indexOf('ScoringSystem')).toBe(dash + 2);
     expect(dash).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
     expect(dash).toBeLessThan(order.indexOf('XpOrbSystem'));
     expect(dash).toBeLessThan(order.indexOf('GridFieldSystem'));
     expect(dash).toBeLessThan(order.indexOf('ParticleSystem'));
     expect(dash).toBeGreaterThan(order.indexOf('PlayerMovementSystem'));
+  });
+
+  it('constructs the orbitBladeSystem over enemyPools and the shared handles (Story 11.1)', () => {
+    const ctx = buildArenaWorld();
+    // The sweep's reach is the five COMBAT archetype pools — the SAME array the factory
+    // returns, never deathPools. The Black Hole and the Mirror Reflector are out of scope
+    // (the scoping DashSystem._sweep / the shield pulse already apply), and only an
+    // IDENTITY pin catches a narrower list: every behavioral case drives the seeker pool,
+    // which any plausible wrong array still contains.
+    expect(ctx.orbitBladeSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(ctx.orbitBladeSystem.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
+    expect(ctx.orbitBladeSystem.enemyPools).not.toContain(
+      ctx.mirrorReflectorSystem.enemyPool,
+    );
+    // The shared ship / stat store / collision seam, not copies.
+    expect(ctx.orbitBladeSystem.ship).toBe(ctx.ship);
+    expect(ctx.orbitBladeSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.orbitBladeSystem.collisionSystem).toBe(ctx.collisionSystem);
+  });
+
+  it('pins the OrbitBladeSystem slot: immediately AFTER DashSystem and BEFORE ScoringSystem', () => {
+    // Load-bearing exactly like the dash slot: after CollisionSystem so a blade kill
+    // appends to latches already reset this tick; before ScoringSystem (and so before
+    // DpsTelemetry / XpOrb / GridField / Particle) so the kill is scored and produces its
+    // full feedback.
+    const ctx = buildArenaWorld();
+    const order = ctx.world.systems.map((s) => s.constructor.name);
+    const orbit = order.indexOf('OrbitBladeSystem');
+    expect(orbit).toBe(order.indexOf('DashSystem') + 1);
+    expect(order.indexOf('ScoringSystem')).toBe(orbit + 1);
+    expect(orbit).toBeGreaterThan(order.indexOf('CollisionSystem'));
+    expect(orbit).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
+    expect(orbit).toBeLessThan(order.indexOf('XpOrbSystem'));
+    expect(orbit).toBeLessThan(order.indexOf('GridFieldSystem'));
+    expect(orbit).toBeLessThan(order.indexOf('ParticleSystem'));
   });
 
   it('honors an injected rng — every rng-taking system receives it', () => {
@@ -966,7 +1006,11 @@ describe('buildArenaWorld — Nanite Shield through the ASSEMBLED world (Story 1
     let slot = -1;
     for (let attempt = 0; attempt < 20 && slot < 0; attempt++) {
       level += 1;
-      ctx.scoreState.xp = xpForLevel(level);
+      // Bank just PAST the level threshold rather than exactly on it: `xpForLevel` sums
+      // the curve in the same order LevelSystem subtracts it, so the exact boundary value
+      // can land a float ULP short and derive the LOWER level (levels 6/9/10 do). +1 xp is
+      // far below any level's span, so it robustly crosses without over-shooting.
+      ctx.scoreState.xp = xpForLevel(level) + 1;
       ctx.world.fixedUpdate(FIXED_STEP_MS);
       expect(ctx.levelSystem.level).toBe(level);
       expect(ctx.levelUpSystem.pendingSelections).toBeGreaterThanOrEqual(1);
@@ -1150,7 +1194,11 @@ describe('buildArenaWorld — Afterburner through the ASSEMBLED world (Story 10.
     let slot = -1;
     for (let attempt = 0; attempt < 20 && slot < 0; attempt++) {
       level += 1;
-      ctx.scoreState.xp = xpForLevel(level);
+      // Bank just PAST the level threshold rather than exactly on it: `xpForLevel` sums
+      // the curve in the same order LevelSystem subtracts it, so the exact boundary value
+      // can land a float ULP short and derive the LOWER level (levels 6/9/10 do). +1 xp is
+      // far below any level's span, so it robustly crosses without over-shooting.
+      ctx.scoreState.xp = xpForLevel(level) + 1;
       ctx.world.fixedUpdate(FIXED_STEP_MS);
       expect(ctx.levelSystem.level).toBe(level);
       expect(ctx.levelUpSystem.pendingSelections).toBeGreaterThanOrEqual(1);
@@ -1360,5 +1408,180 @@ describe('buildArenaWorld — Afterburner through the ASSEMBLED world (Story 10.
     expect(ctx.inputState.dashQueued).toBe(false); // consumed and discarded
     expect(ctx.dashSystem.active).toBe(false);
     expect(ctx.dashSystem.dashSeq).toBe(0);
+  });
+});
+
+describe('buildArenaWorld — Orbit Blade through the ASSEMBLED world (Story 11.1)', () => {
+  // The story's headline observables at the surface the intent states them at: a card pick
+  // folds the SHARED playerStats, the OrbitBladeSystem syncs its live blade count off that
+  // fold, and a blade contact routed through the shared applyPlayerDamage seam pays out
+  // EXACTLY like a bullet kill — scored, an XP orb dropped, the full kill feedback — with the
+  // armored one-shot that is the whole point of the item. The Epic-10 siblings (Spread
+  // Cannon, Nanite Shield, Afterburner) each drive their headline through the assembled
+  // world; orbitBladeSystem.test.js verifies the system in ISOLATION against a hand-built
+  // collision seam, so these tests close that seam by observing the score/XP/kill OUTCOME
+  // through the REAL registered pipeline (a source-discriminating regression in ScoringSystem
+  // or XpOrbSystem, or a slot reorder, would pass every isolation test but fail here).
+
+  function seededRng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function xpForLevel(level) {
+    let need = 0;
+    for (let l = 1; l < level; l++) need += xpToNextLevel(l);
+    return need;
+  }
+
+  /** Raise Orbit Blade to `level` through the REAL registry fold, no hand-written stats. */
+  function ownOrbitBlade(ctx, level) {
+    ctx.progressionState.ownedCards['orbit-blade'] = level;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+    expect(ctx.playerStats.orbitBladeCount).toBeGreaterThan(0);
+  }
+
+  /** Return the single live blade after one settle tick (ship parked, invuln cleared). */
+  function parkAndMaterialize(ctx) {
+    ctx.playerState.invulnMs = 0;
+    ctx.ship.x = ARENA_WIDTH / 2;
+    ctx.ship.y = ARENA_HEIGHT / 2;
+    ctx.ship.vx = 0;
+    ctx.ship.vy = 0;
+    ctx.world.fixedUpdate(FIXED_STEP_MS); // the system materialises + positions the blades
+    let blade = null;
+    ctx.orbitBladeSystem.pool.forEachActive((b) => {
+      blade = b;
+    });
+    expect(blade, 'a blade should be live after the fold + first tick').not.toBeNull();
+    return blade;
+  }
+
+  it('offer → pick → fold → system: the REAL level-up path gives the ship a live blade', () => {
+    const ctx = buildArenaWorld({ rng: seededRng(11104) });
+    expect(ctx.playerStats.orbitBladeCount).toBe(PLAYER_STATS_BASE.orbitBladeCount);
+    expect(ctx.orbitBladeSystem.pool.activeCount).toBe(0);
+
+    // Level up through real banked XP and the real weighted draw until Orbit Blade is offered,
+    // then pick it. Bounded, so a draw regression fails as "never offered" rather than hanging.
+    let level = 1;
+    let slot = -1;
+    for (let attempt = 0; attempt < 20 && slot < 0; attempt++) {
+      level += 1;
+      // Bank just PAST the threshold: `xpForLevel` sums the curve in the same order
+      // LevelSystem subtracts it, so the exact boundary can land a float ULP short and derive
+      // the LOWER level (levels 6/9/10 do). +1 xp crosses robustly without over-shooting.
+      ctx.scoreState.xp = xpForLevel(level) + 1;
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      expect(ctx.levelSystem.level).toBe(level);
+      expect(ctx.levelUpSystem.pendingSelections).toBeGreaterThanOrEqual(1);
+      slot = ctx.levelUpSystem.currentOffer.findIndex((c) => c.id === 'orbit-blade');
+      if (slot < 0) {
+        ctx.levelUpSystem.queueSelection(0);
+        ctx.world.fixedUpdate(FIXED_STEP_MS);
+      }
+    }
+    expect(slot, 'the real weighted draw never offered orbit-blade').toBeGreaterThanOrEqual(0);
+
+    // Pick it through the real latch. OrbitBladeSystem is registered BEFORE ScoringSystem and
+    // thus long before LevelUpSystem — so on the PICK tick the system already ran against the
+    // old fold, and LevelUpSystem's fold lands after it. Per the spec's Design Notes that is a
+    // deliberate one-tick lag (the same one every in-band item system accepts): the fold is
+    // live in the SHARED store immediately, but the blade materialises on the NEXT tick.
+    ctx.levelUpSystem.queueSelection(slot);
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    expect(ctx.progressionState.ownedCards['orbit-blade']).toBe(1);
+    expect(ctx.playerStats.orbitBladeCount).toBe(1); // fold is live in the shared store now…
+    expect(ctx.orbitBladeSystem.playerStats).toBe(ctx.playerStats); // shared store, not a copy
+    expect(ctx.orbitBladeSystem.pool.activeCount).toBe(0); // …but the blade is one tick behind
+
+    // The very next tick, the system reads the new fold and the blade is live.
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+    expect(ctx.orbitBladeSystem.pool.activeCount).toBe(1);
+  });
+
+  it('a blade contact KILLS a seeker, SCORES it and drops an XP ORB — the full bullet-kill feedback', () => {
+    // The property that distinguishes a blade kill from BombSystem's silent, unscored removal.
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ownOrbitBlade(ctx, 1); // 1 blade, 90 dmg
+    const blade = parkAndMaterialize(ctx);
+
+    // Drop a live seeker from the REAL archetype pool exactly on the blade. The ship is at
+    // arena centre, the blade (and the enemy) sit a ring-radius away, so the ship itself is
+    // never in contact — the KILL is unambiguously the blade's, not a player-death.
+    const seeker = ctx.enemySystem.enemyPool.acquire();
+    seeker.x = blade.x;
+    seeker.y = blade.y;
+    seeker.vx = 0;
+    seeker.vy = 0;
+    seeker.telegraphMs = 0;
+
+    const scoreBefore = ctx.scoreState.score;
+    const orbsBefore = ctx.xpOrbSystem.pool.activeCount;
+    const particlesBefore = ctx.particleSystem.pool.activeCount;
+    const activeRipples = () =>
+      ctx.gridFieldSystem.ripples.filter((r) => r.active).length;
+    const ripplesBefore = activeRipples();
+
+    // The blade barely rotates in a few ticks, so it stays overlapping and lands the hit.
+    // Track the orb PEAK — a drop 56px from the ship may be magnet-collected within a few
+    // ticks, and an end-of-run count could read 0 for a drop that really happened.
+    let orbPeak = orbsBefore;
+    for (let i = 0; i < 4; i++) {
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      orbPeak = Math.max(orbPeak, ctx.xpOrbSystem.pool.activeCount);
+    }
+
+    // Killed and released (asserted on the instance, not a pool count a fresh spawn could mask).
+    let stillActive = false;
+    ctx.enemySystem.enemyPool.forEachActive((s) => {
+      if (s === seeker) stillActive = true;
+    });
+    expect(stillActive).toBe(false);
+    // …scored through the ordinary per-kill seam…
+    expect(ctx.scoreState.score).toBeGreaterThan(scoreBefore);
+    // …an XP orb dropped…
+    expect(orbPeak).toBeGreaterThan(orbsBefore);
+    // …and a particle burst sprayed and the grid rippled — the FULL kill feedback, identical
+    // to a bullet kill, which is exactly what routing through applyPlayerDamage buys.
+    expect(ctx.particleSystem.pool.activeCount).toBeGreaterThan(particlesBefore);
+    expect(activeRipples()).toBeGreaterThan(ripplesBefore);
+  });
+
+  it('a Lv1 blade (90 dmg) ONE-SHOTS an armored (hp 5) through the assembled world — the melee full-damage answer', () => {
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ownOrbitBlade(ctx, 1); // 1 blade, 90 dmg — the very first rung already one-shots armor
+    const blade = parkAndMaterialize(ctx);
+
+    const tank = ctx.armoredSystem.enemyPool.acquire();
+    tank.x = blade.x;
+    tank.y = blade.y;
+    tank.vx = 0;
+    tank.vy = 0;
+    tank.telegraphMs = 0;
+    tank.hp = ARMORED_HP;
+
+    const scoreBefore = ctx.scoreState.score;
+    for (let i = 0; i < 4; i++) ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    // Killed in ONE contact (5 ≤ 90+ε) and scored — the armored archetype that shrugs off
+    // single-damage bullets dies to a single blade, through the SAME seam.
+    let stillActive = false;
+    ctx.armoredSystem.enemyPool.forEachActive((s) => {
+      if (s === tank) stillActive = true;
+    });
+    expect(stillActive).toBe(false);
+    expect(ctx.scoreState.score).toBeGreaterThan(scoreBefore);
   });
 });

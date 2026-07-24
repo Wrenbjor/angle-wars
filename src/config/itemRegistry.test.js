@@ -19,7 +19,13 @@ import {
 // four are now authored, and these tests guard both the SHAPE the framework depends on
 // and each item's shipped rungs.
 
-const EXPECTED_IDS = ['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner'];
+const EXPECTED_IDS = [
+  'overcharge',
+  'spread-cannon',
+  'orbit-blade',
+  'nanite-shield',
+  'afterburner',
+];
 
 describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
   it('registers exactly the four Epic-10 items with distinct ids', () => {
@@ -129,6 +135,11 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
       partner: 'piercing-lance',
       epic: 'sunburst',
     });
+    // Story 11.1: Orbit Blade Lv5 + Overcharge Lv3 → Tesla Circuit (Epic 12 resolves it).
+    expect(getItem('orbit-blade').fusion).toEqual({
+      partner: 'overcharge',
+      epic: 'tesla-circuit',
+    });
     expect(getItem('nanite-shield').fusion).toEqual({
       partner: 'afterburner',
       epic: 'phase-armor',
@@ -184,7 +195,11 @@ describe('getItem / getItemsByTrack', () => {
   it('getItemsByTrack returns the items of a track in registry order', () => {
     const offense = getItemsByTrack('offense');
     const defense = getItemsByTrack('defense');
-    expect(offense.map((i) => i.id)).toEqual(['overcharge', 'spread-cannon']);
+    expect(offense.map((i) => i.id)).toEqual([
+      'overcharge',
+      'spread-cannon',
+      'orbit-blade',
+    ]);
     expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
     // Every returned entry actually belongs to the requested track.
     for (const i of offense) expect(i.track).toBe('offense');

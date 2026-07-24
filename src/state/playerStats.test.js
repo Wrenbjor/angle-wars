@@ -200,6 +200,45 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     }
   });
 
+  // --- Orbit Blade (Story 11.1) --------------------------------------------
+  it('folds the SHIPPED Orbit Blade rungs 1..5 to the exact fields', () => {
+    // Drives the REAL registry, not a fixture: a re-authoring slip in itemRegistry.js
+    // has to fail here as well as in the registry's own suite. count 1→5, damage
+    // 90/90/90/126/126, period 1200/1200/1000/1000/700, radius mult 1/1/1/1/1.25.
+    const expected = [
+      { orbitBladeCount: 1, orbitBladeDamage: 90, orbitBladePeriodMs: 1200, orbitBladeRadiusMult: 1 },
+      { orbitBladeCount: 2, orbitBladeDamage: 90, orbitBladePeriodMs: 1200, orbitBladeRadiusMult: 1 },
+      { orbitBladeCount: 3, orbitBladeDamage: 90, orbitBladePeriodMs: 1000, orbitBladeRadiusMult: 1 },
+      { orbitBladeCount: 4, orbitBladeDamage: 126, orbitBladePeriodMs: 1000, orbitBladeRadiusMult: 1 },
+      { orbitBladeCount: 5, orbitBladeDamage: 126, orbitBladePeriodMs: 700, orbitBladeRadiusMult: 1.25 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'orbit-blade': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.orbitBladeCount, `L${level} count`).toBe(e.orbitBladeCount);
+      expect(ps.orbitBladeDamage, `L${level} damage`).toBe(e.orbitBladeDamage);
+      expect(ps.orbitBladePeriodMs, `L${level} period`).toBe(e.orbitBladePeriodMs);
+      expect(ps.orbitBladeRadiusMult, `L${level} radiusMult`).toBeCloseTo(
+        e.orbitBladeRadiusMult,
+        10,
+      );
+      // Orbit Blade touches nothing on the fire/volley/movement/defense seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+    }
+  });
+
+  it('leaves the four Orbit Blade fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.orbitBladeCount).toBe(0);
+    expect(ps.orbitBladeDamage).toBe(0);
+    expect(ps.orbitBladePeriodMs).toBe(0);
+    expect(ps.orbitBladeRadiusMult).toBe(1); // the `*Mult` field bases at 1
+  });
+
   it('leaves all five Afterburner fields at base when it is UNOWNED', () => {
     const ps = createPlayerStats();
     recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);

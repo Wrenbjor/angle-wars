@@ -23,6 +23,8 @@ import {
   REFLECTOR_WEIGHT_RADIUS,
   COLOR_XP_ORB,
   XP_ORB_RADIUS,
+  COLOR_ORBIT_BLADE,
+  ORBIT_BLADE_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -246,6 +248,9 @@ export class ArenaScene extends Phaser.Scene {
     // Story 10.5: the Afterburner dash runtime. Held so the per-frame render can push
     // its ownership state into the touch dash button's gate (see update()).
     this.dashSystem = arena.dashSystem;
+    // Story 11.1: the Orbit Blade runtime. Held so the per-frame render can draw one
+    // filled circle per active blade from its pool.
+    this.orbitBladeSystem = arena.orbitBladeSystem;
     this.scoringSystem = arena.scoringSystem;
     this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
@@ -444,6 +449,12 @@ export class ArenaScene extends Phaser.Scene {
     // the enemy layers so a dropped pickup reads clearly. Epic 8 later stories own the
     // real aesthetic. Zero per-frame allocation (mirrors the particle/bullet render).
     this.xpOrbGraphics = this.add.graphics();
+    // Orbit Blade blades (Story 11.1) are placeholder filled neon dots (one per active
+    // blade), cleared and redrawn each render frame from the OrbitBladeSystem's pool. Drawn
+    // above the enemy/xp layers and just below the ship — the ring hugs the ship, so it
+    // reads as the player's own weapon. Epic 4 owns the real aesthetic. Zero per-frame
+    // allocation (mirrors the xp-orb/particle render).
+    this.orbitBladeGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -483,6 +494,7 @@ export class ArenaScene extends Phaser.Scene {
         this.reflectorGraphics,
         this.armoredGraphics,
         this.xpOrbGraphics,
+        this.orbitBladeGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
@@ -1536,6 +1548,17 @@ export class ArenaScene extends Phaser.Scene {
     xog.fillStyle(COLOR_XP_ORB, 1);
     this.xpOrbSystem.pool.forEachActive((o) => {
       xog.fillCircle(o.x, o.y, XP_ORB_RADIUS);
+    });
+
+    // Redraw active Orbit Blades from the pool: clear once, then a filled neon dot of
+    // ORBIT_BLADE_RADIUS per live blade at its synced ring position. Additive blend +
+    // camera bloom make each blade glow. Rendering reads the sim state; it never advances
+    // it. Zero per-frame allocation (mirrors the xp-orb/particle render). (Story 11.1)
+    const obg = this.orbitBladeGraphics;
+    obg.clear();
+    obg.fillStyle(COLOR_ORBIT_BLADE, 1);
+    this.orbitBladeSystem.pool.forEachActive((b) => {
+      obg.fillCircle(b.x, b.y, ORBIT_BLADE_RADIUS);
     });
 
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is

@@ -105,6 +105,34 @@ export const PLAYER_STATS_BASE = Object.freeze({
   shieldCharges: 0,
   shieldRechargeMs: 0,
   shieldKnockback: 0,
+  // Orbit Blade (Story 11.1). The first Epic-11 EXOTIC item: a ring of rotating melee
+  // blades. `orbitBladeCount`/`orbitBladeDamage`/`orbitBladePeriodMs` are ADDITIVE/COUNT
+  // fields (base 0 — no Orbit Blade owned means NO blades and no sweep, exactly the
+  // pre-11.1 behavior), while `orbitBladeRadiusMult` is a `*Mult` field (base 1).
+  //
+  // These are the DERIVED PARAMETERS only. The live rotation PHASE and the blade POOL
+  // are RUNTIME state on systems/OrbitBladeSystem.js, for exactly the reason the shield's
+  // live charge count and the dash's live window are: this fold RESETS every field and
+  // re-derives the whole store on EVERY card pick, so a live phase/pool kept here would
+  // be reset by picking any unrelated item.
+  //  - orbitBladeCount    : the number of live blades (1..5 shipped). ⚠ Like every other
+  //                         non-`Mult` field it folds ADDITIVELY, so a hypothetical SECOND
+  //                         blade-count item would ADD blades. Orbit Blade is the only such
+  //                         item; an Epic-11/12 author adding one must fold a RATE or a
+  //                         `*Mult`, not stack another count here.
+  //  - orbitBladeDamage   : per-blade contact damage, routed through the shared
+  //                         CollisionSystem.applyPlayerDamage seam (so armor/scoring/XP
+  //                         behave exactly as for a bullet). 90/90/90/126/126 shipped.
+  //  - orbitBladePeriodMs : rotation period (ms per full revolution). An ABSOLUTE INTERVAL
+  //                         onto a base of 0, NEVER a fraction (the same authoring rule
+  //                         shieldRechargeMs / dashCooldownMs follow). A smaller value
+  //                         spins FASTER. It is also the presence signal for a valid spin:
+  //                         OrbitBladeSystem fails safe to a base period on 0/junk.
+  //  - orbitBladeRadiusMult: the Lv5 +25% ring-radius bonus (`*Mult`, base 1).
+  orbitBladeCount: 0,
+  orbitBladeDamage: 0,
+  orbitBladePeriodMs: 0,
+  orbitBladeRadiusMult: 1,
 });
 
 /**
