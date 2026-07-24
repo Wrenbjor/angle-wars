@@ -1,4 +1,5 @@
 import { System } from '../core/System.js';
+import { reflectBulletOffEnemy } from './ricochet.js';
 import {
   PLAYER_BULLET_BASE_DAMAGE,
   PLAYER_BULLET_MIN_DAMAGE,
@@ -200,8 +201,10 @@ export class CollisionSystem extends System {
         const r = b.radius + s.radius;
         // Squared compare avoids a sqrt; ≤ so a boundary touch counts as a hit.
         if (dx * dx + dy * dy <= r * r) {
-          hitBullets.add(b);
-          // Record the HITTING bullet's damage against this enemy (Story 10.2).
+          // Record the HITTING bullet's damage against this enemy (Story 10.2), at the
+          // bullet's CURRENT (pre-growth) stamped value — resolved BEFORE any ricochet
+          // reflection below grows it, so a bounced bullet's enemy hit deals the damage it
+          // arrived with, not its next-bounce value.
           // Resolved defensively in two steps. FALLBACK: a bullet with no `damage`
           // field (a hand-built fixture, or any non-FiringSystem bullet source) or a
           // non-finite / non-positive value uses the named base unit, so the v1
@@ -216,7 +219,17 @@ export class CollisionSystem extends System {
               ? Math.max(PLAYER_BULLET_MIN_DAMAGE, b.damage)
               : PLAYER_BULLET_BASE_DAMAGE,
           );
-          break; // bullet consumed — at most one enemy per bullet
+          // Ricochet Rounds (Story 11.5): a bullet flagged to bounce off enemies WITH budget
+          // left reflects OFF the enemy it hit (still dealing the damage recorded above),
+          // grows its damage, spends a bounce, and STAYS LIVE — it is NOT added to hitBullets
+          // and so is not consumed. Every other bullet takes the pre-11.5 consume path. Either
+          // way the bullet `break`s after one enemy, preserving the one-enemy-per-tick contract.
+          if (b.bounceOffEnemies && b.bouncesRemaining > 0) {
+            reflectBulletOffEnemy(b, s);
+          } else {
+            hitBullets.add(b); // bullet consumed — at most one enemy per bullet
+          }
+          break;
         }
       }
     }

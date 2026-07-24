@@ -340,10 +340,11 @@ describe('LevelUpSystem — level-up moment state machine', () => {
 });
 
 describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
-  // A SHORT offer: pre-banish 6 of the 8 registry items (Story 11.1 added orbit-blade,
+  // A SHORT offer: pre-banish 7 of the 9 registry items (Story 11.1 added orbit-blade,
   // Story 11.2 added seeker-drones, Story 11.3 added mine-layer, Story 11.4 added
-  // piercing-lance, so banishing 6 leaves 2), then cross a level. The offer is exactly the 2
-  // eligible cards; a pick against a 2-card offer applies normally.
+  // piercing-lance, Story 11.5 added ricochet-rounds, so banishing 7 leaves 2), then cross a
+  // level. The offer is exactly the 2 eligible cards; a pick against a 2-card offer applies
+  // normally.
   it('short offer (2 eligible): offer holds exactly 2 cards, and a pick applies', () => {
     const { sys, levelStub, prog } = build();
     prog.banishedIds = new Set([
@@ -353,6 +354,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -378,6 +380,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -390,7 +393,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     expect(sys.selectionActive).toBe(true);
   });
 
-  // An EMPTY offer: all 8 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
+  // An EMPTY offer: all 9 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
   // with no card applied, the overlay closes, and the landing invuln is granted.
   it('empty offer (0 eligible): the owed pick auto-drains, no card applied, landing invuln granted', () => {
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: 0 });
@@ -401,6 +404,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
       'nanite-shield',
       'afterburner',
     ]);
@@ -426,6 +430,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
       'nanite-shield',
       'afterburner',
     ]);
@@ -445,6 +450,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
       'nanite-shield',
       'afterburner',
     ]);
@@ -463,6 +469,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
       'nanite-shield',
       'afterburner',
     ]);

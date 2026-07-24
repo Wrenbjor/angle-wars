@@ -238,6 +238,37 @@ export const PLAYER_STATS_BASE = Object.freeze({
   lanceDamage: 0,
   lanceTrail: 0,
   lanceBackward: 0,
+  // Ricochet Rounds (Story 11.5). The fifth Epic-11 EXOTIC item and the first BASE-GUN
+  // MODIFIER of the epic: it makes the player's ORDINARY bullets bounce off the arena walls
+  // (and, higher up, enemies) instead of despawning at the border. Unlike the four prior
+  // Epic-11 items — each a SEPARATE pooled system reading a DERIVED-PARAMETER fold — Ricochet
+  // has NO runtime system state of its own: the four fields below are folded here and STAMPED
+  // onto each bullet at spawn (like `damage`), so an in-flight bullet keeps the behaviour it
+  // was fired with. All four are ADDITIVE/COUNT fields (base 0 — no Ricochet owned means the
+  // pre-11.5 gun exactly: a bullet despawns at the border and is consumed on its first hit).
+  //  - ricochetBounces      : the bounce BUDGET a bullet is stamped with (1 → 2 → 4) AND the
+  //                           OWNERSHIP GATE — a bullet stamped with 0 behaves byte-identically
+  //                           to pre-11.5. A single budget spent by wall AND enemy reflections
+  //                           alike. ⚠ Like every other non-`Mult` field it folds ADDITIVELY;
+  //                           Ricochet is the only bounce-budget item, so an Epic-12 author
+  //                           adding one must fold a `*Mult`, not stack another count here.
+  //                           Clamped to an integer in [0, RICOCHET_MAX_BOUNCES] against a
+  //                           corrupted fold (systems/ricochet.js).
+  //  - ricochetDmgPerBounce : the per-bounce damage-growth FRACTION (0.25 = +25%/bounce),
+  //                           NOT a `*Mult` field — it bases at 0 and is written as the plain
+  //                           fraction. Growth is `damage *= 1 + this` per reflection event
+  //                           (wall OR enemy), compounding on the bullet's current stamped
+  //                           damage. Clamped to RICOCHET_DMG_PER_BOUNCE_MAX against junk.
+  //  - ricochetOffEnemies   : the Lv4+ enemy-bounce FLAG (>= 1 enables) — a bullet with budget
+  //                           left bounces OFF an enemy it hits (still dealing its damage)
+  //                           instead of being consumed. Off (0) below Lv4.
+  //  - ricochetSeek         : the Lv5 homing FLAG (>= 1 enables) — a bullet that has bounced at
+  //                           least once re-aims toward the nearest combat enemy each fixed
+  //                           step (speed preserved). Off (0) below Lv5.
+  ricochetBounces: 0,
+  ricochetDmgPerBounce: 0,
+  ricochetOffEnemies: 0,
+  ricochetSeek: 0,
 });
 
 /**

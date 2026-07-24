@@ -316,6 +316,44 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.mineChain).toBe(0);
   });
 
+  it('folds the SHIPPED Ricochet Rounds rungs 1..5 to the exact fields', () => {
+    // Drives the REAL registry, not a fixture (Story 11.5): a re-authoring slip in
+    // itemRegistry.js has to fail here as well as in the registry's own suite. bounces
+    // 1/2/2/2/4, dmgPerBounce 0/0/0.25/0.25/0.25, offEnemies 0/0/0/1/1, seek 0/0/0/0/1.
+    const expected = [
+      { ricochetBounces: 1, ricochetDmgPerBounce: 0, ricochetOffEnemies: 0, ricochetSeek: 0 },
+      { ricochetBounces: 2, ricochetDmgPerBounce: 0, ricochetOffEnemies: 0, ricochetSeek: 0 },
+      { ricochetBounces: 2, ricochetDmgPerBounce: 0.25, ricochetOffEnemies: 0, ricochetSeek: 0 },
+      { ricochetBounces: 2, ricochetDmgPerBounce: 0.25, ricochetOffEnemies: 1, ricochetSeek: 0 },
+      { ricochetBounces: 4, ricochetDmgPerBounce: 0.25, ricochetOffEnemies: 1, ricochetSeek: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'ricochet-rounds': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.ricochetBounces, `L${level} bounces`).toBe(e.ricochetBounces);
+      expect(ps.ricochetDmgPerBounce, `L${level} dmgPerBounce`).toBe(e.ricochetDmgPerBounce);
+      expect(ps.ricochetOffEnemies, `L${level} offEnemies`).toBe(e.ricochetOffEnemies);
+      expect(ps.ricochetSeek, `L${level} seek`).toBe(e.ricochetSeek);
+      // Ricochet touches nothing on the fire/volley/movement/defense/blade/drone/mine seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.spreadWays).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+      expect(ps.orbitBladeCount).toBe(0);
+      expect(ps.seekerDroneCount).toBe(0);
+      expect(ps.mineDropPeriodMs).toBe(0);
+    }
+  });
+
+  it('leaves the four Ricochet Rounds fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.ricochetBounces).toBe(0);
+    expect(ps.ricochetDmgPerBounce).toBe(0);
+    expect(ps.ricochetOffEnemies).toBe(0);
+    expect(ps.ricochetSeek).toBe(0);
+  });
+
   it('leaves all five Afterburner fields at base when it is UNOWNED', () => {
     const ps = createPlayerStats();
     recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);

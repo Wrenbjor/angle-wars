@@ -11,6 +11,7 @@ import {
   COLOR_SHIP,
   SHIP_RADIUS,
   COLOR_BULLET,
+  COLOR_RICOCHET,
   COLOR_SEEKER,
   COLOR_GREEN_SQUARE,
   COLOR_PINWHEEL,
@@ -1407,11 +1408,14 @@ export class ArenaScene extends Phaser.Scene {
         : 1;
 
     // Redraw active bullets from the pool: clear once, then a filled circle per
-    // live bullet. Rendering reads the sim state; it never advances it.
+    // live bullet. Rendering reads the sim state; it never advances it. Story 11.5: a
+    // BOUNCED Ricochet bullet draws in COLOR_RICOCHET (a distinct warm tint communicates
+    // the mechanic — the epic's visual-legibility requirement); a fresh bullet stays
+    // COLOR_BULLET. The per-bullet fillStyle reads the stamped `bounced` flag, no allocation.
     const bg = this.bulletGraphics;
     bg.clear();
-    bg.fillStyle(COLOR_BULLET, 1);
     this.firingSystem.bulletPool.forEachActive((b) => {
+      bg.fillStyle(b.bounced ? COLOR_RICOCHET : COLOR_BULLET, 1);
       bg.fillCircle(b.x, b.y, b.radius);
     });
 

@@ -2,6 +2,11 @@ import { System } from '../core/System.js';
 import { Pool } from '../core/Pool.js';
 import { createBullet } from '../entities/Bullet.js';
 import {
+  resolveRicochetParams,
+  stampRicochet,
+  reflectBulletOffWall,
+} from './ricochet.js';
+import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
@@ -163,14 +168,53 @@ export class FiringSystem extends System {
     // it without capturing a fresh per-tick closure (mirrors CollisionSystem's
     // `_currentPool`). Set at the top of every fixedUpdate before iterating.
     this._dtSec = 0;
+    // --- Story 11.5 Ricochet Rounds --------------------------------------------
+    // The combat enemy pools, late-bound by buildArenaWorld AFTER enemyPools is assembled
+    // (FiringSystem is constructed before it exists — the same late-bind pattern
+    // snakeSystem.collisionSystem uses). Read ONLY for the Lv5 seek re-aim; null keeps the
+    // pre-11.5 behaviour (no seek scan). FiringSystem runs before EnemySystem, so seek reads
+    // enemy positions one tick stale — negligible at the fixed step.
+    this.enemyPools = null;
+    // Reusable ricochet-param scratch, resolved ONCE per tick from the live store and stamped
+    // per bullet (the `damage`/`ways` convention — zero per-tick allocation).
+    this._ricochet = {
+      bouncesRemaining: 0,
+      dmgPerBounce: 0,
+      bounceOffEnemies: false,
+      seek: false,
+    };
+    // True on a tick where a Lv5 seek build is active AND enemyPools is bound, so the common
+    // no-ricochet path never materializes enemies. Set at the top of every fixedUpdate.
+    this._seekActive = false;
+    // Reusable scratch for the materialized non-telegraphing combat enemies (seek targets).
+    // Length-reset each tick; the collector SKIPS a telegraphing enemy so a spawning-in enemy
+    // is never a seek target (the SeekerDroneSystem convention).
+    this._enemies = [];
+    this._collectEnemy = (e) => {
+      if (e.telegraphMs > 0) return;
+      this._enemies.push(e);
+    };
     // Hoisted expired-bullet collector — a stable instance-field arrow created once,
     // so `forEachActive` reuses one closure instead of allocating a fresh arrow per
-    // tick. Advances each active bullet and collects any that left the arena.
+    // tick. Seek-steers (Lv5) then advances each active bullet; on a border crossing it
+    // reflects a bullet with budget (Ricochet) or collects it for release (pre-11.5 despawn).
     this._collectExpired = (b) => {
+      // Seek steering (Ricochet Lv5): a bullet that has bounced re-aims toward the nearest
+      // enemy at unchanged speed BEFORE integrating. Gated to seek+bounced (and a live seek
+      // build), so an unowned build and an as-yet-unbounced seek bullet both pay nothing.
+      if (this._seekActive && b.seek && b.bounced) {
+        this._steerSeek(b);
+      }
       b.x += b.vx * this._dtSec;
       b.y += b.vy * this._dtSec;
       if (isOutsideArena(b.x, b.y)) {
-        this._expired.push(b);
+        // Ricochet: a bullet with bounce budget reflects off the wall and stays live; a
+        // bullet with no budget (0 = unowned, or exhausted) despawns exactly as pre-11.5.
+        if (b.bouncesRemaining > 0) {
+          reflectBulletOffWall(b);
+        } else {
+          this._expired.push(b);
+        }
       }
     };
     // Fire-cadence accumulator (ms). Seeded to the EFFECTIVE interval so the first
@@ -346,6 +390,55 @@ export class FiringSystem extends System {
   }
 
   /**
+   * The nearest materialized combat enemy to a point, or null when none exist (Ricochet Lv5
+   * seek). Reads the hoisted `_enemies` scratch (already filtered of telegraphing enemies),
+   * so it allocates nothing. Squared distance — no sqrt. Mirrors SeekerDroneSystem._nearestEnemy.
+   * @param {number} x
+   * @param {number} y
+   * @returns {object|null}
+   * @private
+   */
+  _nearestEnemy(x, y) {
+    const enemies = this._enemies;
+    let best = null;
+    let bestD2 = Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      const dx = e.x - x;
+      const dy = e.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Re-aim a bounced Ricochet Lv5 bullet's velocity toward the nearest combat enemy, PRESERVING
+   * its current speed (a reflection-preserved |v|). With no target (empty arena) or a coincident
+   * one, the velocity is left unchanged so the bullet flies straight on to a wall — which is what
+   * guarantees a homing bullet still terminates (NFR11). Mutates the bullet in place; allocates
+   * nothing. Mirrors SeekerDroneSystem's homing re-aim.
+   * @param {{x:number,y:number,vx:number,vy:number}} b
+   * @returns {void}
+   * @private
+   */
+  _steerSeek(b) {
+    const t = this._nearestEnemy(b.x, b.y);
+    if (!t) return;
+    const dx = t.x - b.x;
+    const dy = t.y - b.y;
+    const mag = Math.hypot(dx, dy);
+    if (mag <= 0) return;
+    const speed = Math.hypot(b.vx, b.vy);
+    const inv = speed / mag;
+    b.vx = dx * inv;
+    b.vy = dy * inv;
+  }
+
+  /**
    * Advance one fixed step: integrate + despawn bullets, then spawn at cadence.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
@@ -357,6 +450,24 @@ export class FiringSystem extends System {
     // with no spawns reports 0 on both and a prior tick's shots are never re-counted.
     this.shotsFiredCount = 0;
     this.volleysFiredCount = 0;
+
+    // Resolve the ricochet params ONCE per tick from the live store (the `damage`/`ways`
+    // convention) into the reused scratch, to stamp per bullet below. An unowned build
+    // resolves to bouncesRemaining 0 (the ownership gate) — the stamped-0 pre-11.5 bullet.
+    resolveRicochetParams(this.playerStats, this._ricochet);
+    // Materialize the non-telegraphing combat enemies ONCE for the Lv5 seek re-aim, but ONLY
+    // when a seek build is active and enemyPools is bound — the common no-ricochet path scans
+    // nothing. `_ricochet.seek` is true only at Lv5, and seek bullets exist only once it is, so
+    // gating on the live flag covers every live seek bullet.
+    this._seekActive = !!(this.enemyPools && this._ricochet.seek);
+    if (this._seekActive) {
+      const enemies = this._enemies;
+      enemies.length = 0;
+      const pools = this.enemyPools;
+      for (let p = 0; p < pools.length; p++) {
+        pools[p].forEachActive(this._collectEnemy);
+      }
+    }
 
     // 1. Advance existing bullets; collect any that have left the arena. Runs
     //    even when aim is inactive so in-flight bullets keep travelling. Stash
@@ -425,6 +536,7 @@ export class FiringSystem extends System {
           b.vx = input.aimX * BULLET_SPEED;
           b.vy = input.aimY * BULLET_SPEED;
           b.damage = damage; // Story 10.2 — stamped ONCE, at spawn
+          stampRicochet(b, this._ricochet); // Story 11.5 — stamped from the LIVE fold
           this.shotsFiredCount++; // Story 4.5 read-only bullet counter
         } else {
           // SPREAD VOLLEY — fan `ways` bullets across the cached cone. Each bullet's
@@ -446,6 +558,9 @@ export class FiringSystem extends System {
             // bullet in the volley, because a RECYCLED instance still carries the
             // previous shot's damage and the collision-side fallback cannot detect it.
             b.damage = damage;
+            // Story 11.5's identical obligation for the five ricochet fields — every bullet in
+            // the volley, or a recycled instance leaks the previous shot's bounce state.
+            stampRicochet(b, this._ricochet);
             this.shotsFiredCount++;
           }
         }

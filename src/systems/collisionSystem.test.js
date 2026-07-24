@@ -1077,3 +1077,137 @@ describe('CollisionSystem — applyPlayerDamage (the shared damage path)', () =>
     expect(system.bulletKillX).toHaveLength(0);
   });
 });
+
+// --- Story 11.5 (Ricochet Rounds): bounce-off-enemy instead of consume ------------
+describe('CollisionSystem — Ricochet enemy bounce (Story 11.5)', () => {
+  // Bullet + seeker (one-shot) and armored (hp) pools, each its own owning pool.
+  function makeRicochetSystem() {
+    const bulletPool = new Pool(createBullet);
+    const seekerPool = new Pool(createSeeker);
+    const armoredPool = new Pool(createArmored);
+    const system = new CollisionSystem(bulletPool, [seekerPool, armoredPool]);
+    return { bulletPool, seekerPool, armoredPool, system };
+  }
+
+  function addRicochetBullet(pool, x, y, opts = {}) {
+    const b = pool.acquire();
+    b.x = x;
+    b.y = y;
+    b.vx = 900; // moving +x, so a leftward enemy normal reflects it to -x
+    b.vy = 0;
+    b.damage = opts.damage ?? 1;
+    b.dmgPerBounce = opts.dmgPerBounce ?? 0;
+    b.bounceOffEnemies = opts.bounceOffEnemies ?? false;
+    b.bouncesRemaining = opts.bouncesRemaining ?? 0;
+    b.bounced = false;
+    return b;
+  }
+
+  function addSeekerAt(pool, x, y) {
+    const s = pool.acquire();
+    s.x = x;
+    s.y = y;
+    s.vx = 0;
+    s.vy = 0;
+    return s;
+  }
+
+  function addArmoredAt(pool, x, y, hp = ARMORED_HP) {
+    const s = pool.acquire();
+    s.x = x;
+    s.y = y;
+    s.vx = 0;
+    s.vy = 0;
+    s.hp = hp;
+    return s;
+  }
+
+  it('Lv4 bullet with budget KILLS a one-shot enemy AND bounces off it (stays live)', () => {
+    const { bulletPool, seekerPool, system } = makeRicochetSystem();
+    const b = addRicochetBullet(bulletPool, 95, 100, {
+      bounceOffEnemies: true,
+      bouncesRemaining: 2,
+      dmgPerBounce: 0.25,
+      damage: 4,
+    });
+    addSeekerAt(seekerPool, 100, 100); // overlaps the bullet (dist 5 <= r)
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0); // enemy killed via applyPlayerDamage
+    expect(bulletPool.activeCount).toBe(1); // bullet NOT consumed
+    expect(b.bouncesRemaining).toBe(1); // one bounce spent
+    expect(b.bounced).toBe(true);
+    expect(b.damage).toBeCloseTo(5, 9); // grown once: 4 * 1.25
+    expect(b.vx).toBeCloseTo(-900, 6); // reflected off the leftward surface normal
+    expect(system.bulletKillCount).toBe(1); // kill still scored/reported
+  });
+
+  it('a bullet with budget SPENT (0) is CONSUMED on the enemy hit — the pre-11.5 path', () => {
+    const { bulletPool, seekerPool, system } = makeRicochetSystem();
+    addRicochetBullet(bulletPool, 95, 100, {
+      bounceOffEnemies: true,
+      bouncesRemaining: 0, // exhausted
+      damage: 4,
+    });
+    addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0); // enemy killed
+    expect(bulletPool.activeCount).toBe(0); // bullet consumed (released)
+  });
+
+  it('an unowned bullet (no enemy-bounce flag) is consumed exactly as before this story', () => {
+    const { bulletPool, seekerPool, system } = makeRicochetSystem();
+    addRicochetBullet(bulletPool, 95, 100, {
+      bounceOffEnemies: false, // unowned / not enemy-bouncing
+      bouncesRemaining: 2, // budget present but the flag gates it
+      damage: 1,
+    });
+    addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0);
+    expect(bulletPool.activeCount).toBe(0); // consumed
+  });
+
+  it('a bounced bullet still hits at most ONE enemy per tick', () => {
+    const { bulletPool, seekerPool, system } = makeRicochetSystem();
+    addRicochetBullet(bulletPool, 100, 100, {
+      bounceOffEnemies: true,
+      bouncesRemaining: 3,
+      damage: 4,
+    });
+    // Two enemies at the same overlapping spot.
+    addSeekerAt(seekerPool, 100, 100);
+    addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(1); // exactly ONE killed this tick
+    expect(bulletPool.activeCount).toBe(1); // bullet survives (one bounce spent)
+  });
+
+  it('records the enemy hit at the PRE-growth damage (armored takes the arrival value)', () => {
+    const { bulletPool, armoredPool, system } = makeRicochetSystem();
+    const b = addRicochetBullet(bulletPool, 95, 100, {
+      bounceOffEnemies: true,
+      bouncesRemaining: 2,
+      dmgPerBounce: 0.25,
+      damage: 4,
+    });
+    const armored = addArmoredAt(armoredPool, 100, 100, ARMORED_HP); // hp 5
+
+    system.fixedUpdate(DT);
+
+    // The hit applied 4 (pre-growth), so the armored SURVIVES at hp 1 (not killed).
+    expect(armoredPool.activeCount).toBe(1);
+    expect(armored.hp).toBeCloseTo(ARMORED_HP - 4, 9); // 5 - 4 = 1
+    // The bullet then grew to 5 and stays live with a bounce spent.
+    expect(b.damage).toBeCloseTo(5, 9);
+    expect(b.bouncesRemaining).toBe(1);
+    expect(bulletPool.activeCount).toBe(1);
+  });
+});

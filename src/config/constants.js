@@ -1170,6 +1170,28 @@ export const COLOR_LANCE_BOLT = 0xcc33ff;
 // the lingering trail reads as the bolt's fading wake rather than its own element.
 export const COLOR_LANCE_TRAIL = 0x772299;
 
+// --- Ricochet Rounds (Story 11.5 / PRD §13.4) -------------------------------
+// The fifth Epic-11 "exotic" offense item and the first BASE-GUN MODIFIER of the epic: it
+// makes the player's ORDINARY bullets bounce off the arena walls (once → twice → 4×)
+// instead of despawning at the border, so a miss keeps working; higher levels grow damage
+// per bounce, bounce off enemies too, and at Lv5 home a bounced shot toward the nearest
+// enemy. Unlike the four prior Epic-11 items (each a SEPARATE pooled system), Ricochet
+// modifies the EXISTING base bullet — the same category as Overcharge / Spread Cannon,
+// which already fold onto FiringSystem/CollisionSystem. The two constants below are SAFETY
+// clamps on a corrupted fold (in the shape of LANCE_MAX_PIERCE / MINE_MAX_CAP), never
+// balance levers.
+
+// Absolute UPPER bound on the bounce budget — a SAFETY clamp bounding what a corrupted
+// `ricochetBounces` fold can make one bullet do, framed exactly like LANCE_MAX_PIERCE (16).
+// The shipped maximum is 4 (Lv5), so it sits with deliberate headroom above every authorable
+// value and no shipped build reaches it. Not a balance lever.
+export const RICOCHET_MAX_BOUNCES = 16;
+// Absolute UPPER bound on the per-bounce damage-growth FRACTION — a SAFETY clamp on a junk
+// `ricochetDmgPerBounce` fold so a corrupted value cannot grow a bullet's damage without
+// bound over its (finite) bounce budget. 4 = +400%/bounce, far above the shipped 0.25
+// (+25%), so no authored build reaches it. Not a balance lever.
+export const RICOCHET_DMG_PER_BOUNCE_MAX = 4;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.
@@ -1494,6 +1516,12 @@ export const COLOR_SEEKER = 0x3366ff;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
 export const COLOR_PINWHEEL = 0xff66cc;
 export const COLOR_SNAKE = 0xffaa33;
+// Ricochet Rounds (Story 11.5): the tint a BOUNCED bullet draws in — a hot warm
+// orange-red, distinctly warmer than the base bullet's yellow (COLOR_BULLET 0xffee66) so a
+// shot that has bounced reads AS bounced at a glance (the epic's visual-legibility
+// requirement). Distinct from the snake's amber and the pinwheel's pink. A fresh (unbounced)
+// bullet still draws in COLOR_BULLET.
+export const COLOR_RICOCHET = 0xff5533;
 // Mirror Reflector (Story 6.3): a pale chrome/steel hue that reads as a polished
 // mirror-metal dumbbell once the camera bloom bleeds it — distinct from the pink
 // Pinwheel and the purple Black Hole. Used for both the bar line and the two weights.

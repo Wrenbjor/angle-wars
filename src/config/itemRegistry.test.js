@@ -26,6 +26,7 @@ const EXPECTED_IDS = [
   'seeker-drones',
   'mine-layer',
   'piercing-lance',
+  'ricochet-rounds',
   'nanite-shield',
   'afterburner',
 ];
@@ -216,6 +217,7 @@ describe('getItem / getItemsByTrack', () => {
       'seeker-drones',
       'mine-layer',
       'piercing-lance',
+      'ricochet-rounds',
     ]);
     expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
     // Every returned entry actually belongs to the requested track.

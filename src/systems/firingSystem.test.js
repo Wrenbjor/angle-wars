@@ -1482,3 +1482,255 @@ describe('FiringSystem — the bullet pool is sized for the geometry it CLAIMS (
     },
   );
 });
+
+// --- Story 11.5 (Ricochet Rounds): stamp, wall bounce, seek, termination ---------
+describe('FiringSystem — Ricochet Rounds (Story 11.5)', () => {
+  // Grab the single live bullet (the tests below fire exactly one).
+  function theBullet(system) {
+    let b = null;
+    system.bulletPool.forEachActive((x) => (b = x));
+    return b;
+  }
+
+  // Fire exactly one volley from a centered ship, then stop aiming so no more spawn.
+  function fireOnce(stats, aim = [1, 0]) {
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim,
+      playerStats: { ...createPlayerStats(), ...stats },
+    });
+    system.fixedUpdate(DT); // seeded accumulator → exactly one volley
+    input.clearAim();
+    return { input, system };
+  }
+
+  // Drive the single bullet to extinction, counting how many bounces it spent.
+  function driveUntilGone(system, maxTicks = 1000) {
+    const bullet = theBullet(system);
+    let prevRem = bullet ? bullet.bouncesRemaining : 0;
+    let bounces = 0;
+    let ticks = 0;
+    while (system.bulletPool.activeCount > 0 && ticks < maxTicks) {
+      system.fixedUpdate(DT);
+      ticks++;
+      let stillActive = false;
+      system.bulletPool.forEachActive((b) => {
+        if (b === bullet) stillActive = true;
+      });
+      if (!stillActive) break;
+      if (bullet.bouncesRemaining < prevRem) {
+        bounces += prevRem - bullet.bouncesRemaining;
+        prevRem = bullet.bouncesRemaining;
+      }
+    }
+    return { bounces, ticks, active: system.bulletPool.activeCount };
+  }
+
+  it('stamps the four ricochet fields (+ bounced=false) on the base single-bullet volley', () => {
+    const { system } = fireOnce({
+      ricochetBounces: 4,
+      ricochetDmgPerBounce: 0.25,
+      ricochetOffEnemies: 1,
+      ricochetSeek: 1,
+    });
+    const b = theBullet(system);
+    expect(b.bouncesRemaining).toBe(4);
+    expect(b.dmgPerBounce).toBe(0.25);
+    expect(b.bounceOffEnemies).toBe(true);
+    expect(b.seek).toBe(true);
+    expect(b.bounced).toBe(false);
+  });
+
+  it('stamps ricochet on EVERY bullet of a spread volley', () => {
+    const { system } = fireOnce({
+      spreadWays: 3,
+      spreadArcDeg: 12,
+      ricochetBounces: 2,
+      ricochetDmgPerBounce: 0.25,
+    });
+    let count = 0;
+    system.bulletPool.forEachActive((b) => {
+      count++;
+      expect(b.bouncesRemaining).toBe(2);
+      expect(b.dmgPerBounce).toBe(0.25);
+      expect(b.bounced).toBe(false);
+    });
+    expect(count).toBe(3); // all three fanned bullets stamped
+  });
+
+  it('an unowned bullet (bounces 0) despawns at the border, never bouncing — pre-11.5', () => {
+    const { system } = fireOnce({}); // base store: ricochetBounces 0
+    const b = theBullet(system);
+    expect(b.bouncesRemaining).toBe(0);
+    const { bounces, active } = driveUntilGone(system, 300);
+    expect(bounces).toBe(0);
+    expect(active).toBe(0); // released exactly as before this story
+    expect(b.bounced).toBe(false);
+  });
+
+  it('Lv1 (bounces 1): reflects off ONE wall, then despawns on the next wall', () => {
+    const { system } = fireOnce({ ricochetBounces: 1 });
+    const { bounces, active } = driveUntilGone(system, 600);
+    expect(bounces).toBe(1);
+    expect(active).toBe(0);
+  });
+
+  it('Lv2 (bounces 2): reflects off two walls, then despawns on the third', () => {
+    const { system } = fireOnce({ ricochetBounces: 2 });
+    const { bounces, active } = driveUntilGone(system, 900);
+    expect(bounces).toBe(2);
+    expect(active).toBe(0);
+  });
+
+  it('a wall reflection preserves bullet speed and marks it bounced', () => {
+    const { system } = fireOnce({ ricochetBounces: 2 });
+    const b = theBullet(system);
+    const speed = Math.hypot(b.vx, b.vy);
+    // Step until the first reflection lands.
+    let guard = 0;
+    while (b.bouncesRemaining === 2 && guard < 400) {
+      system.fixedUpdate(DT);
+      guard++;
+    }
+    expect(b.bounced).toBe(true);
+    expect(b.bouncesRemaining).toBe(1);
+    expect(Math.hypot(b.vx, b.vy)).toBeCloseTo(speed, 6);
+  });
+
+  // --- Lv5 seek steering ---------------------------------------------------------
+  function seekSetup(enemies) {
+    const { input, system } = makeSystem({
+      ship: { x: 200, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1], // fire DOWNWARD, so a re-aim toward a rightward enemy is observable
+      playerStats: {
+        ...createPlayerStats(),
+        ricochetBounces: 4,
+        ricochetOffEnemies: 1,
+        ricochetSeek: 1,
+      },
+    });
+    system.enemyPools = [{ forEachActive: (cb) => enemies.forEach(cb) }];
+    system.fixedUpdate(DT);
+    input.clearAim();
+    return { system };
+  }
+
+  it('re-aims a BOUNCED seek bullet toward the nearest enemy at unchanged speed', () => {
+    const enemy = { x: 800, y: ARENA_HEIGHT / 2, telegraphMs: 0, radius: 14 };
+    const { system } = seekSetup([enemy]);
+    const b = theBullet(system);
+    // Place it away from the enemy, moving DOWN, and mark it as already bounced.
+    b.x = 400;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 0;
+    b.vy = 900;
+    b.bounced = true;
+    const speed = Math.hypot(b.vx, b.vy);
+    system.fixedUpdate(DT);
+    // Enemy is directly to the RIGHT → velocity now points +x, magnitude preserved.
+    expect(b.vx).toBeGreaterThan(0);
+    expect(b.vy).toBeCloseTo(0, 6);
+    expect(Math.hypot(b.vx, b.vy)).toBeCloseTo(speed, 6);
+  });
+
+  it('does NOT seek before the bullet has bounced (bounced=false → straight)', () => {
+    const enemy = { x: 800, y: ARENA_HEIGHT / 2, telegraphMs: 0, radius: 14 };
+    const { system } = seekSetup([enemy]);
+    const b = theBullet(system);
+    b.x = 400;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 0;
+    b.vy = 900;
+    b.bounced = false; // not yet bounced
+    system.fixedUpdate(DT);
+    expect(b.vx).toBe(0); // unchanged — no seek
+    expect(b.vy).toBe(900);
+  });
+
+  it('flies straight when a bounced seek bullet has NO target (empty arena)', () => {
+    const { system } = seekSetup([]); // enemyPools bound but empty
+    const b = theBullet(system);
+    b.x = 400;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 0;
+    b.vy = 900;
+    b.bounced = true;
+    system.fixedUpdate(DT);
+    expect(b.vx).toBe(0); // no target → velocity unchanged
+    expect(b.vy).toBe(900);
+  });
+
+  it('re-aims toward the NEAREST of several enemies (min-distance selection)', () => {
+    // A near enemy (down-and-slightly-right of the bullet) and a far one (far right). The
+    // re-aim must point at the NEAR enemy, not merely at any enemy — verifying _nearestEnemy's
+    // min-distance comparison, which a single-enemy fixture leaves unexercised.
+    const near = { x: 420, y: ARENA_HEIGHT / 2 + 140, telegraphMs: 0, radius: 14 };
+    const far = { x: 1400, y: ARENA_HEIGHT / 2, telegraphMs: 0, radius: 14 };
+    const { system } = seekSetup([far, near]); // near listed second — order must not matter
+    const b = theBullet(system);
+    b.x = 400;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 0;
+    b.vy = 900;
+    b.bounced = true;
+    system.fixedUpdate(DT);
+    // Velocity, normalized, points at the NEAR enemy (dx 20, dy 140 → mostly +y), not the far
+    // one (which would be almost pure +x with vy ≈ 0).
+    const speed = Math.hypot(b.vx, b.vy);
+    const dx = near.x - 400;
+    const dy = near.y - ARENA_HEIGHT / 2;
+    const mag = Math.hypot(dx, dy);
+    expect(b.vx / speed).toBeCloseTo(dx / mag, 6);
+    expect(b.vy / speed).toBeCloseTo(dy / mag, 6);
+    expect(b.vy).toBeGreaterThan(b.vx); // clearly the near (down) enemy, not the far (+x) one
+  });
+
+  it('does NOT seek a TELEGRAPHING (spawning-in) enemy — flies straight', () => {
+    // The only enemy is still spawning in (telegraphMs > 0), so it is not a valid seek target;
+    // the bounced bullet must fly straight, exactly as with an empty arena.
+    const spawningIn = { x: 800, y: ARENA_HEIGHT / 2, telegraphMs: 600, radius: 14 };
+    const { system } = seekSetup([spawningIn]);
+    const b = theBullet(system);
+    b.x = 400;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 0;
+    b.vy = 900;
+    b.bounced = true;
+    system.fixedUpdate(DT);
+    expect(b.vx).toBe(0); // telegraphing enemy skipped → no target → velocity unchanged
+    expect(b.vy).toBe(900);
+  });
+
+  it('never grows the pool and every bullet eventually releases under sustained Lv5 fire (NFR11)', () => {
+    // No enemies present → seek bullets fly straight to walls and exhaust their budget, so
+    // the population is bounded and every bullet terminates (the arena-empties guarantee).
+    const { input, system } = makeSystem({
+      ship: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [1, 0.4],
+      playerStats: {
+        ...createPlayerStats(),
+        ricochetBounces: 4,
+        ricochetDmgPerBounce: 0.25,
+        ricochetOffEnemies: 1,
+        ricochetSeek: 1,
+      },
+    });
+    system.enemyPools = [{ forEachActive: () => {} }]; // bound but empty
+    const total = system.bulletPool.activeCount + system.bulletPool.freeCount;
+    expect(total).toBe(BULLET_POOL_PREWARM);
+    for (let i = 0; i < 1500; i++) {
+      system.fixedUpdate(DT);
+      expect(
+        system.bulletPool.activeCount + system.bulletPool.freeCount,
+      ).toBeLessThanOrEqual(BULLET_POOL_PREWARM);
+    }
+    // Stop firing; every live ricochet bullet must eventually leave the arena.
+    input.clearAim();
+    let guard = 0;
+    while (system.bulletPool.activeCount > 0 && guard < 3000) {
+      system.fixedUpdate(DT);
+      guard++;
+    }
+    expect(system.bulletPool.activeCount).toBe(0);
+  });
+});

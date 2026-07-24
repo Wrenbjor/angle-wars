@@ -290,6 +290,11 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     snakeSystem.enemyPool,
     armoredSystem.enemyPool,
   ];
+  // Late-bind the combat enemy pools onto the FiringSystem for Ricochet Rounds Lv5 seek
+  // steering (Story 11.5): enemyPools is assembled HERE, after FiringSystem was constructed,
+  // the same late-bind pattern snakeSystem.collisionSystem uses below. Until this is set the
+  // seek scan is a guarded no-op (a null enemyPools keeps the pre-11.5 behaviour).
+  firingSystem.enemyPools = enemyPools;
   const collisionSystem = new CollisionSystem(
     firingSystem.bulletPool,
     enemyPools,

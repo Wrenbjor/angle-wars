@@ -556,6 +556,83 @@ export const ITEM_REGISTRY = Object.freeze([
     // fusion consumption; this only registers the metadata.
     fusion: Object.freeze({ partner: 'overcharge', epic: 'railgun' }),
   }),
+  Object.freeze({
+    id: 'ricochet-rounds',
+    name: 'Ricochet Rounds',
+    title: 'Ricochet Rounds',
+    track: 'offense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.5 — the fifth Epic-11 EXOTIC offense item (PRD §13.4) and the first BASE-GUN
+    // MODIFIER of the epic: it makes the player's ORDINARY bullets bounce off the arena walls
+    // (and, higher up, enemies) instead of despawning at the border, so a miss keeps working.
+    // Unlike the four prior Epic-11 items (each a SEPARATE pooled system), Ricochet folds onto
+    // the EXISTING base bullet via FiringSystem/CollisionSystem — the Overcharge / Spread
+    // Cannon category. Four fold fields, all STAMPED onto each bullet at spawn (systems/
+    // ricochet.js), none carrying runtime system state:
+    //   - ricochetBounces      : the bounce BUDGET (additive/count field, base 0 — an unowned
+    //                            Ricochet means the pre-11.5 gun: bullets despawn at the border
+    //                            and are consumed on first hit). Also the OWNERSHIP GATE: 0 =
+    //                            unowned. A single budget spent by wall AND enemy reflections.
+    //   - ricochetDmgPerBounce : the per-bounce damage-growth FRACTION (0.25 = +25%/bounce),
+    //                            NOT a `*Mult` — bases at 0, written as the plain fraction;
+    //                            growth compounds on the bullet's current stamped damage;
+    //   - ricochetOffEnemies   : the Lv4+ enemy-bounce FLAG (>= 1 enables) — a bullet with
+    //                            budget bounces OFF an enemy it hits instead of being consumed;
+    //   - ricochetSeek         : the Lv5 homing FLAG (>= 1 enables) — a bounced bullet re-aims
+    //                            toward the nearest combat enemy each fixed step.
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header): L3 restates the L2
+    // bounces AND adds the growth fraction, L4 restates bounces/growth AND adds the enemy-bounce
+    // flag, L5 raises the budget to 4 AND restates growth/enemy-bounce while adding seek — even
+    // though each `desc` reads as a delta. The `desc` strings stay exactly as PRD §13.4 shipped
+    // them — player-facing prose, never rewritten to match the totals. The bounces 1/2/2/2/4,
+    // dmgPerBounce 0/0/0.25/0.25/0.25, offEnemies from Lv4, seek from Lv5.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: 'bullets bounce off walls once',
+        stats: Object.freeze({ ricochetBounces: 1 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: 'bullets bounce twice',
+        stats: Object.freeze({ ricochetBounces: 2 }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+25% damage per bounce',
+        stats: Object.freeze({
+          ricochetBounces: 2,
+          ricochetDmgPerBounce: 0.25,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: 'bounce off enemies too',
+        stats: Object.freeze({
+          ricochetBounces: 2,
+          ricochetDmgPerBounce: 0.25,
+          ricochetOffEnemies: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '4 bounces / bounced shots seek enemies',
+        stats: Object.freeze({
+          ricochetBounces: 4,
+          ricochetDmgPerBounce: 0.25,
+          ricochetOffEnemies: 1,
+          ricochetSeek: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Ricochet Rounds is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Ricochet Rounds Lv5 + Spread Cannon Lv3 → Kaleidoscope (PRD §13.5). Epic 12 owns the
+    // actual fusion consumption; this only registers the metadata.
+    fusion: Object.freeze({ partner: 'spread-cannon', epic: 'kaleidoscope' }),
+  }),
   // --- Defense ---
   Object.freeze({
     id: 'nanite-shield',
