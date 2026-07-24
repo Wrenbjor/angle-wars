@@ -1315,6 +1315,15 @@ export const XP_MULTIPLIER_DIVISOR = 20;
 // bloom bleeds it — distinct from the warm particle sparks and the enemy hues.
 export const COLOR_XP_ORB = 0x00ffaa;
 
+// --- Gravity Well defense item (Story 11.7 / Epic 11) -----------------------
+// Homing speed (px/s) at Lv3+ when an orb is inside the pickup radius.
+export const GRAVITY_WELL_HOMING_SPEED = 540;
+// Enemy pull radius (px) at Lv5 for active XP orbs pulling nearby combat enemies.
+export const GRAVITY_WELL_PULL_RADIUS = 100;
+// Enemy pull strength (px/s) for the dt-scaled position nudge toward nearby active XP orbs.
+export const GRAVITY_WELL_PULL_STRENGTH = 40;
+
+
 // --- Leveling (Story 8.2 / Epic 8 progression) ------------------------------
 // Hard level cap — a full build. Leveling stops at this level; XP earned past it
 // is inert (level never exceeds LEVEL_MAX, no further threshold consumed).

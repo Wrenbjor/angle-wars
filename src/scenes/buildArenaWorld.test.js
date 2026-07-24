@@ -1372,7 +1372,8 @@ describe('buildArenaWorld — Afterburner through the ASSEMBLED world (Story 10.
   function pickAfterburnerForReal(ctx) {
     let level = 1;
     let slot = -1;
-    for (let attempt = 0; attempt < 20 && slot < 0; attempt++) {
+    for (let attempt = 0; attempt < 30 && slot < 0; attempt++) {
+
       level += 1;
       // Bank just PAST the level threshold rather than exactly on it: `xpForLevel` sums
       // the curve in the same order LevelSystem subtracts it, so the exact boundary value

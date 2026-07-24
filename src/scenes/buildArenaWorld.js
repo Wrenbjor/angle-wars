@@ -551,8 +551,12 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     mirrorReflectorSystem,
     ship,
     scoreState,
+    undefined,
+    playerStats,
+    enemyPools,
   );
   world.addSystem(xpOrbSystem);
+
 
   // --- Leveling (Story 8.2 / Epic 8 progression) --------------------------
   // The leveling spine: derives the player's current level + in-level progress

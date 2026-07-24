@@ -30,7 +30,9 @@ const EXPECTED_IDS = [
   'flak-burst',
   'nanite-shield',
   'afterburner',
+  'gravity-well',
 ];
+
 
 
 describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
@@ -223,12 +225,13 @@ describe('getItem / getItemsByTrack', () => {
       'flak-burst',
     ]);
 
-    expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
+    expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner', 'gravity-well']);
     // Every returned entry actually belongs to the requested track.
     for (const i of offense) expect(i.track).toBe('offense');
     for (const i of defense) expect(i.track).toBe('defense');
   });
 });
+
 
 describe('ITEM_REGISTRY — Overcharge per-level stats (Story 10.2, PRD §13.3)', () => {
   // The exact per-level maps. Per the state/PlayerStats.js AUTHORING CONVENTION these
@@ -1038,3 +1041,94 @@ describe('ITEM_REGISTRY — Piercing Lance per-level stats (Story 11.4, PRD §13
     ]);
   });
 });
+
+// --- Gravity Well (Story 11.7) ----------------------------------------------
+describe('ITEM_REGISTRY — Gravity Well per-level stats (Story 11.7, PRD §13.4)', () => {
+  const EXPECTED_GRAVITY_WELL_STATS = [
+    { xpPickupRadiusMult: 0.4 },
+    { xpPickupRadiusMult: 0.8 },
+    { xpPickupRadiusMult: 0.8, gravityWellHoming: 1 },
+    { xpPickupRadiusMult: 0.8, gravityWellHoming: 1, xpValueMult: 0.25 },
+    { xpPickupRadiusMult: 1.5, gravityWellHoming: 1, xpValueMult: 0.25, gravityWellPullEnemies: 1 },
+  ];
+
+  it('pins all five levels exactly (frozen, totals-at-level)', () => {
+    const gw = getItem('gravity-well');
+    expect(gw.levels).toHaveLength(EXPECTED_GRAVITY_WELL_STATS.length);
+    gw.levels.forEach((lvl, i) => {
+      expect(lvl.stats, `gravity-well L${lvl.level}`).toEqual(EXPECTED_GRAVITY_WELL_STATS[i]);
+      expect(Object.isFrozen(lvl.stats)).toBe(true);
+    });
+  });
+
+  it('the track/rarity/maxLevel/guarantee and fusion shape match the framework contract', () => {
+    const gw = getItem('gravity-well');
+    expect(gw.track).toBe('defense');
+    expect(gw.rarity).toBeGreaterThan(0);
+    expect(gw.maxLevel).toBe(ITEM_MAX_LEVEL);
+    expect(gw.guaranteeFromLevel).toBeNull();
+    expect(gw.fusion).toEqual({ partner: 'mine-layer', epic: 'event-horizon' });
+  });
+
+  it('levels are TOTALS, not deltas — carried-forward rungs are restated', () => {
+    const [l1, l2, l3, l4, l5] = getItem('gravity-well').levels.map((l) => l.stats);
+    // L3 restates L2 radius bonus and adds homing.
+    expect(l3.xpPickupRadiusMult).toBe(l2.xpPickupRadiusMult);
+    expect(l3.gravityWellHoming).toBe(1);
+    // L4 restates radius/homing and adds xpValueMult.
+    expect(l4.xpPickupRadiusMult).toBe(l3.xpPickupRadiusMult);
+    expect(l4.gravityWellHoming).toBe(l3.gravityWellHoming);
+    expect(l4.xpValueMult).toBe(0.25);
+    // L5 restates homing/xpValueMult, increases radius bonus to 1.5, and adds enemy pull.
+    expect(l5.gravityWellHoming).toBe(l4.gravityWellHoming);
+    expect(l5.xpValueMult).toBe(l4.xpValueMult);
+    expect(l5.xpPickupRadiusMult).toBe(1.5);
+    expect(l5.gravityWellPullEnemies).toBe(1);
+  });
+
+  it('the homing flag exists ONLY from Lv3, value boost from Lv4, pull from Lv5 (PRD §13.4)', () => {
+    const levels = getItem('gravity-well').levels;
+    expect(levels[0].stats.gravityWellHoming).toBeUndefined();
+    expect(levels[1].stats.gravityWellHoming).toBeUndefined();
+    expect(levels[2].stats.gravityWellHoming).toBe(1);
+    expect(levels[3].stats.gravityWellHoming).toBe(1);
+    expect(levels[4].stats.gravityWellHoming).toBe(1);
+
+    expect(levels[0].stats.xpValueMult).toBeUndefined();
+    expect(levels[1].stats.xpValueMult).toBeUndefined();
+    expect(levels[2].stats.xpValueMult).toBeUndefined();
+    expect(levels[3].stats.xpValueMult).toBe(0.25);
+    expect(levels[4].stats.xpValueMult).toBe(0.25);
+
+    expect(levels[0].stats.gravityWellPullEnemies).toBeUndefined();
+    expect(levels[1].stats.gravityWellPullEnemies).toBeUndefined();
+    expect(levels[2].stats.gravityWellPullEnemies).toBeUndefined();
+    expect(levels[3].stats.gravityWellPullEnemies).toBeUndefined();
+    expect(levels[4].stats.gravityWellPullEnemies).toBe(1);
+  });
+
+  it('is the ONLY item authoring any Gravity Well field (the additive-fold tripwire)', () => {
+    for (const key of [
+      'xpPickupRadiusMult',
+      'gravityWellHoming',
+      'xpValueMult',
+      'gravityWellPullEnemies',
+    ]) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual(['gravity-well']);
+    }
+  });
+
+  it('keeps the PRD §13.4 desc strings verbatim (prose, never rewritten to the totals)', () => {
+    expect(getItem('gravity-well').levels.map((l) => l.desc)).toEqual([
+      '+40% XP pickup radius',
+      '+80% XP pickup radius',
+      'XP orbs home toward ship (540 px/s)',
+      '+25% base XP value from orbs',
+      '+150% pickup radius / XP orbs pull nearby enemies',
+    ]);
+  });
+});
+

@@ -851,7 +851,74 @@ export const ITEM_REGISTRY = Object.freeze([
     // Afterburner Lv5 + Nanite Shield Lv3 → Slipstream (PRD §13.5).
     fusion: Object.freeze({ partner: 'nanite-shield', epic: 'slipstream' }),
   }),
+  Object.freeze({
+    id: 'gravity-well',
+    name: 'Gravity Well',
+    title: 'Gravity Well',
+    track: 'defense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.7 — the third Epic-11 EXOTIC defense item (PRD §13.4): extends XP pickup
+    // radius, adds orb homing, scales base XP orb value, and nudges nearby enemies toward orbs.
+    // Four fold fields, all read by XpOrbSystem:
+    //   - xpPickupRadiusMult     : pickup radius multiplier bonus (+40% → +80% → +80% → +80% → +150%);
+    //   - gravityWellHoming      : Lv3+ homing FLAG (>= 1 enables 540 px/s orb homing);
+    //   - xpValueMult            : Lv4+ base XP value multiplier bonus (+25% at Lv4+);
+    //   - gravityWellPullEnemies : Lv5+ pull FLAG (>= 1 enables active orbs pulling nearby combat enemies).
+    //
+    // ⚠ Every map is the TOTAL at that level (see entry-shape header): L3 restates radius bonus
+    // AND adds homing; L4 restates radius/homing AND adds XP value boost; L5 restates homing/XP value
+    // AND raises radius bonus to +150% while adding enemy pull.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '+40% XP pickup radius',
+        stats: Object.freeze({
+          xpPickupRadiusMult: 0.4,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '+80% XP pickup radius',
+        stats: Object.freeze({
+          xpPickupRadiusMult: 0.8,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: 'XP orbs home toward ship (540 px/s)',
+        stats: Object.freeze({
+          xpPickupRadiusMult: 0.8,
+          gravityWellHoming: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '+25% base XP value from orbs',
+        stats: Object.freeze({
+          xpPickupRadiusMult: 0.8,
+          gravityWellHoming: 1,
+          xpValueMult: 0.25,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '+150% pickup radius / XP orbs pull nearby enemies',
+        stats: Object.freeze({
+          xpPickupRadiusMult: 1.5,
+          gravityWellHoming: 1,
+          xpValueMult: 0.25,
+          gravityWellPullEnemies: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Gravity Well is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Gravity Well Lv5 + Mine Layer Lv3 → Event Horizon (PRD §13.5).
+    fusion: Object.freeze({ partner: 'mine-layer', epic: 'event-horizon' }),
+  }),
 ]);
+
 
 /**
  * Look up an item definition by its id. O(n) over the small fixed registry.

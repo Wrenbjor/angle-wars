@@ -347,7 +347,9 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
       'piercing-lance',
       'ricochet-rounds',
       'flak-burst',
+      'gravity-well',
     ]);
+
 
     const prog = createProgressionState();
     const rng = seqRng([0.07, 0.29, 0.53, 0.81, 0.11, 0.42]);

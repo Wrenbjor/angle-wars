@@ -10,6 +10,9 @@ import {
   BLACKHOLE_DEFUSED_XP,
   MIRROR_CENTER_KILL_XP,
   SHIP_RADIUS,
+  GRAVITY_WELL_HOMING_SPEED,
+  GRAVITY_WELL_PULL_RADIUS,
+  GRAVITY_WELL_PULL_STRENGTH,
 } from '../config/constants.js';
 
 // XpOrbSystem — the pooled XP-orb economy: drop, drift & pickup (Phaser-free).
@@ -20,6 +23,11 @@ import {
 // ship ONLY while the ship is within XP_PICKUP_RADIUS, is collected on contact, and
 // credits the run's XP total scaled by the current multiplier. Purely additive —
 // the v1 movement/firing/bomb/multiplier/scoring/death behavior is untouched.
+//
+// Extended in Story 11.7 (Gravity Well defense item): reads `playerStats` for dynamic
+// pickup radius (+40% → +80% → +80% → +80% → +150%), orb homing speed (540 px/s at Lv3+),
+// base XP value scaling (+25% at Lv4+), and position-nudge enemy pull toward active orbs
+// at Lv5 (reading `enemyPools`).
 //
 // Runs inside world.fixedUpdate(dt). It reads the three per-tick DROP reports every
 // scored-death seam publishes (recycle-safe snapshots captured at kill time, before
@@ -39,24 +47,19 @@ import {
 // Each fixed step it, in ADVANCE-then-SPAWN order (so a fresh orb waits one tick
 // before it can drift/collect, like the ParticleSystem):
 //   1. For every live orb: compute the ship distance. Within the collect radius
-//      (SHIP_RADIUS + XP_ORB_RADIUS) → credit orb.value × (1 + multiplier /
+//      (SHIP_RADIUS + XP_ORB_RADIUS) → credit orb.value × xpValueMult × (1 + multiplier /
 //      XP_MULTIPLIER_DIVISOR) using the multiplier AT COLLECT TIME (accumulated as a
 //      float, no rounding) and collect it back to the pool. Else within
-//      XP_PICKUP_RADIUS → drift toward the ship by XP_ORB_DRIFT_SPEED·dt — unless that
-//      step would reach or pass the ship, in which case it collects this tick instead
-//      of overshooting (so a large drift speed can never oscillate an orb across the
-//      ship and hold a cap slot forever). Else it stays put — an orb on the floor
-//      NEVER times out (a per-tick distance gate, not a magnet latch: an orb the ship
-//      approaches then leaves stops drifting).
+//      effective pickup radius → drift toward the ship by speed·dt (540 px/s if homing
+//      enabled, else 320 px/s) — unless that step would reach or pass the ship, in which
+//      case it collects this tick instead of overshooting. Else it stays put.
 //   2. Spawn from the three reports, honoring the cap — a spawn that would exceed
 //      XP_ORB_MAX is skipped this tick (the ParticleSystem precedent).
+//   3. At Lv5, active orbs apply a position nudge to nearby non-telegraphing combat
+//      enemies within GRAVITY_WELL_PULL_RADIUS (100px) toward the orb position.
 //
 // Bounded: live orbs never exceed the cap; the cap + pool reuse is the only bound
-// (orbs never time out). Zero steady-state allocation: advance materializes the
-// active set into a reusable scratch array (Pool.forEachActive forbids releasing
-// mid-iteration), collects expired orbs into a second reusable array, and releases
-// them in a second pass; squared-distance compares avoid a sqrt on the resting-orb
-// majority (only a drifting orb computes one). Spawning acquire()s from the pool.
+// (orbs never time out). Zero steady-state allocation.
 export class XpOrbSystem extends System {
   /**
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem Source of
@@ -72,6 +75,8 @@ export class XpOrbSystem extends System {
    *   thing outside the pool this system writes: scoreState.xp on each collect.
    * @param {number} [maxOrbs] Hard cap on simultaneously-live orbs. Defaults to
    *   XP_ORB_MAX; guarded so an injected 0, NaN, or negative falls back to the cap.
+   * @param {Object<string, number>} [playerStats] Runtime player modifier store.
+   * @param {Array<import('../core/Pool.js').Pool>} [enemyPools] Array of combat enemy pools.
    */
   constructor(
     collisionSystem,
@@ -80,6 +85,8 @@ export class XpOrbSystem extends System {
     ship,
     scoreState,
     maxOrbs = XP_ORB_MAX,
+    playerStats = null,
+    enemyPools = null,
   ) {
     super();
     this.collisionSystem = collisionSystem;
@@ -87,12 +94,10 @@ export class XpOrbSystem extends System {
     this.mirrorReflectorSystem = mirrorReflectorSystem;
     this.ship = ship;
     this.scoreState = scoreState;
-    // Guard the placeholder footgun (mirrors ParticleSystem.maxParticles): the
-    // `= XP_ORB_MAX` default only catches `undefined`, so an injected 0 (which would
-    // suppress ALL spawns), NaN, or a negative falls back to the cap rather than
-    // silently breaking the economy.
     this.maxOrbs =
       Number.isFinite(maxOrbs) && maxOrbs > 0 ? maxOrbs : XP_ORB_MAX;
+    this.playerStats = playerStats;
+    this.enemyPools = enemyPools;
 
     // The orb pool — the single source of active/free truth. Lazy growth; reuse on
     // the hot path (no per-tick allocation once warm).
@@ -104,6 +109,50 @@ export class XpOrbSystem extends System {
     this._active = [];
     this._expired = [];
     this._collect = (o) => this._active.push(o);
+
+    // Reusable enemy pull scratch arrays and hoisted functions (zero per-frame allocation).
+    this._enemies = [];
+    this._collectEnemy = (e) => {
+      if (e && e.telegraphMs > 0) return;
+      this._enemies.push(e);
+    };
+    this._dtSec = 0;
+    this._applyPullFromOrb = (o) => {
+      const enemies = this._enemies;
+      const dtSec = this._dtSec;
+      for (let j = 0; j < enemies.length; j++) {
+        const e = enemies[j];
+        const dx = o.x - e.x;
+        const dy = o.y - e.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 0 && d < GRAVITY_WELL_PULL_RADIUS) {
+          const pull = GRAVITY_WELL_PULL_STRENGTH * (1 - d / GRAVITY_WELL_PULL_RADIUS) * dtSec;
+          const inv = pull / d;
+          e.x += dx * inv;
+          e.y += dy * inv;
+        }
+      }
+    };
+  }
+
+  _pickupRadiusMult() {
+    const raw = this.playerStats?.xpPickupRadiusMult;
+    return Number.isFinite(raw) && raw >= 1 ? raw : 1;
+  }
+
+  _gravityWellHoming() {
+    const raw = this.playerStats?.gravityWellHoming;
+    return Number.isFinite(raw) && raw >= 1;
+  }
+
+  _xpValueMult() {
+    const raw = this.playerStats?.xpValueMult;
+    return Number.isFinite(raw) && raw >= 1 ? raw : 1;
+  }
+
+  _gravityWellPullEnemies() {
+    const raw = this.playerStats?.gravityWellPullEnemies;
+    return Number.isFinite(raw) && raw >= 1;
   }
 
   /**
@@ -114,6 +163,14 @@ export class XpOrbSystem extends System {
     const dtSec = dt / 1000;
     const ship = this.ship;
     const scoreState = this.scoreState;
+
+    const radiusMult = this._pickupRadiusMult();
+    const homingEnabled = this._gravityWellHoming();
+    const xpValueMult = this._xpValueMult();
+    const pullEnabled = this._gravityWellPullEnemies();
+
+    const speed = homingEnabled ? GRAVITY_WELL_HOMING_SPEED : XP_ORB_DRIFT_SPEED;
+    const pickupRadius = XP_PICKUP_RADIUS * radiusMult;
 
     // (1) Advance + collect. Materialize the active set first (releasing mid-
     //     iteration over the pool's active Set is unsafe), drift/collect in place,
@@ -127,8 +184,8 @@ export class XpOrbSystem extends System {
     if (ship && active.length > 0) {
       const collectR = SHIP_RADIUS + XP_ORB_RADIUS;
       const collectRSq = collectR * collectR;
-      const pickupRSq = XP_PICKUP_RADIUS * XP_PICKUP_RADIUS;
-      const step = XP_ORB_DRIFT_SPEED * dtSec;
+      const pickupRSq = pickupRadius * pickupRadius;
+      const step = speed * dtSec;
       const divisor = XP_MULTIPLIER_DIVISOR;
       for (let i = 0; i < active.length; i++) {
         const o = active[i];
@@ -137,8 +194,8 @@ export class XpOrbSystem extends System {
         const distSq = dx * dx + dy * dy;
         if (distSq <= collectRSq) {
           // Collect: credit the fractional, collect-time-multiplier XP (accumulated
-          // as a float — no rounding), then release the orb to the pool.
-          scoreState.xp += o.value * (1 + scoreState.multiplier / divisor);
+          // as a float — no rounding), scaled by xpValueMult, then release the orb to pool.
+          scoreState.xp += o.value * xpValueMult * (1 + scoreState.multiplier / divisor);
           expired.push(o);
         } else if (distSq <= pickupRSq) {
           // Drift toward the ship. distSq > collectRSq > 0 here, so the sqrt and the
@@ -151,7 +208,7 @@ export class XpOrbSystem extends System {
             // orb instead of moving it — otherwise a large (future-tuned) drift speed
             // could overshoot the collect band, oscillate the orb across the ship, and
             // permanently hold a cap slot. Same credit + expire as the collect branch.
-            scoreState.xp += o.value * (1 + scoreState.multiplier / divisor);
+            scoreState.xp += o.value * xpValueMult * (1 + scoreState.multiplier / divisor);
             expired.push(o);
           } else {
             const inv = step / dist; // (drift distance this tick) × unit(dx,dy)
@@ -206,6 +263,22 @@ export class XpOrbSystem extends System {
         this._spawn(cxs[i], cys[i], MIRROR_CENTER_KILL_XP);
       }
     }
+
+    // (3) Lv5 Enemy Pull: active orbs pull nearby non-telegraphing combat enemies inward.
+    if (pullEnabled && this.enemyPools && ship && this.pool.activeCount > 0) {
+      const enemies = this._enemies;
+      enemies.length = 0;
+      for (let p = 0; p < this.enemyPools.length; p++) {
+        const pool = this.enemyPools[p];
+        if (pool) {
+          pool.forEachActive(this._collectEnemy);
+        }
+      }
+      if (enemies.length > 0) {
+        this._dtSec = dtSec;
+        this.pool.forEachActive(this._applyPullFromOrb);
+      }
+    }
   }
 
   /**
@@ -221,3 +294,4 @@ export class XpOrbSystem extends System {
     return o;
   }
 }
+

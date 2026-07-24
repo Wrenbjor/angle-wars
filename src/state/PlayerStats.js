@@ -283,7 +283,19 @@ export const PLAYER_STATS_BASE = Object.freeze({
   flakFragments: 0,
   flakDamageMult: 0,
   flakSecondaryAirburst: 0,
+  // Gravity Well (Story 11.7). The seventh Epic-11 EXOTIC item and third DEFENSE item:
+  // extends the XP pickup radius, adds orb homing, scales base XP orb value, and nudges
+  // nearby enemies toward active orbs.
+  //  - xpPickupRadiusMult     : multiplier for XP_PICKUP_RADIUS (base 1 -> 1.4x at Lv1, 1.8x at Lv2-4, 2.5x at Lv5).
+  //  - gravityWellHoming      : Lv3+ homing FLAG (>= 1 enables 540 px/s orb homing within pickup radius).
+  //  - xpValueMult            : multiplier for base orb XP value on collect (base 1 -> 1.25x at Lv4+).
+  //  - gravityWellPullEnemies : Lv5+ pull FLAG (>= 1 enables active XP orbs pulling nearby combat enemies).
+  xpPickupRadiusMult: 1,
+  gravityWellHoming: 0,
+  xpValueMult: 1,
+  gravityWellPullEnemies: 0,
 });
+
 
 
 /**

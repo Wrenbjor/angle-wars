@@ -656,5 +656,46 @@ describe('recomputePlayerStats — Nanite Shield against the REAL registry (Stor
     expect(ps.flakDamageMult).toBe(0);
     expect(ps.flakSecondaryAirburst).toBe(0);
   });
+
+  // --- Gravity Well (Story 11.7) -------------------------------------------
+  it('folds the SHIPPED Gravity Well rungs 1..5 to the exact fields', () => {
+    // xpPickupRadiusMult 1.4/1.8/1.8/1.8/2.5, gravityWellHoming 0/0/1/1/1,
+    // xpValueMult 1/1/1/1.25/1.25, gravityWellPullEnemies 0/0/0/0/1.
+    const expected = [
+      { xpPickupRadiusMult: 1.4, gravityWellHoming: 0, xpValueMult: 1, gravityWellPullEnemies: 0 },
+      { xpPickupRadiusMult: 1.8, gravityWellHoming: 0, xpValueMult: 1, gravityWellPullEnemies: 0 },
+      { xpPickupRadiusMult: 1.8, gravityWellHoming: 1, xpValueMult: 1, gravityWellPullEnemies: 0 },
+      { xpPickupRadiusMult: 1.8, gravityWellHoming: 1, xpValueMult: 1.25, gravityWellPullEnemies: 0 },
+      { xpPickupRadiusMult: 2.5, gravityWellHoming: 1, xpValueMult: 1.25, gravityWellPullEnemies: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'gravity-well': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.xpPickupRadiusMult, `L${level} xpPickupRadiusMult`).toBeCloseTo(
+        e.xpPickupRadiusMult,
+        10,
+      );
+      expect(ps.gravityWellHoming, `L${level} gravityWellHoming`).toBe(e.gravityWellHoming);
+      expect(ps.xpValueMult, `L${level} xpValueMult`).toBeCloseTo(e.xpValueMult, 10);
+      expect(ps.gravityWellPullEnemies, `L${level} gravityWellPullEnemies`).toBe(
+        e.gravityWellPullEnemies,
+      );
+      // Gravity Well touches nothing on fire/movement/defense seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+    }
+  });
+
+  it('leaves the four Gravity Well fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.xpPickupRadiusMult).toBe(1);
+    expect(ps.gravityWellHoming).toBe(0);
+    expect(ps.xpValueMult).toBe(1);
+    expect(ps.gravityWellPullEnemies).toBe(0);
+  });
 });
+
 

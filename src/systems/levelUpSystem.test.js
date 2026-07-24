@@ -356,6 +356,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'piercing-lance',
       'ricochet-rounds',
       'flak-burst',
+      'gravity-well',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -383,6 +384,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'piercing-lance',
       'ricochet-rounds',
       'flak-burst',
+      'gravity-well',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -410,6 +412,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'flak-burst',
       'nanite-shield',
       'afterburner',
+      'gravity-well',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -437,6 +440,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'flak-burst',
       'nanite-shield',
       'afterburner',
+      'gravity-well',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -458,6 +462,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'flak-burst',
       'nanite-shield',
       'afterburner',
+      'gravity-well',
     ]);
     levelStub.levelsGainedThisTick = 3; // owes 3
     sys.fixedUpdate();
@@ -478,6 +483,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'flak-burst',
       'nanite-shield',
       'afterburner',
+      'gravity-well',
     ]);
 
     levelStub.levelsGainedThisTick = 1;
