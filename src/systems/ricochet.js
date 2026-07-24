@@ -173,6 +173,11 @@ export function reflectBulletOffWall(bullet) {
  * (and at Lv5 seek would re-aim straight back into it, drilling one target). For a coincident
  * bullet (degenerate zero normal) the separation direction is the reversed velocity (or +x if the
  * velocity is also zero), a DETERMINISTIC choice rather than leaving it stuck on the enemy.
+ * The push-out is finally CLAMPED back inside the arena border: an enemy hugging a wall could
+ * otherwise place the bullet OUTSIDE the border, and FiringSystem's out-of-arena seam would then
+ * spend a SECOND bounce on a phantom wall reflection next tick (and render the bullet out of
+ * bounds for a frame). Clamping to the border keeps `isOutsideArena` false, so the enemy bounce
+ * alone is spent; a later wall bounce still fires only if the bullet actually travels into a wall.
  * Mutates the bullet in place; allocates nothing (`reflectVelocity` writes into the bullet itself
  * via its `out` form).
  * @param {{x:number, y:number, vx:number, vy:number, radius:number, damage:number,
@@ -208,5 +213,14 @@ export function reflectBulletOffEnemy(bullet, enemy) {
       bullet.y = enemy.y;
     }
   }
+  // Clamp the push-out inside the arena border so a wall-hugging enemy can't eject the bullet out
+  // of bounds (which would cost a phantom wall bounce next tick). isOutsideArena uses strict
+  // inequality, so a bullet parked exactly on the border does not re-trigger the crossing.
+  const maxX = ARENA_WIDTH - ARENA_BORDER_INSET;
+  const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET;
+  if (bullet.x < ARENA_BORDER_INSET) bullet.x = ARENA_BORDER_INSET;
+  else if (bullet.x > maxX) bullet.x = maxX;
+  if (bullet.y < ARENA_BORDER_INSET) bullet.y = ARENA_BORDER_INSET;
+  else if (bullet.y > maxY) bullet.y = maxY;
   spendBounce(bullet);
 }

@@ -6,7 +6,7 @@ status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true
 baseline_revision: 'e1f8c43ac82c7603f990d5f42f199f0afa8ef673'
-final_revision: 'cd170aa'
+final_revision: '4f5075e'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings:
@@ -140,37 +140,48 @@ No spec amendments — no `bad_spec`/`intent_gap` loopback occurred. Review find
   - `[low]` `[patch]` `_nearestEnemy`'s min-distance comparison was exercised only against single-enemy seek fixtures. Added a two-enemy seek test asserting a bounced Lv5 bullet re-aims toward the CLOSER enemy.
   - `[low]` `[patch]` The seek target collector's telegraph-skip (`telegraphMs > 0`) was untested (all fixtures used `telegraphMs: 0`). Added a seek test with a telegraphing-only enemy asserting straight flight.
 
+### 2026-07-24 — Follow-up review pass
+- intent_gap: 0
+- bad_spec: 0
+- patch: 3: (high 0, medium 2, low 1)
+- defer: 0
+- reject: 11: (high 0, medium 0, low 11)
+- addressed_findings:
+  - `[medium]` `[patch]` `reflectBulletOffEnemy`'s prior-pass push-out (`enemy.radius + bullet.radius` along the contact normal) had no arena clamp: an enemy hugging a wall could eject the bullet OUTSIDE `ARENA_BORDER_INSET`, so `FiringSystem._collectExpired` would spend a SECOND, phantom wall bounce next tick (and render the bullet out of bounds for a frame). Clamped the push-out back onto the arena border in both the normal and coincident branches; added a helper test asserting an at-the-wall enemy bounce stays inside the border and spends exactly one bounce.
+  - `[medium]` `[patch]` The `firingSystem.enemyPools` late-bind in `buildArenaWorld.js` (which makes Lv5 seek functional) was pinned nowhere, though every sibling `enemyPools` consumer is; deleting it (seek silently a no-op) or mis-targeting it (homing toward a black hole / the immune reflector) left the suite green. Added a `buildArenaWorld.test.js` identity pin mirroring the sibling idiom (`toBe(ctx.enemyPools)` + not-contain holePool / reflector).
+  - `[low]` `[patch]` The bounced-bullet tint (`b.bounced ? COLOR_RICOCHET : COLOR_BULLET` in `ArenaScene.js`, the story's visual-legibility requirement) had no verification, though the repo pins Phaser-coupled render code via source-regex in `renderIntegration.test.js`. Added the matching source-regex pin so dropping/inverting the ternary fails the suite.
+
+
 ## Auto Run Result
 
-Status: done
+Status: done (follow-up review pass on an already-`done` spec)
 
-### 2026-07-24 — Implementation + review pass
+### Summary of change
+Story 11.5 ships Ricochet Rounds — the epic's first base-gun modifier — as a data-driven offense item: bullets bounce off arena walls (and, at Lv4+, off enemies), grow damage per bounce (Lv3+), and at Lv5 raise the budget to 4 and home toward the nearest enemy once bounced. Behavior is stamped per bullet at spawn from four additive `PlayerStats` folds; a pure `src/systems/ricochet.js` helper holds the sanitizers + reflection + damage-growth reused by `FiringSystem` (wall bounce + seek) and `CollisionSystem` (enemy bounce). This follow-up pass hardened three seams; no `<intent-contract>` or spec-body content changed.
 
-**Summary:** Implemented Story 11.5 (Ricochet Rounds), the epic's first BASE-GUN MODIFIER: the player's ordinary bullets bounce off arena walls (Lv1 once → Lv2 twice), grow +25% damage per bounce (Lv3), bounce off enemies too (Lv4), and at Lv5 raise the budget to 4 bounces with bounced shots homing toward the nearest enemy. It folds onto the existing base bullet via `PlayerStats` + `FiringSystem`/`CollisionSystem` (the Overcharge/Spread Cannon category), not a new pooled system, with a pure `src/systems/ricochet.js` helper holding the reflection/stamp/sanitizer logic. Four review layers (Blind Hunter / adversarial, Edge Case Hunter, Verification Gap, Intent Alignment) ran in parallel at Opus capability over the diff since baseline `e1f8c43`. Three findings were fixed as additive patches (1 medium, 2 low); the remaining findings were rejected as by-design, near-zero-measure, cosmetic, or consistent with established codebase precedent. No spec amendment, no intent gap, no deferrals.
+### Files changed this pass
+- `src/systems/ricochet.js` — clamp the enemy push-out inside the arena border (both the normal and coincident branches); extended the `reflectBulletOffEnemy` doc comment.
+- `src/systems/ricochet.test.js` — added a wall-hugging-enemy clamp regression test.
+- `src/scenes/buildArenaWorld.test.js` — added the missing `firingSystem.enemyPools` identity pin (Lv5 seek wiring).
+- `src/scenes/renderIntegration.test.js` — added the bounced-bullet `COLOR_RICOCHET` tint source-regex pin.
 
-**Files changed:**
-- `src/config/constants.js` — `RICOCHET_MAX_BOUNCES` (16), `RICOCHET_DMG_PER_BOUNCE_MAX` (4), `COLOR_RICOCHET` tint.
-- `src/state/PlayerStats.js` — four additive fold fields (`ricochetBounces`/`ricochetDmgPerBounce`/`ricochetOffEnemies`/`ricochetSeek`).
-- `src/config/itemRegistry.js` — the `ricochet-rounds` def (offense, rarity 4, fusion `spread-cannon`→`kaleidoscope`), per-level TOTALS 1/2/2/2/4 bounces etc.
-- `src/entities/Bullet.js` — five ricochet fields at cold defaults + stamp-at-acquire warning.
-- `src/systems/ricochet.js` — NEW pure helper (sanitizers, resolve/stamp, wall + enemy reflection with push-out, multiplicative growth).
-- `src/systems/FiringSystem.js` — per-tick param resolve + per-bullet stamp (both volleys), wall reflection at the despawn seam, Lv5 seek steering, late-bindable `enemyPools` + `_nearestEnemy`.
-- `src/systems/CollisionSystem.js` — bounce-instead-of-consume branch (pre-growth damage recorded, reflect, keep live).
-- `src/scenes/buildArenaWorld.js` — late-bind `firingSystem.enemyPools = enemyPools`.
-- `src/scenes/ArenaScene.js` — bounced bullets render in `COLOR_RICOCHET`.
-- Tests: NEW `src/systems/ricochet.test.js` (21); extended `firingSystem.test.js` / `collisionSystem.test.js` / `playerStats.test.js`; plus count/ordering fixups in `itemRegistry.test.js` / `cardOffer.test.js` / `levelUpSystem.test.js` (adding the 9th offense item shifts their arithmetic).
+### Review findings breakdown
+- Reviewers: Blind Hunter (adversarial), Edge Case Hunter, Verification Gap, Intent Alignment — all run in parallel at session capability.
+- **Patches applied: 3** (medium 2, low 1):
+  1. `[medium]` enemy push-out lacked an arena clamp → phantom wall bounce + one-frame out-of-bounds render for a wall-hugging enemy. Clamped + tested.
+  2. `[medium]` `firingSystem.enemyPools` late-bind unpinned while every sibling is pinned → silent Lv5-seek regression risk. Pinned.
+  3. `[low]` bounced-bullet tint unverified → silent legibility regression risk. Pinned via source-regex.
+- **Deferred: 0.**
+- **Rejected: 11** (all low) — chiefly design opinions against an explicitly-resolved intent (Lv5 seek re-aims at the nearest enemy each tick → "drilling" a surviving enemy and the un-capped turn rate are the *specified* behavior; "Block If: none"), latent issues with no current trigger (seek disabled only by the out-of-scope Kaleidoscope fusion + monotonic levels; the bullet-speed≥enemy-speed termination invariant holds for every shipped enemy; `telegraphMs`-less pools don't exist), accepted trade-offs (the O(bullets×enemies) seek scan is gated to bounced Lv5 bullets, matching SeekerDroneSystem; per-bullet `fillStyle` is a micro-cost), and coverage the helper already carries (corner/wall-growth are unit-tested; the shared bounce budget is one field decremented by one helper).
 
-**Review findings breakdown:** patches applied 3 (medium 1, low 2); deferred 0; rejected 12 (low 12). Rejected classes: pool peak 676 > 640 prewarm (consistent with the documented lazy-grow design — the prewarm covers normal play, not worst-case pinball; MirrorReflectorSystem already makes lifetime unbounded; ricochet never MULTIPLIES bullets and the pool drains fully to 0, empirically verified); seek re-aims at just-hit enemy (by-design homing, mitigated by the push-out patch); duplicated `bouncesRemaining > 0` gate (defensive redundancy); a second same-tick bullet phasing through an already-hit surviving enemy (near-zero-measure, inherited one-hit-per-tick contract); fractional flag folds disabling flags (no shipped content produces a fractional fold; sibling `>= 1` convention); bounced tint not clearing on budget exhaustion (cosmetic, Epic 4 owns aesthetic); seek trapping bullets against wall-adjacent enemies (bounded, terminates); zero-per-tick-allocation AC lacking a direct assertion (proxied by the pool-no-grow tests, the lance precedent); with-enemies seek termination untested in isolation (depends on CollisionSystem consuming enemy-bounces — its pieces are tested and full-world drain to 0 was empirically confirmed); the Mirror-Reflector-synergy surface being emergent/unverified (the spec's explicit, defensible design choice — the AC enumerates only walls and enemies as ricochet surfaces).
+### Verification performed
+- `npx vitest run src/systems/ricochet.test.js src/scenes/buildArenaWorld.test.js src/scenes/renderIntegration.test.js` → 131 passed.
+- `npm test` → 74 files, **2002 tests passed**, no regressions.
+- `npm run build` → production build succeeded (109 modules).
 
-**Follow-up review recommendation:** true. Patched this pass: high 0, medium 1, low 2 → score `3×1 + 1×2 = 5` (≥ 5) → true.
+### Follow-up review recommendation
+`true`. This pass triaged 3 findings to `patch` (high 0, medium 2, low 1); score = 3×2 + 1×1 = 7 ≥ 5.
 
-**Verification performed:**
-- `npx vitest run src/systems/ricochet.test.js src/systems/firingSystem.test.js src/systems/collisionSystem.test.js src/state/playerStats.test.js` — 280 passed (ricochet 21, firing 129, collision 79, playerStats 51).
-- `npm test` — 1999 passed, 74 files, no regressions (v1 firing/collision unchanged for the unowned build).
-- `npm run build` — production build succeeded (109 modules).
-- Empirical probe (temporary, removed): worst authored build (Spread Lv5 9-way + fireRateMult 1.7 + Ricochet Lv5) peaked at 676 concurrent bullets and drained fully to 0 after fire stopped — bounded, terminating, one-time lazy grow then zero-alloc, exactly the accepted pattern.
-
-**Residual risks:**
-- Seek termination for a homing bullet depends on `CollisionSystem` consuming enemy contacts (spending budget); in isolation a Lv5 seek bullet can orbit a never-dying enemy. In the assembled world (`FiringSystem` → `CollisionSystem` ordering, and enemies that actually die) this always terminates — empirically confirmed. Documented, not a defect.
-- The worst-case build exceeds `BULLET_POOL_PREWARM` (676 > 640) by a small margin, triggering a one-time lazy pool growth then returning to zero-allocation — consistent with the constant's own documented design (it covers normal play, not worst-case pinball).
-- `COLOR_RICOCHET` is a placeholder tint distinct from the base bullet; Epic 4 owns the final aesthetic.
+### Residual risks
+- The Lv5 "drill the nearest surviving enemy" behavior and the un-capped homing turn rate are working as the intent specifies but are unproven against balance targets — a design/playtest concern, not a correctness defect.
+- `git status --porcelain` residual (not part of this change): `sprint-status.yaml` was already modified before this run; left in place.

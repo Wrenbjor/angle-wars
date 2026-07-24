@@ -248,6 +248,19 @@ describe('reflectBulletOffEnemy', () => {
     expect(Math.hypot(b.vx, b.vy)).toBeCloseTo(before, 9); // isometry
   });
 
+  it('clamps the push-out inside the arena border when the enemy hugs a wall', () => {
+    // An enemy against the right wall, bullet hit from its right side: the raw push-out would land
+    // the bullet OUTSIDE ARENA_WIDTH - ARENA_BORDER_INSET, costing a phantom wall bounce next tick.
+    const maxX = ARENA_WIDTH - ARENA_BORDER_INSET;
+    const enemy = { x: maxX - 2, y: 300, radius: 14 };
+    const b = makeBullet({ x: maxX - 1, y: 300, vx: -300, vy: 0, radius: 4, bouncesRemaining: 2 });
+    reflectBulletOffEnemy(b, enemy);
+    // Position stays on/inside the border (never outside), so isOutsideArena would read false.
+    expect(b.x).toBeLessThanOrEqual(maxX);
+    expect(b.x).toBeGreaterThanOrEqual(ARENA_BORDER_INSET);
+    expect(b.bouncesRemaining).toBe(1); // exactly one bounce spent for the enemy hit
+  });
+
   it('coincident enemy: reverses velocity, repositions outside the radius, still spends + grows', () => {
     const enemy = { x: 100, y: 100, radius: 14 };
     const b = makeBullet({ x: 100, y: 100, vx: 200, vy: 100, radius: 4, damage: 4, dmgPerBounce: 0.25, bouncesRemaining: 1 });

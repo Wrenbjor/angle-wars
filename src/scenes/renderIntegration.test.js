@@ -186,6 +186,23 @@ describe('render-integration — mirror-reflector render wiring (ArenaScene, Sto
   });
 });
 
+describe('render-integration — ricochet bullet tint wiring (ArenaScene, Story 11.5)', () => {
+  // Pins the Story 11.5 bounced-bullet tint in the bullet render loop. ArenaScene is Phaser-
+  // coupled (cannot be imported headlessly), so — like every check in this file — this is a
+  // SOURCE-TEXT assertion. The visual-legibility requirement is that a BOUNCED ricochet bullet
+  // draws in COLOR_RICOCHET while a fresh bullet stays COLOR_BULLET. Dropping the ternary (all
+  // bullets revert to COLOR_BULLET) or inverting it (fresh tinted, bounced not) would silently
+  // regress the mechanic's on-screen legibility while the whole suite stayed green — bullet
+  // rendering runs only under Phaser and is never exercised live.
+  const arenaSrc = readSrc('./ArenaScene.js');
+
+  it('fills each bullet with COLOR_RICOCHET when bounced, else COLOR_BULLET, off the stamped flag', () => {
+    expect(arenaSrc).toMatch(
+      /fillStyle\(\s*b\.bounced\s*\?\s*COLOR_RICOCHET\s*:\s*COLOR_BULLET\s*,\s*1\s*\)/,
+    );
+  });
+});
+
 describe('render-integration — render→sim decoupling (ArenaScene.update)', () => {
   const arenaSrc = readSrc('./ArenaScene.js');
 

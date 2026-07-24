@@ -709,6 +709,18 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.piercingLanceSystem.collisionSystem).toBe(ctx.collisionSystem);
   });
 
+  it('late-binds firingSystem.enemyPools to the combat pools for Lv5 Ricochet seek (Story 11.5)', () => {
+    // Ricochet's Lv5 seek scans this.enemyPools inside FiringSystem; the reference is late-bound
+    // AFTER enemyPools is assembled (FiringSystem is constructed before the pools exist). Bind it
+    // to the SAME array the factory returns — never deathPools, never the immune reflector — so a
+    // dropped or mis-targeted late-bind (seek silently a no-op, or homing toward a black hole /
+    // the reflector) fails here, exactly like the sibling enemyPools consumers above.
+    const ctx = buildArenaWorld();
+    expect(ctx.firingSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(ctx.firingSystem.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
+    expect(ctx.firingSystem.enemyPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
+  });
+
   it('pins the PiercingLanceSystem slot: immediately AFTER MineLayerSystem and BEFORE ScoringSystem', () => {
     // Load-bearing exactly like the mine/drone/blade/dash slot: after CollisionSystem so a lance
     // kill appends to latches already reset this tick; before ScoringSystem (and so before
