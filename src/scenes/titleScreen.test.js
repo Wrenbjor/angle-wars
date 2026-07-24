@@ -67,4 +67,13 @@ describe('title-screen content constants', () => {
       expect(line.length).toBeGreaterThan(0);
     }
   });
+
+  it('CONTROLS_LINES names the Afterburner DASH binding (Story 10.5)', () => {
+    // This is the ONLY player-facing surface documenting the bindings, so a newly
+    // bound button absent from it is undiscoverable.
+    const joined = CONTROLS_LINES.join('\n');
+    expect(joined).toMatch(/Dash/i);
+    expect(joined).toMatch(/\bQ\b/);
+    expect(joined).toMatch(/Stick Click/i);
+  });
 });

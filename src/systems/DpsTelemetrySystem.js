@@ -25,11 +25,13 @@ import {
 // same method with the GOVERNOR_BOOST_* defaults — the hook is its whole footprint.
 //
 // It is a PURE observer. Each fixed step it reads exactly one input —
-// collisionSystem.bulletDamageCount, the already-latched count of PLAYER bullet
+// collisionSystem.bulletDamageCount, the already-latched count of PLAYER-DAMAGE
 // HITS that dealt damage this tick (bomb clears and black-hole absorptions are
 // excluded, since those are consumables/hazards, not sustained weapon output) —
 // and writes only its own fields. It mutates no pool, score, xp, or player state.
-// It is registered AFTER CollisionSystem so bulletDamageCount is final for the tick.
+// It is registered AFTER CollisionSystem — and after the Story 10.5 DashSystem, which
+// appends through the same applyPlayerDamage helper — so bulletDamageCount is final
+// for the tick.
 //
 // Story 9.3 refinement: the source is bulletDamageCount, not bulletKillCount, so
 // crediting is per damaging HIT rather than per KILL. For a one-shot enemy a hit IS
@@ -67,7 +69,8 @@ export class DpsTelemetrySystem extends System {
   /**
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem
    *   The sibling collision system whose latched per-tick bulletDamageCount is the
-   *   telemetry source (READ-ONLY here).
+   *   telemetry source (READ-ONLY here) — every PLAYER-DAMAGE hit routed through its
+   *   applyPlayerDamage helper: bullets, then the Story 10.5 dash sweep.
    */
   constructor(collisionSystem) {
     super();
@@ -136,7 +139,7 @@ export class DpsTelemetrySystem extends System {
 
   /**
    * Advance one fixed step: decay any live boost by sim time, fold this tick's
-   * bullet-kill damage into the rolling window, and recompute `dps`. O(1), zero
+   * player-damage hits into the rolling window, and recompute `dps`. O(1), zero
    * allocation.
    * @param {number} dt Constant fixed-step delta (ms). The rolling window advances
    *   per TICK (one ring slot per fixed step, dt-independent); the Story 9.4 boost
@@ -150,10 +153,13 @@ export class DpsTelemetrySystem extends System {
       this.boostDps -= this._boostDrainPerMs * dt;
       if (this.boostDps < 0) this.boostDps = 0;
     }
-    // This tick's damage: player bullet damaging-HITS × the per-hit damage unit
-    // (Story 9.3 — a non-killing armor hit counts as 1 unit, same as a kill). The
-    // count is the already-latched bullet-only figure (bomb/black-hole removals
-    // excluded), so bomb clears and absorptions never inflate the signal.
+    // This tick's damage: PLAYER-DAMAGE hits × the per-hit damage unit (Story 9.3 — a
+    // non-killing armor hit counts as 1 unit, same as a kill). Story 10.5 WIDENED that
+    // contract: the count is every hit that went through CollisionSystem
+    // .applyPlayerDamage — bullets, then the Afterburner Lv4+ dash sweep — and still
+    // EXCLUDES the unscored bomb/black-hole removals, so those never inflate the
+    // signal. (The `bulletDamageCount` name is kept: six consumers read these latches
+    // and renaming was explicitly out of scope.)
     const dmg = this.collisionSystem.bulletDamageCount * DPS_DAMAGE_PER_KILL;
     // Evict the slot from ~DPS_WINDOW_MS ago, write this tick's damage in its
     // place, and keep the running sum consistent — all against the same slot.

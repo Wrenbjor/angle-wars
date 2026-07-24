@@ -34,10 +34,9 @@
 //               onto a base of 0 (shieldCharges 2 = two charges; shieldRechargeMs
 //               15000 = a 15s interval). Do not author an interval as a fraction. Each
 //               item's real per-level effect NUMBERS and gameplay-seam wiring land in
-//               its OWN story: Overcharge 10.2, Spread Cannon 10.3 and Nanite Shield
-//               10.4 (all AUTHORED below); Afterburner 10.5 is the last one still
-//               carrying EMPTY `stats: {}`, contributing nothing to the fold until its
-//               story lands.
+//               its OWN story: Overcharge 10.2, Spread Cannon 10.3, Nanite Shield 10.4
+//               and Afterburner 10.5. All FOUR Epic-10 items are now authored — no entry
+//               carries an empty `stats` map any more.
 //
 //               ⚠ TOTALS-vs-DELTA-DESC TRAP. `stats` is the TOTAL at that level; `desc`
 //               is player-facing prose and may read as a DELTA. Spread Cannon L3's desc
@@ -63,9 +62,9 @@ import { ITEM_MAX_LEVEL, SPREAD_CANNON_GUARANTEE_LEVEL } from './constants.js';
 /**
  * The four Epic-10 items (PRD §13.3 offense / §13.4 defense) as data-driven
  * definitions. Frozen (the array and every entry + nested level/fusion object) so no
- * consumer can mutate the shared registry. Effect NUMBERS are deferred to each item's
- * own story — Overcharge's (Story 10.2), Spread Cannon's (Story 10.3) and Nanite
- * Shield's (Story 10.4) are authored; only Afterburner's `stats` maps are still empty.
+ * consumer can mutate the shared registry. Every item's effect NUMBERS landed in its
+ * own story — Overcharge's (10.2), Spread Cannon's (10.3), Nanite Shield's (10.4) and
+ * Afterburner's (10.5); all four are AUTHORED and none carries an empty `stats` map.
  * @type {ReadonlyArray<{ id: string, name: string, title: string,
  *   track: 'offense'|'defense', rarity: number, maxLevel: number,
  *   levels: ReadonlyArray<{ level: number, desc: string, stats: Object<string,number> }>,
@@ -253,12 +252,76 @@ export const ITEM_REGISTRY = Object.freeze([
     track: 'defense',
     rarity: 3,
     maxLevel: ITEM_MAX_LEVEL,
+    // Story 10.5 — the real per-level NUMBERS (PRD §13.4). FIVE fold fields:
+    //   - moveSpeedMult  : a `*Mult` field, so the FRACTIONAL bonus onto a base of 1
+    //                      (0.12 = +12%). PlayerMovementSystem applies it to BOTH its
+    //                      thrust acceleration AND its speed cap, by the same factor,
+    //                      so the ACHIEVED top speed really is SHIP_MAX_SPEED × mult at
+    //                      every rung. (Scaling the cap alone delivers nothing above
+    //                      ~1.15 — the thrust/drag equilibrium becomes the binding
+    //                      constraint. See PlayerMovementSystem for the arithmetic.)
+    //   - dashCooldownMs : the interval (ms) that GATES a dash — an ABSOLUTE INTERVAL
+    //                      onto a base of 0, NEVER a fraction (the same authoring rule
+    //                      shieldRechargeMs follows). It is also the ENABLE flag: 0
+    //                      means no dash at all, which is why Lv1 owns none.
+    //                      ⚠ It goes DOWN across levels (3000 → 2000) while the fold
+    //                      only ever ADDS. That is correct because level entries are
+    //                      TOTALS, not deltas — the fold reads ONE level's map.
+    //   - dashIFrames    : Lv3+ FLAG (>= 1 enables) — invulnerability for the window.
+    //   - dashDamage     : Lv4+ FLAG (>= 1 enables) — contact damage on the sweep. The
+    //                      MAGNITUDE is the DASH_CONTACT_DAMAGE constant, not a fold
+    //                      field, so a second dash item could not double it.
+    //   - dashTrail      : Lv5 FLAG (>= 1 enables) — the cosmetic burning trail.
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header), and the
+    // TOTALS-vs-DELTA-DESC trap bites here in both directions: L3's desc names ONLY the
+    // i-frames yet must RESTATE the L2 cooldown, or picking it would DELETE the dash;
+    // L4's desc names ONLY the cooldown and the damage yet must restate the speed and
+    // the i-frames. L4 in particular repeats `moveSpeedMult: 0.25` UNCHANGED from L3 —
+    // that reads like a copy-paste slip and is deliberate content (L4 is a cooldown /
+    // damage rung, not a speed rung). The `desc` strings stay exactly as Story 10.1
+    // shipped them — player-facing prose, never rewritten to match the totals.
     levels: Object.freeze([
-      Object.freeze({ level: 1, desc: '+12% move speed', stats: Object.freeze({}) }),
-      Object.freeze({ level: 2, desc: '+20% speed + dash (3s cooldown)', stats: Object.freeze({}) }),
-      Object.freeze({ level: 3, desc: '+25% speed + dash i-frames', stats: Object.freeze({}) }),
-      Object.freeze({ level: 4, desc: '2s dash cooldown + dash damages on contact', stats: Object.freeze({}) }),
-      Object.freeze({ level: 5, desc: '+35% speed + burning dash trail', stats: Object.freeze({}) }),
+      Object.freeze({
+        level: 1,
+        desc: '+12% move speed',
+        stats: Object.freeze({ moveSpeedMult: 0.12 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '+20% speed + dash (3s cooldown)',
+        stats: Object.freeze({ moveSpeedMult: 0.2, dashCooldownMs: 3000 }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+25% speed + dash i-frames',
+        stats: Object.freeze({
+          moveSpeedMult: 0.25,
+          dashCooldownMs: 3000,
+          dashIFrames: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '2s dash cooldown + dash damages on contact',
+        stats: Object.freeze({
+          moveSpeedMult: 0.25,
+          dashCooldownMs: 2000,
+          dashIFrames: 1,
+          dashDamage: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '+35% speed + burning dash trail',
+        stats: Object.freeze({
+          moveSpeedMult: 0.35,
+          dashCooldownMs: 2000,
+          dashIFrames: 1,
+          dashDamage: 1,
+          dashTrail: 1,
+        }),
+      }),
     ]),
     // No offer guarantee — Afterburner is drawn purely on its weight.
     guaranteeFromLevel: null,

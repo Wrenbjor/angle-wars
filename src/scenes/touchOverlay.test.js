@@ -9,6 +9,7 @@ import {
   COLOR_TOUCH_STICK_BASE,
   COLOR_TOUCH_STICK_KNOB,
   COLOR_TOUCH_BOMB,
+  COLOR_TOUCH_DASH,
 } from '../config/constants.js';
 
 // drawTouchOverlay is the thin Phaser draw helper: it turns a touchControls snapshot
@@ -28,11 +29,20 @@ function fakeGraphics() {
   };
 }
 
-function snapshot({ move, aim, bombPressed = false } = {}) {
+function snapshot({
+  move,
+  aim,
+  bombPressed = false,
+  dashPressed = false,
+  // Story 10.5: the dash button is OWNERSHIP-GATED and defaults to NOT owned, which is
+  // the state every pre-10.5 assertion below implicitly asserts (nothing extra drawn).
+  dashEnabled = false,
+} = {}) {
   return {
     move: move ?? { active: false, baseX: 0, baseY: 0, curX: 0, curY: 0 },
     aim: aim ?? { active: false, baseX: 0, baseY: 0, curX: 0, curY: 0 },
     bomb: { x: 640, y: 636, radius: 60, pressed: bombPressed },
+    dash: { x: 808, y: 636, radius: 52, pressed: dashPressed, enabled: dashEnabled },
   };
 }
 
@@ -47,6 +57,7 @@ describe('TOUCH_OVERLAY_STYLE', () => {
       baseColor: COLOR_TOUCH_STICK_BASE,
       knobColor: COLOR_TOUCH_STICK_KNOB,
       bombColor: COLOR_TOUCH_BOMB,
+      dashColor: COLOR_TOUCH_DASH,
     });
   });
 
@@ -110,5 +121,43 @@ describe('drawTouchOverlay', () => {
     const g = fakeGraphics();
     drawTouchOverlay(g, snapshot({ bombPressed: true }), TOUCH_OVERLAY_STYLE);
     expect(g.fillStyle).toHaveBeenCalledWith(COLOR_TOUCH_BOMB, TOUCH_OVERLAY_BOMB_PRESSED_ALPHA);
+  });
+
+  // --- Afterburner dash button (Story 10.5) --------------------------------
+  it('draws NOTHING for the dash while the ownership gate is closed — the bomb still draws', () => {
+    // The gate is per-BUTTON, not per-overlay: a build that cannot dash sees exactly
+    // the pre-10.5 overlay, and the bomb is unaffected in the SAME call.
+    const g = fakeGraphics();
+    drawTouchOverlay(g, snapshot({ dashEnabled: false }), TOUCH_OVERLAY_STYLE);
+    expect(g.fillCircle).toHaveBeenCalledWith(640, 636, 60); // bomb still drawn
+    expect(g.fillCircle).toHaveBeenCalledTimes(1);
+    expect(g.strokeCircle).toHaveBeenCalledTimes(1);
+    expect(g.fillStyle).not.toHaveBeenCalledWith(COLOR_TOUCH_DASH, expect.anything());
+  });
+
+  it('draws the dash button at its snapshot rect once the gate opens', () => {
+    const g = fakeGraphics();
+    drawTouchOverlay(g, snapshot({ dashEnabled: true }), TOUCH_OVERLAY_STYLE);
+    expect(g.fillStyle).toHaveBeenCalledWith(COLOR_TOUCH_DASH, TOUCH_OVERLAY_ALPHA);
+    expect(g.fillCircle).toHaveBeenCalledWith(808, 636, 52);
+    expect(g.lineStyle).toHaveBeenCalledWith(
+      TOUCH_OVERLAY_LINE_WIDTH,
+      COLOR_TOUCH_DASH,
+      TOUCH_OVERLAY_ALPHA,
+    );
+    expect(g.strokeCircle).toHaveBeenCalledWith(808, 636, 52);
+  });
+
+  it('brightens the dash button while pressed (same alpha swap as the bomb)', () => {
+    const g = fakeGraphics();
+    drawTouchOverlay(
+      g,
+      snapshot({ dashEnabled: true, dashPressed: true }),
+      TOUCH_OVERLAY_STYLE,
+    );
+    expect(g.fillStyle).toHaveBeenCalledWith(
+      COLOR_TOUCH_DASH,
+      TOUCH_OVERLAY_BOMB_PRESSED_ALPHA,
+    );
   });
 });

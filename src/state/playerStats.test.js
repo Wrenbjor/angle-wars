@@ -149,11 +149,11 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.shieldCharges).toBe(0);
   });
 
-  it('the SHIPPED registry contributes every item EXCEPT Afterburner today (10.5 stats still empty)', () => {
+  it('the SHIPPED registry contributes every one of the four Epic-10 items (all authored)', () => {
     const ps = createPlayerStats();
-    // Own every shipped item at a spread of levels. Overcharge (10.2), Spread Cannon
-    // (10.3) and Nanite Shield (10.4) have authored numbers; Afterburner still carries
-    // empty stats maps, so the movement seam it owns stays exactly at base.
+    // Own every shipped item at a spread of levels. All four now carry authored
+    // numbers — Overcharge (10.2), Spread Cannon (10.3), Nanite Shield (10.4) and
+    // Afterburner (10.5).
     recomputePlayerStats(
       ps,
       { overcharge: 5, 'spread-cannon': 3, 'nanite-shield': 2, afterburner: 4 },
@@ -167,16 +167,80 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.shieldCharges).toBe(1);
     expect(ps.shieldRechargeMs).toBe(15000);
     expect(ps.shieldKnockback).toBe(0);
-    // The seam the LAST deferred story (Afterburner, 10.5) owns is untouched.
-    expect(ps.moveSpeedMult).toBe(PLAYER_STATS_BASE.moveSpeedMult);
+    // Afterburner L4: +25% speed, a 2s dash on i-frames + contact damage, no trail.
+    expect(ps.moveSpeedMult).toBeCloseTo(1.25, 10);
+    expect(ps.dashCooldownMs).toBe(2000);
+    expect(ps.dashIFrames).toBe(1);
+    expect(ps.dashDamage).toBe(1);
+    expect(ps.dashTrail).toBe(0);
     // And the fold introduced no key beyond the declared base fields.
     expect(Object.keys(ps).sort()).toEqual(Object.keys(PLAYER_STATS_BASE).sort());
   });
 
-  it('the SHIPPED registry with only AFTERBURNER owned still folds to exactly base', () => {
+  // --- Afterburner (Story 10.5) --------------------------------------------
+  it('folds the SHIPPED Afterburner rungs 1..5 to the exact five fields', () => {
+    // Drives the REAL registry, not a fixture: a re-authoring slip in itemRegistry.js
+    // has to fail here as well as in the registry's own suite.
+    const expected = [
+      { moveSpeedMult: 1.12, dashCooldownMs: 0, dashIFrames: 0, dashDamage: 0, dashTrail: 0 },
+      { moveSpeedMult: 1.2, dashCooldownMs: 3000, dashIFrames: 0, dashDamage: 0, dashTrail: 0 },
+      { moveSpeedMult: 1.25, dashCooldownMs: 3000, dashIFrames: 1, dashDamage: 0, dashTrail: 0 },
+      { moveSpeedMult: 1.25, dashCooldownMs: 2000, dashIFrames: 1, dashDamage: 1, dashTrail: 0 },
+      { moveSpeedMult: 1.35, dashCooldownMs: 2000, dashIFrames: 1, dashDamage: 1, dashTrail: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { afterburner: level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.moveSpeedMult, `L${level} moveSpeedMult`).toBeCloseTo(e.moveSpeedMult, 10);
+      expect(ps.dashCooldownMs, `L${level} dashCooldownMs`).toBe(e.dashCooldownMs);
+      expect(ps.dashIFrames, `L${level} dashIFrames`).toBe(e.dashIFrames);
+      expect(ps.dashDamage, `L${level} dashDamage`).toBe(e.dashDamage);
+      expect(ps.dashTrail, `L${level} dashTrail`).toBe(e.dashTrail);
+    }
+  });
+
+  it('leaves all five Afterburner fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.moveSpeedMult).toBe(1);
+    expect(ps.dashCooldownMs).toBe(0);
+    expect(ps.dashIFrames).toBe(0);
+    expect(ps.dashDamage).toBe(0);
+    expect(ps.dashTrail).toBe(0);
+  });
+
+  it('keeps the Afterburner fields unaffected by a stacked OFFENSE item', () => {
+    // The two tracks share no fold key, so owning Overcharge must not perturb any
+    // Afterburner field — the tripwire in the registry suite guards the authoring side,
+    // this guards the folded side.
+    const alone = createPlayerStats();
+    recomputePlayerStats(alone, { afterburner: 3 }, ITEM_REGISTRY);
+    const stacked = createPlayerStats();
+    recomputePlayerStats(stacked, { afterburner: 3, overcharge: 5 }, ITEM_REGISTRY);
+    for (const k of [
+      'moveSpeedMult',
+      'dashCooldownMs',
+      'dashIFrames',
+      'dashDamage',
+      'dashTrail',
+    ]) {
+      expect(stacked[k], `${k} perturbed by an offense item`).toBe(alone[k]);
+    }
+    // …and the offense item did land, so the comparison is not vacuous.
+    expect(stacked.damageMult).toBeGreaterThan(alone.damageMult);
+  });
+
+  it('exposes NO dash RUNTIME state through the fold (cooldown/window/direction)', () => {
+    // The live cooldown, the active window and the dash direction are DashSystem's, for
+    // the same reason the shield's live charge count is: this fold resets and re-derives
+    // on EVERY pick, so a live timer here would be refunded by any unrelated item.
     const ps = createPlayerStats();
     recomputePlayerStats(ps, { afterburner: 5 }, ITEM_REGISTRY);
-    expect(ps).toEqual({ ...PLAYER_STATS_BASE });
+    for (const k of Object.keys(ps)) {
+      expect(k).not.toMatch(/remaining|active|dirX|dirY|dashSeq/i);
+    }
+    expect(Object.keys(ps).sort()).toEqual(Object.keys(PLAYER_STATS_BASE).sort());
   });
 
   it('does NOT accumulate a non-base stat key across folds (robust reset via baseFor)', () => {

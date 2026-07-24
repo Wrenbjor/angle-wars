@@ -99,6 +99,24 @@ export const AIM_DEADZONE = 0.3;
 // on the keyboard. Edge-triggered through InputState.queueBomb (one press → one
 // detonation); never polled and re-queued per frame.
 export const GAMEPAD_BOMB_BUTTONS = [4, 5];
+// Gamepad button indices (standard mapping) that trigger an Afterburner DASH
+// (Story 10.5): the two ANALOG-STICK CLICKS (L3=10, R3=11) — the conventional
+// sprint/dash binding. Either fires it, mirroring "either bumper" for the bomb.
+// Edge-triggered through InputState.queueDash (one press → one dash).
+//
+// WHY these and not the obvious alternatives:
+//  - the TRIGGERS (6/7) are ANALOG axes surfaced as buttons, and Phaser's
+//    `Button.threshold` defaults to `1` (node_modules/phaser/src/input/gamepad/
+//    Button.js:75), so a partially-pulled trigger never fires the 'down' event and
+//    never reports `pressed` until it is pulled ALL the way — an unusable binding.
+//    The bomb's bumpers are DIGITAL, which is why this class of bug could not
+//    surface before; do not "improve" this to the triggers without changing that
+//    threshold.
+//  - the BUMPERS (4/5) are already the smart bomb (above);
+//  - the FACE buttons (0–3) are ArenaScene's level-up card confirm;
+//  - the D-PAD (14/15) is ArenaScene's level-up card navigation.
+// 10/11 are digital in the standard mapping and unclaimed by anything.
+export const GAMEPAD_DASH_BUTTONS = [10, 11];
 
 // --- Touch twin-stick controls (Story 7.1) ----------------------------------
 // The touch input method (INPUT_METHOD.TOUCH): a left-half floating move stick, a
@@ -131,6 +149,26 @@ export const TOUCH_BOMB_BUTTON = {
   y: ARENA_HEIGHT - 84,
   radius: 60,
 };
+// Afterburner DASH button geometry (center + radius, px, logical) — Story 10.5.
+// Same bottom row as the smart bomb, 168px to its right: the two rims are 56px
+// apart (168 − 60 − 52), comfortably more than a thumb's contact patch, so the
+// fixed hit-test order (bomb checked first, then dash) is never observable. It
+// sits 560px in from the right edge — ARENA_WIDTH (1560) minus the button's own
+// right rim at x + radius (780 + 168 + 52 = 1000) — so no plausible right safe-area
+// inset can reach it, which is why mobileLayout raises it by the BOTTOM inset only,
+// exactly as it treats the bomb. (ARENA_WIDTH is 1560, not 1280; see this file's
+// header.)
+//
+// Unlike the bomb this button is OWNERSHIP-GATED: it is drawn, hit-tested and
+// counted as touch activity only while the dash is actually owned (Afterburner
+// Lv2+). See touchControls.setDashEnabled — a permanently-drawn button would cost
+// every touch player this disc of right-half aim-stick area for an action most
+// runs never unlock.
+export const TOUCH_DASH_BUTTON = {
+  x: ARENA_WIDTH / 2 + 168,
+  y: ARENA_HEIGHT - 84,
+  radius: 52,
+};
 // Touch overlay draw style (view-only placeholder; Epic 4 / Story 7.2 own the real
 // aesthetic). The base ring is drawn at each active stick's base at MAX_RADIUS; the
 // thumb knob follows the current touch point at KNOB_RADIUS. Colors are 0xRRGGBB and
@@ -142,6 +180,10 @@ export const TOUCH_OVERLAY_BOMB_PRESSED_ALPHA = 0.6;
 export const COLOR_TOUCH_STICK_BASE = 0x66ccff;
 export const COLOR_TOUCH_STICK_KNOB = 0xffffff;
 export const COLOR_TOUCH_BOMB = 0xff66cc;
+// Afterburner dash button color (Story 10.5): a cyan-green that stays clearly
+// distinct from the bomb's magenta at the overlay's 0.35 idle alpha, so the two
+// bottom-row buttons are never confused mid-run.
+export const COLOR_TOUCH_DASH = 0x66ffcc;
 
 // --- Firing / bullets (feel) ------------------------------------------------
 // Continuous auto-fire: while the aim channel is active the FiringSystem spawns
@@ -783,6 +825,58 @@ export const SHIELD_KNOCKBACK_RADIUS = 260;
 // the Lv5 break the screen clear this constant exists to avoid.
 export const SHIELD_KNOCKBACK_PUSH = 180;
 
+// --- Afterburner (Story 10.5 / PRD §13.4) -----------------------------------
+// The defense item that makes the ship FASTER (a `moveSpeedMult` the movement
+// system applies to BOTH its thrust acceleration and its speed cap) and, from Lv2,
+// grants a cooldown-gated DASH — a discrete constant-velocity burst with i-frames
+// (Lv3+), contact damage (Lv4+) and a burning cosmetic trail (Lv5).
+//
+// The magnitudes below are CONSTANTS rather than `stats` fields for the same reason
+// SHIELD_KNOCKBACK_PUSH is: the fold is ADDITIVE, so any magnitude placed there
+// would DOUBLE if a second item ever authored the same key. Only `dashCooldownMs`
+// lives in the fold, because it is the one value the levels actually change.
+
+// Dash burst speed (px/s) while the window is open. The dash branch in
+// PlayerMovementSystem sets velocity to exactly this along the dash direction —
+// thrust and drag are deliberately skipped, so the travelled distance never depends
+// on which way the stick happens to be held. At 2.5x SHIP_MAX_SPEED it covers in
+// DASH_DURATION_MS what ordinary movement needs ~0.45s for.
+export const DASH_SPEED = 1300;
+// Dash window length (ms). The REALIZED travel is ~238px (238.33px exactly): the
+// window quantizes to 11 whole fixed steps at 1/60s, each covering DASH_SPEED × dt,
+// which lands a little above the nominal DASH_SPEED × DASH_DURATION_MS product of
+// 234px. ~238px is the figure quoted everywhere this distance is discussed — it is
+// what the ship actually moves. It is sized to clear SPAWN_SAFE_RADIUS (200, the
+// game's own "clear of the player" distance) while staying under
+// BLACKHOLE_GRAVITY_RADIUS (340), so one tap escapes a swarm but cannot cross a
+// whole danger zone.
+export const DASH_DURATION_MS = 180;
+// Absolute LOWER bound (ms) on the dash cooldown — a SAFETY guard in the exact
+// shape of FIRE_INTERVAL_FLOOR_MS / SHIELD_RECHARGE_FLOOR_MS, explicitly NOT a
+// balance lever. `dashCooldownMs` comes off the shared player-stat store, so a
+// corrupted-but-positive value (1e-9) would otherwise permit a dash every tick.
+// What this floor bounds is that RATE. It sits 10x below the FASTEST shipped rung
+// (2000ms at Lv4/Lv5), so no authored build ever reaches it.
+//
+// It applies ONLY to an already-positive value: a missing / non-finite / <= 0
+// `dashCooldownMs` means NO DASH AT ALL (DashSystem._cooldownMs fails CLOSED),
+// never a dash at the floor — the interval IS the enable flag, and flooring it
+// would MINT a dash the build never bought.
+export const DASH_COOLDOWN_FLOOR_MS = 200;
+// Damage one Lv4+ dash deals to each enemy it sweeps — one bullet's worth
+// (PLAYER_BULLET_BASE_DAMAGE). Every unarmored archetype carries no `hp` and dies
+// to ANY damage, so this value only decides the ARMORED case: matching a bullet
+// makes the Lv4 dash a swarm-clearer while leaving armor-breaking to Epic 11's
+// Orbit Blade, which claims full-damage-vs-armor explicitly where this story's
+// acceptance criteria do not. Routed through CollisionSystem.applyPlayerDamage, so
+// an armored enemy behaves identically whether a bullet or a dash hits it.
+export const DASH_CONTACT_DAMAGE = 1;
+// Absolute UPPER bound on the folded movement-speed multiplier — a SAFETY clamp in
+// the shape of SHIELD_MAX_CHARGES, bounding what a corrupted store can do to the
+// ship's thrust and cap. The shipped maximum is 1.35 (Lv5), so it sits well over
+// 2x above every authorable value and can never act as a balance lever.
+export const MOVE_SPEED_MULT_MAX = 3;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.
@@ -1266,6 +1360,28 @@ export const PARTICLE_TRAIL_SIZE = 2;
 // Trail particle color (0xRRGGBB): the ship's own neon hue so the trail reads as
 // its thruster wash.
 export const PARTICLE_TRAIL_COLOR = 0x66ccff;
+
+// Afterburner Lv5 BURNING DASH TRAIL (Story 10.5). Emitted by the same throttled
+// accumulator pattern as the thrust trail above, gated on the dash window instead of
+// thrust intent. Each value is sized against its thrust-trail sibling so the burning
+// trail reads as DENSER, HOTTER and SHORTER-LIVED. Cosmetic only: it deals no damage
+// and leaves no lingering zone (a damaging ground trail would be the pooled-entity
+// system Epic 11's Mine Layer owns).
+// Half the thrust trail's 24ms, so a 180ms dash lays ~15 particles.
+export const PARTICLE_DASH_TRAIL_INTERVAL_MS = 12;
+// Slightly longer-lived than the thrust trail so the burn lingers past the window.
+export const PARTICLE_DASH_TRAIL_LIFETIME_MS = 520;
+// Drift speed (px/s) opposite the DASH direction (not the ship facing — they agree
+// during a dash, but the dash direction is the authoritative source).
+export const PARTICLE_DASH_TRAIL_SPEED = 140;
+// Heading spread (radians): tighter than the thrust trail's 15°, so the burn reads
+// as a hard streak rather than a wash.
+export const PARTICLE_DASH_TRAIL_SPREAD_RAD = Math.PI / 8; // 22.5°
+// Draw radius (px) — larger than the thrust trail's 2.
+export const PARTICLE_DASH_TRAIL_SIZE = 3;
+// Burning orange, deliberately distinct from the thrust trail's cyan 0x66ccff so the
+// Lv5 trail reads as a different effect rather than a brighter thruster.
+export const PARTICLE_DASH_TRAIL_COLOR = 0xff8833;
 
 // --- Screen juice & feedback (Story 4.4) ------------------------------------
 // The signature Geometry Wars "screen-feel" payoff (FR12, NFR2): the camera

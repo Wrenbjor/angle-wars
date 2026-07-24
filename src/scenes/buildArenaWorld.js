@@ -26,6 +26,7 @@ import { MirrorReflectorSystem } from '../systems/MirrorReflectorSystem.js';
 import { ArmoredSystem } from '../systems/ArmoredSystem.js';
 import { SpawnDirector } from '../systems/SpawnDirector.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
+import { DashSystem } from '../systems/DashSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
@@ -52,13 +53,15 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 26 systems registered in the SAME order (Story 6.3 added
+// state + pools, the SAME 27 systems registered in the SAME order (Story 6.3 added
 // the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
 // after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it;
 // Story 8.3 added the LevelUpSystem right after LevelSystem; Story 9.1 added the
 // DpsTelemetrySystem right after ScoringSystem; Story 9.3 added the ArmoredSystem in
 // the enemy section, after MirrorReflectorSystem and before SpawnDirector; Story 10.4
-// added the NaniteShieldSystem after ExtraLifeSystem and before PlayerDeathSystem), the same
+// added the NaniteShieldSystem after ExtraLifeSystem and before PlayerDeathSystem;
+// Story 10.5 added the DashSystem immediately after CollisionSystem and before
+// ScoringSystem), the same
 // enemyPools / deathPools composition (the reflector pool is deliberately in NEITHER;
 // the armored pool IS in both), and both load-bearing
 // late-binds
@@ -102,17 +105,27 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const ship = createPlayerShip();
   world.addEntity(ship);
   const inputState = new InputState();
-  const playerMovementSystem = new PlayerMovementSystem(ship, inputState);
-  world.addSystem(playerMovementSystem);
 
   // Runtime player-stat modifier store (Story 10.1): folded from the owned build on
   // each card pick (LevelUpSystem, wired far below), read by the item gameplay seams
   // (Epic 10.2–10.5). Plain data with NO dependencies, so it is created here — above
-  // the Firing section — purely so the ONE instance can be threaded into
-  // FiringSystem's constructor (Story 10.2: fire cadence + per-bullet damage). The
-  // fold mutates this object IN PLACE, so every consumer holding this reference sees
-  // an upgrade with no system reconstruction. Run-scoped, never touched by death.
+  // the movement + firing systems — purely so the ONE instance can be threaded into
+  // their constructors (Story 10.2: fire cadence + per-bullet damage; Story 10.5:
+  // Afterburner's moveSpeedMult). The fold mutates this object IN PLACE, so every
+  // consumer holding this reference sees an upgrade with no system reconstruction.
+  // Run-scoped, never touched by death.
   const playerStats = createPlayerStats();
+
+  const playerMovementSystem = new PlayerMovementSystem(
+    ship,
+    inputState,
+    // Story 10.5: Afterburner's moveSpeedMult scales BOTH thrust and the speed cap.
+    playerStats,
+    // Story 10.5: the dash system is LATE-BOUND below (it cannot exist yet — it needs
+    // enemyPools and CollisionSystem, which need the whole enemy section first).
+    null,
+  );
+  world.addSystem(playerMovementSystem);
 
   // --- Firing -------------------------------------------------------------
   // Added after movement so bullets spawn from the ship's post-move position
@@ -277,6 +290,34 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // reference it). Until this is set the snake's split reap is a guarded no-op.
   snakeSystem.collisionSystem = collisionSystem;
 
+  // --- Afterburner dash (Story 10.5) --------------------------------------
+  // Registered IMMEDIATELY after CollisionSystem and BEFORE ScoringSystem. That slot is
+  // load-bearing in THREE directions:
+  //   - AFTER CollisionSystem, so a Lv4+ dash kill appends to per-tick kill latches that
+  //     system has ALREADY RESET this tick (registering earlier would drop them into
+  //     arrays about to be cleared);
+  //   - BEFORE ScoringSystem — and therefore before DpsTelemetrySystem, XpOrbSystem,
+  //     GridFieldSystem and ParticleSystem — so a dash kill is SCORED and produces the
+  //     full kill feedback (XP orb, ripple, spray, SFX), unlike BombSystem's
+  //     deliberately silent removal;
+  //   - necessarily LATER than PlayerMovementSystem, which is why movement reads the
+  //     dash window one fixed step after it opens (see DashSystem's `movementActive`).
+  // Scoped to `enemyPools` (the five COMBAT archetypes), never `deathPools`.
+  const dashSystem = new DashSystem(
+    ship,
+    inputState,
+    enemyPools,
+    collisionSystem,
+    playerStats,
+  );
+  world.addSystem(dashSystem);
+  // Late-bind the dash into the movement system now that it exists (the same pattern as
+  // snakeSystem.collisionSystem above): PlayerMovementSystem is registered at slot 2,
+  // long before enemyPools/CollisionSystem exist, yet it is the SOLE writer of the
+  // ship's velocity and must apply the dash burst. Until this is set the dash branch is
+  // a guarded no-op and movement is exactly the pre-10.5 path.
+  playerMovementSystem.dashSystem = dashSystem;
+
   // --- Scoring ------------------------------------------------------------
   // ScoringSystem runs immediately after CollisionSystem so this tick's kills
   // are already recorded, and before PlayerDeathSystem. It owns no pool; it
@@ -432,6 +473,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     // Story 10.4: the shield gets first refusal on every death that reaches the
     // shared body — both the contact path and the programmatic pendingDeath path.
     naniteShieldSystem,
+    // Story 10.5: a Lv3+ dash window suppresses lethal contact entirely, and every
+    // death CANCELS an in-flight dash (so a respawn is never flung back out).
+    dashSystem,
   );
   world.addSystem(playerDeathSystem);
 
@@ -467,6 +511,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     inputState,
     _rng,
     particleMax,
+    // Story 10.5: the Lv5 burning dash trail (cosmetic only) reads this system's
+    // published window through trailActive().
+    dashSystem,
   );
   world.addSystem(particleSystem);
 
@@ -523,6 +570,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     armoredSystem,
     spawnDirector,
     collisionSystem,
+    dashSystem,
     scoringSystem,
     dpsTelemetrySystem,
     blackHoleSystem,

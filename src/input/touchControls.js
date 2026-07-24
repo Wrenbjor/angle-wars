@@ -13,7 +13,9 @@
 // Floating sticks: each stick's base anchors at its FIRST-touch point (not a fixed
 // on-screen position); deflection = current − base. Left screen half owns the move
 // stick, right half owns the aim stick, split at ARENA_WIDTH / 2. A tap inside the
-// bomb button rect latches one bomb and spawns no stick.
+// bomb button rect latches one bomb and spawns no stick; a tap inside the DASH button
+// rect does the same for the Afterburner dash (Story 10.5) — but ONLY while the dash
+// is owned, see the `_dashEnabled` ownership gate.
 //
 // Zero per-frame allocation: all state and the returned move/aim/snapshot objects
 // are persistent instance fields, mutated in place (NFR2/NFR9).
@@ -24,6 +26,7 @@ import {
   TOUCH_STICK_MAX_RADIUS,
   TOUCH_STICK_DEADZONE,
   TOUCH_BOMB_BUTTON,
+  TOUCH_DASH_BUTTON,
 } from '../config/constants.js';
 
 export class TouchControls {
@@ -67,6 +70,41 @@ export class TouchControls {
       radius: TOUCH_BOMB_BUTTON.radius,
     };
 
+    // Dash (Story 10.5): the same latch + owner-id pair as the bomb, with the same
+    // one-tap semantics.
+    this._dashPointerId = null;
+    this._dashLatched = false;
+
+    // Runtime dash button rect, defaulting to TOUCH_DASH_BUTTON and shifted by
+    // ArenaScene's safe-area layout via setDashButton — the SINGLE source of truth for
+    // both the hit region (_insideDash) and the drawn position (snapshot), exactly as
+    // the bomb's rect is.
+    //
+    // The two rects MUST NOT OVERLAP. The shipped geometry leaves 56px of clear gap
+    // between the rims (168px apart, radii 60 and 52), which is why onPointerDown can
+    // test them in a FIXED order (bomb first, then dash) without the order ever being
+    // observable. A layout change that narrows that gap to an overlap would make the
+    // fixed order matter — re-check it here if either rect moves.
+    this._dashButton = {
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+      radius: TOUCH_DASH_BUTTON.radius,
+    };
+
+    // OWNERSHIP GATE (Story 10.5) — nothing the bomb needs, because the bomb is always
+    // available while the dash is a PURCHASED capability (Afterburner Lv2+). While this
+    // is false the dash button does not exist at all as far as the player is concerned:
+    // `_insideDash` returns false so a tap in that region falls straight through to the
+    // ordinary right-half aim stick exactly as pre-10.5, `snapshot().dash.enabled` is
+    // false so the overlay skips drawing it, and `isActive()` ignores the dash latch.
+    //
+    // WHY gate it: a permanently-drawn button would cost EVERY touch player a 52px-radius
+    // disc of right-half aim-stick area for an action most runs never unlock.
+    //
+    // ArenaScene pushes this every render frame from `dashSystem.dashEnabled()`, so the
+    // button appears the moment a card pick grants the dash.
+    this._dashEnabled = false;
+
     // Persistent return objects (no per-frame allocation).
     this._moveOut = { x: 0, y: 0 };
     this._aimOut = { x: 0, y: 0, active: false };
@@ -78,6 +116,15 @@ export class TouchControls {
         y: TOUCH_BOMB_BUTTON.y,
         radius: TOUCH_BOMB_BUTTON.radius,
         pressed: false,
+      },
+      dash: {
+        x: TOUCH_DASH_BUTTON.x,
+        y: TOUCH_DASH_BUTTON.y,
+        radius: TOUCH_DASH_BUTTON.radius,
+        pressed: false,
+        // The ownership gate, published so the overlay's draw decision and this
+        // model's hit-test read ONE flag and can never disagree.
+        enabled: false,
       },
     };
   }
@@ -99,6 +146,8 @@ export class TouchControls {
     this._aimStick.dirY = 0;
     this._bombPointerId = null;
     this._bombLatched = false;
+    this._dashPointerId = null;
+    this._dashLatched = false;
   }
 
   /**
@@ -125,10 +174,62 @@ export class TouchControls {
   }
 
   /**
+   * Reposition the dash button's hit region + drawn rect (Story 10.5), mirroring
+   * setBombButton: one runtime rect backs both the hit test and the snapshot, so the
+   * tap target and the drawn button stay identical after a safe-area shift.
+   * @param {number} x New center x (arena-logical).
+   * @param {number} y New center y (arena-logical).
+   * @param {number} [radius] New radius (defaults to the current radius).
+   */
+  setDashButton(x, y, radius = this._dashButton.radius) {
+    this._dashButton.x = x;
+    this._dashButton.y = y;
+    this._dashButton.radius = radius;
+  }
+
+  /**
+   * Set the dash button's OWNERSHIP GATE (Story 10.5). ArenaScene pushes this every
+   * render frame from `dashSystem.dashEnabled()` — a per-frame push, not a one-shot at
+   * create, because the dash is unlocked MID-RUN by a card pick.
+   *
+   * Flipping it OFF clears any pending latch and owner id, so a press caught at the
+   * transition cannot fire later. In shipped play the fold is monotonic and the gate
+   * never goes true→false, but the guard is cheap and keeps the flag one-directional
+   * only by policy rather than by assumption.
+   * @param {boolean} on Whether the dash is currently owned.
+   */
+  setDashEnabled(on) {
+    const next = !!on;
+    if (!next) {
+      this._dashLatched = false;
+      this._dashPointerId = null;
+    }
+    this._dashEnabled = next;
+  }
+
+  /**
+   * Whether (x, y) lies within the dash button's circular hit region — and the dash is
+   * actually OWNED. While the gate is closed this is always false, so the region falls
+   * straight through to the ordinary right-half aim stick exactly as pre-10.5.
+   */
+  _insideDash(x, y) {
+    if (!this._dashEnabled) return false;
+    const d = this._dashButton;
+    const dx = x - d.x;
+    const dy = y - d.y;
+    return dx * dx + dy * dy <= d.radius * d.radius;
+  }
+
+  /**
    * A finger touched down. The bomb button is checked FIRST (it straddles the
-   * half split), then the point is classified by half: left → move stick, right →
-   * aim stick. Each stick anchors on its first touch and ignores further touches
-   * while already owned (the base is the floating anchor for the whole gesture).
+   * half split), then the dash button (Story 10.5 — right half, but it must claim
+   * its disc before the half split spawns an aim stick), then the point is
+   * classified by half: left → move stick, right → aim stick. Each stick anchors on
+   * its first touch and ignores further touches while already owned (the base is the
+   * floating anchor for the whole gesture).
+   *
+   * The bomb/dash order is FIXED but not observable: the shipped rects are 56px
+   * apart at the rims (see `_dashButton`), so no point can satisfy both tests.
    * @param {number} id Pointer id.
    * @param {number} x Base-resolution / screen x (pointer.x) — logical units without camera-shake scroll.
    * @param {number} y Base-resolution / screen y (pointer.y) — logical units without camera-shake scroll.
@@ -139,6 +240,13 @@ export class TouchControls {
       // consumeBomb collapses to one queueBomb, at parity with the keyboard latch).
       this._bombLatched = true;
       this._bombPointerId = id;
+      return;
+    }
+    if (this._insideDash(x, y)) {
+      // One dash per tap, no stick — the bomb's semantics exactly. Only reachable
+      // while the ownership gate is open (see `_insideDash`).
+      this._dashLatched = true;
+      this._dashPointerId = id;
       return;
     }
     if (x < ARENA_WIDTH / 2) {
@@ -218,6 +326,9 @@ export class TouchControls {
     if (id === this._bombPointerId) {
       this._bombPointerId = null;
     }
+    if (id === this._dashPointerId) {
+      this._dashPointerId = null;
+    }
   }
 
   /**
@@ -273,17 +384,36 @@ export class TouchControls {
   }
 
   /**
+   * Read-and-clear the dash latch (exactly-one-tap semantics), mirroring consumeBomb.
+   * The sampler routes a true result to InputState.queueDash, at parity with the
+   * keyboard/gamepad edge latch. A latch can only exist while the ownership gate was
+   * open when the tap landed, and closing the gate clears it (see setDashEnabled).
+   * @returns {boolean}
+   */
+  consumeDash() {
+    const latched = this._dashLatched;
+    this._dashLatched = false;
+    return latched;
+  }
+
+  /**
    * Whether touch is driving this frame: any stick held, or a finger on the bomb
-   * button. Fed into resolveActiveMethod as `touchActive`, and gates the overlay
-   * render. Lifting all fingers makes this false (the sampler then writes move → 0
-   * and aim → inactive while the method stays sticky-TOUCH).
+   * button, or — while the dash is OWNED — a finger on the dash button. Fed into
+   * resolveActiveMethod as `touchActive`, and gates the overlay render. Lifting all
+   * fingers makes this false (the sampler then writes move → 0 and aim → inactive
+   * while the method stays sticky-TOUCH).
+   *
+   * The dash term is gated by `_dashEnabled` so a build that cannot dash behaves
+   * byte-identically to pre-10.5 here — and because `_insideDash` already refuses to
+   * set the owner id while the gate is closed, the two guards agree by construction.
    * @returns {boolean}
    */
   isActive() {
     return (
       this._moveStick.active ||
       this._aimStick.active ||
-      this._bombPointerId !== null
+      this._bombPointerId !== null ||
+      (this._dashEnabled && this._dashPointerId !== null)
     );
   }
 
@@ -293,7 +423,8 @@ export class TouchControls {
    * state. No Phaser types — the draw helper turns this into graphics calls.
    * @returns {{move:{active:boolean,baseX:number,baseY:number,curX:number,curY:number},
    *   aim:{active:boolean,baseX:number,baseY:number,curX:number,curY:number},
-   *   bomb:{x:number,y:number,radius:number,pressed:boolean}}}
+   *   bomb:{x:number,y:number,radius:number,pressed:boolean},
+   *   dash:{x:number,y:number,radius:number,pressed:boolean,enabled:boolean}}}
    */
   snapshot() {
     const s = this._snap;
@@ -313,6 +444,14 @@ export class TouchControls {
     s.bomb.y = this._bombButton.y;
     s.bomb.radius = this._bombButton.radius;
     s.bomb.pressed = this._bombPointerId !== null;
+    // Reflect the runtime dash rect + the ownership gate (Story 10.5). `enabled` is
+    // the SAME flag `_insideDash` reads, so the drawn button and the tap target can
+    // never disagree about whether the dash exists.
+    s.dash.x = this._dashButton.x;
+    s.dash.y = this._dashButton.y;
+    s.dash.radius = this._dashButton.radius;
+    s.dash.pressed = this._dashPointerId !== null;
+    s.dash.enabled = this._dashEnabled;
     return s;
   }
 }

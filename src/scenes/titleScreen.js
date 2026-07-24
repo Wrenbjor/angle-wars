@@ -19,15 +19,21 @@ export const START_PROMPT = 'Press Enter / Space, click, or a gamepad button to 
 export const SETTINGS_PROMPT = 'Press S for Settings';
 
 /**
- * The basic-controls lines, now including Pause (Esc/P — Story 5.2) and Settings
- * (S — Story 5.3). Move: WASD/arrows/left stick; Aim & Fire: mouse/right stick;
- * Smart Bomb: Shift (PlayerInputSampler binds KC.SHIFT); Mute: M; Volume: -/+.
+ * The basic-controls lines, now including Pause (Esc/P — Story 5.2), Settings
+ * (S — Story 5.3) and the Afterburner Dash (Q / stick click — Story 10.5). Move:
+ * WASD/arrows/left stick; Aim & Fire: mouse/right stick; Smart Bomb: Shift
+ * (PlayerInputSampler binds KC.SHIFT); Dash: Q (KC.Q) or either analog-stick click
+ * (GAMEPAD_DASH_BUTTONS); Mute: M; Volume: -/+.
+ *
+ * This is the ONLY player-facing surface documenting the bindings, so a newly bound
+ * button absent from it is undiscoverable — keep it in step with the sampler.
  * @type {string[]}
  */
 export const CONTROLS_LINES = [
   'Move:  WASD / Arrows / Left Stick',
   'Aim & Fire:  Mouse / Right Stick',
   'Smart Bomb:  Shift    Mute: M    Volume: - / +',
+  'Dash:  Q / Stick Click',
   'Pause:  Esc / P    Settings:  S',
 ];
 

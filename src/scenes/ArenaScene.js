@@ -243,6 +243,9 @@ export class ArenaScene extends Phaser.Scene {
     this.armoredSystem = arena.armoredSystem;
     this.spawnDirector = arena.spawnDirector;
     this.collisionSystem = arena.collisionSystem;
+    // Story 10.5: the Afterburner dash runtime. Held so the per-frame render can push
+    // its ownership state into the touch dash button's gate (see update()).
+    this.dashSystem = arena.dashSystem;
     this.scoringSystem = arena.scoringSystem;
     this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
@@ -1081,6 +1084,10 @@ export class ArenaScene extends Phaser.Scene {
     }
     this.hudText.setPosition(layout.hud.x, layout.hud.y);
     this.inputSampler.setBombButton(layout.bomb.x, layout.bomb.y, layout.bomb.radius);
+    // Story 10.5: the dash button gets the same safe-area treatment as the bomb (raised
+    // by the bottom inset only — it sits far enough from the right edge that no right
+    // inset can reach it).
+    this.inputSampler.setDashButton(layout.dash.x, layout.dash.y, layout.dash.radius);
   }
 
   /**
@@ -1179,6 +1186,18 @@ export class ArenaScene extends Phaser.Scene {
       }
       this.touchOverlayGraphics.clear();
       this.inputSampler.resetTouch();
+      // Story 10.5: drain any dash already latched into the SHARED InputState. The
+      // resetTouch() above clears only the TouchControls model's latch — once sample()
+      // has copied a press into inputState.dashQueued (a frame that produced zero fixed
+      // steps leaves it sitting there), nothing else drains it: clear() deliberately
+      // does not, and the only other consumeDash() is in the level-up-modal branch. A
+      // dash latched on such a frame and then paused would otherwise fire the instant
+      // the run resumed and spend the full cooldown — contradicting this story's AC
+      // that a press while paused fires nothing and is not buffered.
+      //
+      // NOTE: `bombQueued` has the IDENTICAL gap here. It is pre-existing (Story 3.2 /
+      // 5.2) and deliberately left alone — out of scope for this story.
+      this.inputState.consumeDash();
       return;
     }
 
@@ -1195,6 +1214,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.levelUpSystem.selectionActive) {
       this.inputState.clear();
       this.inputState.consumeBomb();
+      // Story 10.5: drain the dash latch too — `clear()` deliberately clears only the
+      // continuous move/aim levels, so without this an Afterburner dash queued under
+      // the card overlay would fire the instant the overlay closed.
+      this.inputState.consumeDash();
     }
 
     // Story 4.4 hit-stop: while the render-owned _hitStopMs countdown is running,
@@ -1520,6 +1543,12 @@ export class ArenaScene extends Phaser.Scene {
     // updated the touch model this frame). The draw helper self-clears, so a
     // released stick leaves no stale graphic; the else-clear covers the frame touch
     // ends and every non-touch frame (gamepad/kbm player never sees the overlay).
+    // Story 10.5: push the dash button's OWNERSHIP GATE every render frame, from the
+    // same place the overlay is redrawn. A per-frame push, not a one-shot at create:
+    // the dash is unlocked MID-RUN by a card pick, so the button has to appear the
+    // moment the fold grants it (and the hit region must open on the same frame).
+    this.inputSampler.setDashEnabled(this.dashSystem.dashEnabled());
+
     if (this.inputSampler.isTouchActive()) {
       drawTouchOverlay(
         this.touchOverlayGraphics,

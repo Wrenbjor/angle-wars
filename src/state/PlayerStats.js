@@ -18,9 +18,10 @@
 // `damageMult` rungs — so two items now stack additively on the same fields, exactly as
 // the fold specifies. Story 10.4 added Nanite Shield's three `shield*` fields, the first
 // item whose effect has RUNTIME state (a live charge count) rather than a pure stat read
-// — the fold owns only the derived MAXIMA (see the field comments below). Afterburner
-// (10.5) is the last item still carrying empty `stats` maps — the framework is real;
-// those item numbers are its story's job.
+// — the fold owns only the derived MAXIMA (see the field comments below). Story 10.5
+// added Afterburner's five `moveSpeedMult`/`dash*` fields, the second item with RUNTIME
+// state (the live cooldown / active window / dash direction live on DashSystem). All
+// four Epic-10 items are now authored — no registry entry carries an empty `stats` map.
 //
 // AUTHORING CONVENTION (read this before writing any `stats` map in stories 10.2–10.5).
 // The fold ADDS onto the base, so a `*Mult` entry is the FRACTIONAL BONUS, never the
@@ -55,8 +56,36 @@ export const PLAYER_STATS_BASE = Object.freeze({
   //                   odd shipped counts always keep one bullet exactly along aim.
   spreadWays: 0,
   spreadArcDeg: 0,
-  // Movement (Afterburner, Story 10.5).
+  // Movement + dash (Afterburner, Story 10.5). `moveSpeedMult` is a `*Mult` field
+  // (base 1) that PlayerMovementSystem applies to BOTH its thrust acceleration and its
+  // speed cap; the four `dash*` fields are ADDITIVE/COUNT fields (base 0 — no
+  // Afterburner owned means the pre-10.5 movement path exactly, and no dash).
+  //
+  // These are the DERIVED PARAMETERS only. The live cooldown, the active window and the
+  // dash direction are RUNTIME state on systems/DashSystem.js, for exactly the reason
+  // the shield's live charge count is: this fold RESETS every field and re-derives the
+  // whole store on EVERY card pick, so a live timer kept here would be refunded by
+  // picking any unrelated item (a free dash once per level).
+  //  - moveSpeedMult  : the fractional movement-speed bonus (0.2 = +20%).
+  //  - dashCooldownMs : the interval (ms) that GATES a dash. ⚠ Like shieldRechargeMs it
+  //                     folds ADDITIVELY, so a hypothetical SECOND dash-bearing item
+  //                     would make the dash SLOWER, not faster (3000 + 2000 = 5000ms).
+  //                     No such item exists — Afterburner is the only dash item — but an
+  //                     Epic 11/12 author adding one must fold a RATE or a fractional
+  //                     `*Mult` instead of stacking another interval here. It is also
+  //                     the dash's ENABLE flag: DashSystem fails CLOSED on 0/junk, so a
+  //                     build with no interval owns no dash (which is why Lv1 has none).
+  //  - dashIFrames    : the Lv3+ invulnerability FLAG (>= 1 enables), mirroring
+  //                     shieldKnockback.
+  //  - dashDamage     : the Lv4+ contact-damage FLAG (>= 1 enables). The MAGNITUDE lives
+  //                     in the DASH_CONTACT_DAMAGE constant, not here, so a second
+  //                     dash-bearing item could never double it.
+  //  - dashTrail      : the Lv5 burning-trail FLAG (>= 1 enables). Cosmetic only.
   moveSpeedMult: 1,
+  dashCooldownMs: 0,
+  dashIFrames: 0,
+  dashDamage: 0,
+  dashTrail: 0,
   // Defense (Nanite Shield, Story 10.4). All three are ADDITIVE/COUNT fields, so they
   // base at 0 — no Nanite Shield owned means the pre-10.4 death path exactly.
   //  - shieldCharges    : the MAXIMUM number of absorb charges, NOT the live count.

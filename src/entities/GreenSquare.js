@@ -33,6 +33,15 @@ import {
 //             frozen (GreenSquareSystem skips its threat/flee/aggro tick); it
 //             renders a spawn-in cue. Defaults to 0 (spawned-and-active);
 //             GreenSquareSystem.spawn overwrites it.
+//  - _dashHitSeq : the Afterburner dash's ONE-HIT-PER-DASH stamp (Story 10.5).
+//             LAZILY added by DashSystem's sweep on the first dash contact — it is
+//             deliberately NOT initialized by this factory, so an instance that has
+//             never been dash-hit simply lacks the field (`undefined` matches no
+//             `dashSeq`, which starts at 1). Holds the `dashSeq` of the dash that
+//             last hit this instance; the sweep skips any enemy already carrying the
+//             CURRENT seq, so one press lands one hit even when a wall clamp holds
+//             the ship still for the whole window. `dashSeq` only ever increases, so
+//             a recycled instance can never carry a stale stamp into a later dash.
 
 /**
  * Create a zeroed green square with its collision radius, base score, a false

@@ -13,6 +13,7 @@ import {
   ARENA_BORDER_INSET,
   HUD_MARGIN,
   TOUCH_BOMB_BUTTON,
+  TOUCH_DASH_BUTTON,
 } from '../config/constants.js';
 
 // mobileLayout is the Phaser-free responsive-layout seam (Story 7.2): CSS→logical
@@ -120,6 +121,40 @@ describe('mobileLayout — computeMobileLayout (placement)', () => {
     expect(layout.bomb.x).toBe(TOUCH_BOMB_BUTTON.x);
     expect(layout.bomb.y).toBe(TOUCH_BOMB_BUTTON.y - 21);
     expect(layout.bomb.radius).toBe(TOUCH_BOMB_BUTTON.radius);
+  });
+
+  // --- Afterburner dash button (Story 10.5) --------------------------------
+  it('row: desktop (all insets 0) → the dash button at today’s fixed position verbatim', () => {
+    const layout = computeMobileLayout(NO_INSETS);
+    expect(layout.dash).toEqual({
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+      radius: TOUCH_DASH_BUTTON.radius,
+    });
+  });
+
+  it('raises the dash button by the BOTTOM inset only (x + radius unchanged)', () => {
+    const layout = computeMobileLayout({ ...NO_INSETS, bottom: 21 });
+    expect(layout.dash.x).toBe(TOUCH_DASH_BUTTON.x);
+    expect(layout.dash.y).toBe(TOUCH_DASH_BUTTON.y - 21);
+    expect(layout.dash.radius).toBe(TOUCH_DASH_BUTTON.radius);
+  });
+
+  it('a RIGHT inset never reaches the dash button (it sits far in from that edge)', () => {
+    // The reason the dash gets the bomb's bottom-inset-only treatment rather than a
+    // right-anchored one.
+    const layout = computeMobileLayout({ ...NO_INSETS, right: 60 });
+    expect(layout.dash.x).toBe(TOUCH_DASH_BUTTON.x);
+    expect(ARENA_WIDTH - (TOUCH_DASH_BUTTON.x + TOUCH_DASH_BUTTON.radius)).toBeGreaterThan(
+      200,
+    );
+  });
+
+  it('moves the bomb and the dash TOGETHER (the bottom row stays a row)', () => {
+    const layout = computeMobileLayout({ ...NO_INSETS, bottom: 34 });
+    expect(layout.dash.y - layout.bomb.y).toBe(
+      TOUCH_DASH_BUTTON.y - TOUCH_BOMB_BUTTON.y,
+    );
   });
 });
 

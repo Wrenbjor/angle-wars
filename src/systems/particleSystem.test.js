@@ -13,6 +13,11 @@ import {
   PARTICLE_TRAIL_INTERVAL_MS,
   PARTICLE_TRAIL_SPEED,
   PARTICLE_TRAIL_COLOR,
+  PARTICLE_DASH_TRAIL_INTERVAL_MS,
+  PARTICLE_DASH_TRAIL_LIFETIME_MS,
+  PARTICLE_DASH_TRAIL_SPEED,
+  PARTICLE_DASH_TRAIL_SIZE,
+  PARTICLE_DASH_TRAIL_COLOR,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -484,5 +489,150 @@ describe('ParticleSystem — zero-alloc reuse', () => {
     expect(p1.ageMs).toBe(0);
     // Reuse consumed the single free slot before any growth (else freeCount === 1).
     expect(system.pool.freeCount).toBe(0);
+  });
+});
+
+// --- Afterburner Lv5 burning dash trail (Story 10.5) -------------------------
+// Section (4): the same throttled accumulator as the thrust trail, gated on
+// DashSystem.trailActive() (which reads the PUBLISHED `movementActive`, so the burn is
+// laid on exactly the ticks the ship travelled). Cosmetic only — it damages nothing.
+
+/**
+ * A DashSystem stand-in exposing only what ParticleSystem reads: `trailActive()` and
+ * the dash direction. `trailing` is flipped by the test to open/close the window.
+ */
+function fakeDash(dirX = 1, dirY = 0, trailing = true) {
+  return {
+    dirX,
+    dirY,
+    trailing,
+    trailActive() {
+      return this.trailing;
+    },
+  };
+}
+
+describe('ParticleSystem — the burning dash trail', () => {
+  it('emits ONE particle per PARTICLE_DASH_TRAIL_INTERVAL_MS while trailing', () => {
+    const dash = fakeDash(1, 0);
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(300, 400, 0),
+      fakeInput(0, 0), // no thrust intent — the ONLY emitter is the dash trail
+      constRng(0.5),
+      PARTICLE_MAX,
+      dash,
+    );
+    const ticks = 12;
+    for (let i = 0; i < ticks; i++) system.fixedUpdate(DT);
+    const expected = Math.floor((ticks * DT) / PARTICLE_DASH_TRAIL_INTERVAL_MS);
+    expect(system.pool.activeCount).toBe(expected);
+    expect(expected).toBeGreaterThan(0);
+  });
+
+  it('emits at the BURNING colour and size, opposite the DASH direction', () => {
+    const dash = fakeDash(1, 0); // dashing +x → the burn streams toward −x
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(300, 400, 0),
+      fakeInput(0, 0),
+      constRng(0.5), // rng 0.5 → zero spread jitter
+      PARTICLE_MAX,
+      dash,
+    );
+    system.fixedUpdate(DT);
+    const [p] = activeParticles(system);
+    // ORIGIN: the ship's post-move position, exactly like the thrust trail's sibling
+    // assertion. Without these two lines an _emit(0, 0, ...) regression is invisible.
+    expect(p.x).toBe(300);
+    expect(p.y).toBe(400);
+    expect(p.color).toBe(PARTICLE_DASH_TRAIL_COLOR);
+    expect(p.size).toBe(PARTICLE_DASH_TRAIL_SIZE);
+    expect(p.lifeMs).toBe(PARTICLE_DASH_TRAIL_LIFETIME_MS);
+    // Direction: opposite the dash, at the configured speed.
+    expect(p.vx).toBeCloseTo(-PARTICLE_DASH_TRAIL_SPEED, 6);
+    expect(p.vy).toBeCloseTo(0, 6);
+  });
+
+  it('emits NOTHING when trailActive() is false (Lv2–Lv4, or no dash running)', () => {
+    const dash = fakeDash(1, 0, false);
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(300, 400, 0),
+      fakeInput(0, 0),
+      constRng(0.5),
+      PARTICLE_MAX,
+      dash,
+    );
+    for (let i = 0; i < 60; i++) system.fixedUpdate(DT);
+    expect(system.pool.activeCount).toBe(0);
+  });
+
+  it('RESETS the accumulator the instant the dash stops trailing (the burn ends cleanly)', () => {
+    const dash = fakeDash(1, 0, true);
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(0, 0, 0),
+      fakeInput(0, 0),
+      constRng(0.5),
+      PARTICLE_MAX,
+      dash,
+    );
+    // Bank a partial interval, then close the window.
+    system.fixedUpdate(1);
+    expect(system._dashTrailAccumMs).toBeGreaterThan(0);
+    dash.trailing = false;
+    system.fixedUpdate(DT);
+    expect(system._dashTrailAccumMs).toBe(0);
+    const after = system.pool.activeCount;
+    // Reopening starts a FULL interval rather than inheriting the banked time.
+    dash.trailing = true;
+    system.fixedUpdate(1);
+    expect(system.pool.activeCount).toBe(after);
+  });
+
+  it('honours the particle cap while STILL draining the accumulator', () => {
+    const dash = fakeDash(1, 0);
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(0, 0, 0),
+      fakeInput(0, 0),
+      constRng(0.5),
+      2, // tiny cap
+      dash,
+    );
+    for (let i = 0; i < 40; i++) system.fixedUpdate(DT);
+    expect(system.pool.activeCount).toBeLessThanOrEqual(2);
+    // Drained, not banked: the accumulator never grows without bound.
+    expect(system._dashTrailAccumMs).toBeLessThan(PARTICLE_DASH_TRAIL_INTERVAL_MS);
+  });
+
+  it('is INDEPENDENT of the thrust trail (both can run, neither suppresses the other)', () => {
+    const dash = fakeDash(0, 1);
+    const system = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(0, 0, 0),
+      fakeInput(1, 0), // thrust intent above the threshold
+      constRng(0.5),
+      PARTICLE_MAX,
+      dash,
+    );
+    for (let i = 0; i < 12; i++) system.fixedUpdate(DT);
+    const colors = new Set(activeParticles(system).map((p) => p.color));
+    expect(colors.has(PARTICLE_TRAIL_COLOR)).toBe(true);
+    expect(colors.has(PARTICLE_DASH_TRAIL_COLOR)).toBe(true);
+  });
+
+  it('a FIVE-ARG construction is byte-identical to pre-10.5 (no dash trail ever)', () => {
+    const fiveArg = new ParticleSystem(
+      fakeCollision(),
+      fakeShip(0, 0, 0),
+      fakeInput(0, 0),
+      constRng(0.5),
+      PARTICLE_MAX,
+    );
+    expect(fiveArg.dashSystem).toBeNull();
+    for (let i = 0; i < 60; i++) fiveArg.fixedUpdate(DT);
+    expect(fiveArg.pool.activeCount).toBe(0);
   });
 });

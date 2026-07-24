@@ -10,7 +10,8 @@ import {
 //
 // Runs LAST in the world pipeline (after HighScoreSystem), so within each fixed
 // tick every input it reads is already final: CollisionSystem has latched
-// bulletKillCount (this tick's bullet kills, before BlackHole/Bomb appends),
+// bulletKillCount (this tick's PLAYER-DAMAGE kills — bullets, then the Story 10.5
+// dash sweep, both through applyPlayerDamage — before BlackHole/Bomb appends),
 // BombSystem has raised its shockwave latch on a detonation, PlayerDeathSystem has
 // latched the death point, and holePool reflects the current Black Hole. Reading
 // at end-of-tick avoids one-tick lag and any reordering of the carefully-ordered
@@ -20,7 +21,9 @@ import {
 // only ever WRITES its own state (never any pool/entity/score). Each fixed step it:
 //   1. advances every active ripple's age by dt and expires those past the lifetime,
 //   2. emits ONE ripple per this-tick trigger:
-//        - explosion: each enemy destroyed by a player bullet this tick
+//        - explosion: each enemy destroyed by PLAYER DAMAGE this tick (a bullet, or
+//          an Afterburner Lv4+ dash contact — Story 10.5 widened this contract; the
+//          `bulletKill*` names are kept because six consumers read them)
 //          (collisionSystem.bulletKillX/Y[0 .. bulletKillCount) — coordinate
 //          snapshots, so a mid-tick pool-recycle of the enemy can't move the origin),
 //        - bomb: one at the detonation origin on the shockwave rising edge,
@@ -41,8 +44,9 @@ import {
 export class GridFieldSystem extends System {
   /**
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem Source
-   *   of this tick's bullet-kill coordinate snapshots: bulletKillX/Y[0 ..
-   *   bulletKillCount) (recycle-proof, unlike the killedEnemies objects).
+   *   of this tick's PLAYER-DAMAGE kill coordinate snapshots: bulletKillX/Y[0 ..
+   *   bulletKillCount) — bullets and the Story 10.5 dash sweep (recycle-proof,
+   *   unlike the killedEnemies objects).
    * @param {import('./BombSystem.js').BombSystem} bombSystem Source of the bomb
    *   shockwave latch (shockwaveMs rising edge + shockwaveX/Y origin).
    * @param {import('./PlayerDeathSystem.js').PlayerDeathSystem} playerDeathSystem
@@ -102,7 +106,9 @@ export class GridFieldSystem extends System {
       }
     }
 
-    // (2a) Explosion ripples: one per enemy destroyed by a player bullet this tick.
+    // (2a) Explosion ripples: one per enemy destroyed by PLAYER DAMAGE this tick (a
+    //      bullet, or a Story 10.5 Lv4+ dash contact — both append through
+    //      CollisionSystem.applyPlayerDamage).
     //      Read the COORDINATE SNAPSHOTS bulletKillX/Y[0 .. bulletKillCount) — NOT
     //      the (recyclable) killedEnemies objects: CollisionSystem releases a killed
     //      enemy to its pool mid-tick, and a later same-tick system (e.g. a black-hole

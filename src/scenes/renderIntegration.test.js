@@ -439,8 +439,12 @@ describe('render-integration — touch twin-stick wiring (ArenaScene, Story 7.1)
     // during a pause would otherwise strand a stick (ship drifts on resume) or a
     // bomb latched at the pause edge (detonates on resume). The pause early-return
     // must clear the overlay and call resetTouch() before bailing.
+    //
+    // The two calls must still be ADJACENT and still precede the return; Story 10.5
+    // inserted the InputState dash drain between resetTouch() and that return (pinned
+    // by its own test below), so the tail of this pattern allows that one statement.
     expect(arenaSrc).toMatch(
-      /this\.touchOverlayGraphics\.clear\(\);\s*this\.inputSampler\.resetTouch\(\);\s*return;/,
+      /this\.touchOverlayGraphics\.clear\(\);\s*this\.inputSampler\.resetTouch\(\);[\s\S]{0,900}?return;/,
     );
   });
 
@@ -522,6 +526,42 @@ describe('render-integration — responsive mobile layout wiring (Story 7.2)', (
     expect(arenaSrc).toMatch(/this\.hudText\.setPosition\(\s*layout\.hud\.x\s*,\s*layout\.hud\.y\s*\)/);
     expect(arenaSrc).toMatch(
       /this\.inputSampler\.setBombButton\(\s*layout\.bomb\.x\s*,\s*layout\.bomb\.y\s*,\s*layout\.bomb\.radius\s*\)/,
+    );
+    // Story 10.5: the dash button gets the SAME layout push the bomb does. The bomb's
+    // line has always been pinned here; the dash's originally was not, and deleting it
+    // left the whole suite green. This assertion is what makes that impossible.
+    expect(arenaSrc).toMatch(
+      /this\.inputSampler\.setDashButton\(\s*layout\.dash\.x\s*,\s*layout\.dash\.y\s*,\s*layout\.dash\.radius\s*\)/,
+    );
+  });
+
+  it('pushes the dash button OWNERSHIP GATE every render frame (Story 10.5)', () => {
+    // A per-frame push, not a one-shot at create: the dash is unlocked MID-RUN by a
+    // card pick, so the button must appear the moment the fold grants it. Deleting
+    // this line would silently strand every touch player at "no dash button, ever".
+    expect(arenaSrc).toMatch(
+      /this\.inputSampler\.setDashEnabled\(\s*this\.dashSystem\.dashEnabled\(\)\s*\)/,
+    );
+    // …and the handle it reads is assigned from the factory return.
+    expect(arenaSrc).toMatch(/this\.dashSystem\s*=\s*arena\.dashSystem/);
+  });
+
+  it('drains the DASH latch at the PAUSE edge too (Story 10.5)', () => {
+    // resetTouch() clears only the TouchControls model latch; once sample() has copied
+    // a press into inputState.dashQueued, nothing else drains it. Without this line a
+    // dash latched on a frame that produced zero fixed steps, then paused, fires the
+    // instant the run resumes and burns the whole cooldown.
+    expect(arenaSrc).toMatch(
+      /this\.inputSampler\.resetTouch\(\);[\s\S]{0,900}?this\.inputState\.consumeDash\(\);[\s\S]{0,40}?return;/,
+    );
+  });
+
+  it('drains the DASH latch alongside the bomb under the level-up modal (Story 10.5)', () => {
+    // `inputState.clear()` deliberately clears only the continuous move/aim levels, so
+    // without an explicit consumeDash a dash queued under the card overlay would fire
+    // the instant the overlay closed.
+    expect(arenaSrc).toMatch(
+      /this\.inputState\.consumeBomb\(\);[\s\S]{0,400}?this\.inputState\.consumeDash\(\)/,
     );
   });
 

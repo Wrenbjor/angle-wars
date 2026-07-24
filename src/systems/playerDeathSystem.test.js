@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { PlayerDeathSystem } from './PlayerDeathSystem.js';
 import { NaniteShieldSystem } from './NaniteShieldSystem.js';
+import { DashSystem } from './DashSystem.js';
+import { CollisionSystem } from './CollisionSystem.js';
+import { PlayerMovementSystem } from './PlayerMovementSystem.js';
+import { createBullet } from '../entities/Bullet.js';
+import { InputState } from '../input/InputState.js';
 import { EnemySystem } from './EnemySystem.js';
 import { Pool } from '../core/Pool.js';
 import { createSeeker } from '../entities/Seeker.js';
@@ -1125,5 +1130,275 @@ describe('PlayerDeathSystem — Nanite Shield absorb (Story 10.4)', () => {
     expect(playerState.lives).toBe(PLAYER_START_LIVES); // still no life cost
     expect(e.x).toBeGreaterThan(620); // shoved outward by the break pulse
     expect(enemyPool.activeCount).toBe(1); // moved, never killed or released
+  });
+});
+
+// --- Afterburner dash seams (Story 10.5) -------------------------------------
+describe('PlayerDeathSystem — the Afterburner dash i-frames and cancel (Story 10.5)', () => {
+  // Wired through the REAL DashSystem over the REAL fold of the SHIPPED registry, so
+  // these cases fail if the registry numbers, the fold, the dash's window accounting or
+  // the death-seam branches drift apart. The dash is an OPTIONAL 6th constructor arg,
+  // mirroring `shieldSystem` at slot 5, so every pre-10.5 construction is untouched.
+
+  function makeDashingSystem(level, { withShield = false } = {}) {
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const playerState = createPlayerState();
+    const scoreState = createScoreState();
+    const inputState = new InputState();
+    const playerStats = createPlayerStats();
+    const owned = { afterburner: level };
+    if (withShield) owned['nanite-shield'] = 1;
+    recomputePlayerStats(playerStats, owned, ITEM_REGISTRY);
+    const collisionSystem = new CollisionSystem(new Pool(createBullet), [enemyPool]);
+    const dashSystem = new DashSystem(
+      ship,
+      inputState,
+      [enemyPool],
+      collisionSystem,
+      playerStats,
+    );
+    let shieldSystem = null;
+    if (withShield) {
+      shieldSystem = new NaniteShieldSystem(ship, [enemyPool], playerStats);
+      shieldSystem.fixedUpdate(DT);
+    }
+    const system = new PlayerDeathSystem(
+      ship,
+      [enemyPool],
+      playerState,
+      scoreState,
+      shieldSystem,
+      dashSystem,
+    );
+    return {
+      ship,
+      enemyPool,
+      playerState,
+      scoreState,
+      inputState,
+      dashSystem,
+      shieldSystem,
+      system,
+    };
+  }
+
+  /** Open a dash and advance it to the first tick with the window PUBLISHED. */
+  function openDash(h) {
+    h.inputState.setMove(1, 0);
+    h.inputState.queueDash();
+    h.dashSystem.fixedUpdate(DT);
+    h.dashSystem.fixedUpdate(DT);
+    expect(h.dashSystem.movementActive).toBe(true);
+  }
+
+  it('Lv3+ i-frames: a lethal contact costs no life, no deathSeq, no multiplier reset, no shield charge', () => {
+    const h = makeDashingSystem(3, { withShield: true });
+    h.ship.x = 400;
+    h.ship.y = 300;
+    addSeeker(h.enemyPool, 400, 300);
+    h.scoreState.multiplier = 6;
+    h.scoreState.multiplierKills = 4;
+    expect(h.shieldSystem.charges).toBe(1);
+    openDash(h);
+
+    h.system.fixedUpdate(DT);
+
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(h.system.deathSeq).toBe(0);
+    expect(h.scoreState.multiplier).toBe(6);
+    expect(h.scoreState.multiplierKills).toBe(4);
+    // The dash is the CHEAPER defense — the gate returns before _applyDeath, so no
+    // charge is spent.
+    expect(h.shieldSystem.charges).toBe(1);
+    // Position kept (no respawn teleport).
+    expect(h.ship.x).toBe(400);
+    expect(h.ship.y).toBe(300);
+  });
+
+  it('Lv3+ i-frames SUPPRESS AND DROP a pendingDeath (never deferred to a later tick)', () => {
+    const h = makeDashingSystem(3);
+    openDash(h);
+    h.playerState.pendingDeath = true;
+
+    h.system.fixedUpdate(DT);
+    expect(h.playerState.pendingDeath).toBe(false); // read-and-cleared at the top
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES);
+
+    // Close the window; the dropped request must NOT re-fire.
+    for (let i = 0; i < 20; i++) h.dashSystem.fixedUpdate(DT);
+    expect(h.dashSystem.movementActive).toBe(false);
+    h.system.fixedUpdate(DT);
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(h.system.deathSeq).toBe(0);
+  });
+
+  it('the i-frame gate counts NOTHING down (DashSystem owns the window)', () => {
+    const h = makeDashingSystem(3);
+    addSeeker(h.enemyPool, h.ship.x, h.ship.y);
+    openDash(h);
+    const remainingBefore = h.dashSystem.remainingMs;
+    expect(h.playerState.invulnMs).toBe(0);
+    h.system.fixedUpdate(DT);
+    // No invuln consumed, and the dash window is untouched by this system.
+    expect(h.playerState.invulnMs).toBe(0);
+    expect(h.dashSystem.remainingMs).toBe(remainingBefore);
+  });
+
+  it('the ordinary death flow resumes the moment the window closes', () => {
+    const h = makeDashingSystem(3);
+    addSeeker(h.enemyPool, h.ship.x, h.ship.y);
+    openDash(h);
+    for (let i = 0; i < 30; i++) {
+      h.system.fixedUpdate(DT);
+      h.dashSystem.fixedUpdate(DT);
+      if (!h.dashSystem.movementActive) break;
+    }
+    h.system.fixedUpdate(DT);
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(h.system.deathSeq).toBe(1);
+  });
+
+  it('Lv2 (no i-frames): the ordinary flow runs AND the dash is CANCELLED — contact path', () => {
+    const h = makeDashingSystem(2);
+    h.ship.x = 100;
+    h.ship.y = 100;
+    addSeeker(h.enemyPool, 100, 100);
+    openDash(h);
+    expect(h.dashSystem.active).toBe(true);
+    const cooldown = h.dashSystem.cooldownRemainingMs;
+
+    h.system.fixedUpdate(DT);
+
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(h.system.deathSeq).toBe(1);
+    expect(h.dashSystem.active).toBe(false);
+    expect(h.dashSystem.movementActive).toBe(false);
+    expect(h.dashSystem.remainingMs).toBe(0);
+    // The dash was SPENT — the cooldown is not refunded.
+    expect(h.dashSystem.cooldownRemainingMs).toBe(cooldown);
+  });
+
+  it('Lv2 (no i-frames): the dash is CANCELLED on the pendingDeath path too', () => {
+    const h = makeDashingSystem(2);
+    openDash(h);
+    h.playerState.pendingDeath = true;
+    h.system.fixedUpdate(DT);
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(h.dashSystem.active).toBe(false);
+    expect(h.dashSystem.remainingMs).toBe(0);
+  });
+
+  it('a SHIELD ABSORB during an unprotected Lv2 dash does NOT cancel the dash', () => {
+    // `cancel()` sits BELOW the shield's tryAbsorb guard in _applyDeath, and that
+    // placement is load-bearing: an absorb is not a death — no life, no respawn, no
+    // teleport — so there is no re-parked ship to fling out and nothing to cancel.
+    // Hoisting the cancel above the absorb guard would silently eat the player's dash
+    // mid-flight AND still burn its cooldown, on a hit that cost them nothing else.
+    const h = makeDashingSystem(2, { withShield: true });
+    h.ship.x = 420;
+    h.ship.y = 260;
+    addSeeker(h.enemyPool, 420, 260);
+    expect(h.shieldSystem.charges).toBe(1);
+    openDash(h);
+    expect(h.dashSystem.active).toBe(true);
+    const remainingBefore = h.dashSystem.remainingMs;
+    const cooldownBefore = h.dashSystem.cooldownRemainingMs;
+
+    h.system.fixedUpdate(DT);
+
+    // The absorb happened: a charge spent, the life kept, the ship not teleported.
+    expect(h.shieldSystem.charges).toBe(0);
+    expect(h.shieldSystem.absorbSeq).toBe(1);
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(h.system.deathSeq).toBe(0);
+    expect(h.ship.x).toBe(420);
+    expect(h.ship.y).toBe(260);
+    // …and the dash SURVIVED it, untouched.
+    expect(h.dashSystem.active).toBe(true);
+    expect(h.dashSystem.movementActive).toBe(true);
+    expect(h.dashSystem.remainingMs).toBe(remainingBefore);
+    expect(h.dashSystem.cooldownRemainingMs).toBe(cooldownBefore);
+  });
+
+  it('a FIVE-ARG construction is byte-identical to pre-10.5', () => {
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    expect(system.dashSystem).toBeNull();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+    system.fixedUpdate(DT);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(ship.x).toBe(CENTER_X);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+  });
+
+  it('WINDOW ALIGNMENT: the protected ticks are EXACTLY the ticks the ship travelled', () => {
+    // Driven in WORLD ORDER — movement, then dash, then death — with a real
+    // PlayerMovementSystem and a real DashSystem. The recorded tick sets must be
+    // IDENTICAL: no leading protected-but-stationary tick, and (the defect this
+    // replaces) no trailing travelling-but-unprotected tick.
+    const h = makeDashingSystem(3);
+    const movement = new PlayerMovementSystem(
+      h.ship,
+      h.inputState,
+      { moveSpeedMult: 1.25 },
+      h.dashSystem,
+    );
+    h.inputState.setMove(1, 0);
+    h.inputState.queueDash();
+
+    const travelled = [];
+    const protectedTicks = [];
+    for (let t = 0; t < 30; t++) {
+      const before = { vx: h.ship.vx, vy: h.ship.vy };
+      const wasDashing = h.dashSystem.active;
+      movement.fixedUpdate(DT);
+      if (wasDashing) travelled.push(t);
+      h.dashSystem.fixedUpdate(DT);
+      if (h.dashSystem.iFramesActive()) protectedTicks.push(t);
+      h.system.fixedUpdate(DT);
+      expect(before).toBeDefined();
+    }
+    expect(travelled.length).toBeGreaterThan(0);
+    expect(protectedTicks).toEqual(travelled);
+  });
+
+  it('a death mid-Lv2-dash leaves the respawned ship AT ARENA CENTRE on the following ticks', () => {
+    // Without the cancel the movement dash branch flings the freshly-respawned ship
+    // ~238px back out during its invulnerability window.
+    const h = makeDashingSystem(2);
+    const movement = new PlayerMovementSystem(
+      h.ship,
+      h.inputState,
+      { moveSpeedMult: 1.2 },
+      h.dashSystem,
+    );
+    h.ship.x = 300;
+    h.ship.y = 300;
+    addSeeker(h.enemyPool, 300, 300);
+    h.inputState.setMove(1, 0);
+    h.inputState.queueDash();
+    // Run world-ordered ticks until the death lands, then stop driving the stick so
+    // any remaining displacement can only come from a live dash window.
+    for (let t = 0; t < 20; t++) {
+      movement.fixedUpdate(DT);
+      h.dashSystem.fixedUpdate(DT);
+      h.system.fixedUpdate(DT);
+      if (h.playerState.lives < PLAYER_START_LIVES) break;
+    }
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(h.dashSystem.active).toBe(false); // cancelled with the death
+    expect(h.ship.x).toBe(CENTER_X);
+    expect(h.ship.y).toBe(CENTER_Y);
+    h.inputState.setMove(0, 0);
+    for (let t = 0; t < 20; t++) {
+      movement.fixedUpdate(DT);
+      h.dashSystem.fixedUpdate(DT);
+      h.system.fixedUpdate(DT);
+    }
+    // Still at centre. Without the cancel the dash branch would have driven it ~238px
+    // away during the respawn's invulnerability window.
+    expect(Math.hypot(h.ship.x - CENTER_X, h.ship.y - CENTER_Y)).toBeLessThan(1);
   });
 });

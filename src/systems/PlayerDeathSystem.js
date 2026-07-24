@@ -43,6 +43,16 @@ import { resetMultiplier } from '../state/ScoreState.js';
 // _applyDeath — after the game-over/invuln guards its callers already passed — a
 // charge can never be spent while the player was already safe.
 //
+// Story 10.5 (Afterburner) adds TWO dash seams. (a) An i-frame GATE in fixedUpdate,
+// between the invulnerability countdown and the `forced` branch: while a Lv3+ dash
+// window is open the player takes no lethal contact at all — no life, no deathSeq, no
+// multiplier reset, and no shield charge (the gate returns before _applyDeath, so the
+// dash is the cheaper defense and is used first). It counts nothing down; DashSystem
+// owns the window. (b) A `dashSystem.cancel()` inside the shared death body, so a death
+// during an UNPROTECTED (Lv2) dash closes the window with the death — otherwise the
+// respawn re-parks the ship at arena centre and the movement dash branch flings it back
+// out during its invulnerability.
+//
 // Circle-circle lethal when center distance ≤ ship.radius + enemy.radius
 // (boundary counts, mirroring CollisionSystem). Enemies are never destroyed here
 // — ship contact only kills the player; bullets destroy enemies (Story 1.4).
@@ -68,14 +78,28 @@ export class PlayerDeathSystem extends System {
    *   replaces the whole life/respawn/multiplier flow. Optional (slot 5, mirroring
    *   `scoreState` at slot 4) so every existing caller and test stub is unchanged and
    *   a build with no shield behaves byte-for-byte as it did pre-10.4.
+   * @param {{iFramesActive:() => boolean, cancel:() => void}|null} [dashSystem=null]
+   *   Optional Afterburner dash runtime (Story 10.5). When provided, an active Lv3+
+   *   dash makes the player invulnerable for the window, and every death CANCELS an
+   *   in-flight dash. Optional (slot 6, mirroring `shieldSystem` at slot 5) so every
+   *   existing caller and test stub is unchanged and a build with no dash behaves
+   *   byte-for-byte as it did pre-10.5.
    */
-  constructor(ship, enemyPools, playerState, scoreState = null, shieldSystem = null) {
+  constructor(
+    ship,
+    enemyPools,
+    playerState,
+    scoreState = null,
+    shieldSystem = null,
+    dashSystem = null,
+  ) {
     super();
     this.ship = ship;
     this.enemyPools = enemyPools;
     this.playerState = playerState;
     this.scoreState = scoreState;
     this.shieldSystem = shieldSystem;
+    this.dashSystem = dashSystem;
 
     // Public read-only observability latch (Story 4.2): the player's death point.
     // On every death (both a respawning death and the final game-over death) the
@@ -125,6 +149,25 @@ export class PlayerDeathSystem extends System {
       if (ps.invulnMs < 0) {
         ps.invulnMs = 0;
       }
+      return;
+    }
+
+    // Story 10.5 — DASH I-FRAMES (Afterburner Lv3+). Placed AFTER the invuln countdown
+    // and BEFORE the `forced` branch, which gives it exactly the semantics the invuln
+    // window already has: the contact scan is skipped AND a `pendingDeath` requested
+    // this tick is suppressed and DROPPED (it was read-and-cleared at the very top),
+    // never deferred to a later, vulnerable tick.
+    //
+    // It deliberately counts NOTHING down — DashSystem owns the window, and consuming
+    // `invulnMs` here would silently shorten a respawn's protection. And because it
+    // returns before _applyDeath(), a dash through an enemy spends no shield charge:
+    // the dash is the cheaper defense and it is used first.
+    //
+    // `iFramesActive()` reads DashSystem's PUBLISHED `movementActive`, so the protected
+    // ticks are exactly the ticks PlayerMovementSystem applied dash velocity — no
+    // unprotected leading tick, and (the defect this replaces) no unprotected trailing
+    // tick at the tail of the travel.
+    if (this.dashSystem && this.dashSystem.iFramesActive()) {
       return;
     }
 
@@ -208,6 +251,17 @@ export class PlayerDeathSystem extends System {
       ps.invulnMs = SHIELD_ABSORB_INVULN_MS;
       return;
     }
+
+    // Story 10.5 — a death CANCELS an in-flight dash. Only reachable for an UNPROTECTED
+    // dash (Lv2 owns the dash but no i-frames; a Lv3+ window returned in fixedUpdate
+    // above), and placed inside the SHARED body so it covers BOTH the contact path and
+    // the programmatic `pendingDeath` path, exactly as the rest of _applyDeath does.
+    //
+    // Without it the window survives the death: the respawn below re-parks the ship at
+    // arena centre and the movement dash branch immediately flings it ~238px back out
+    // during its invulnerability. `cancel()` does NOT refund the cooldown — the dash was
+    // spent.
+    this.dashSystem?.cancel();
 
     // Story 4.2 death latch: capture the death point BEFORE the respawn below
     // teleports the ship to arena center, so the grid's death ripple originates

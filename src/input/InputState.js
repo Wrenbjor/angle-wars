@@ -31,6 +31,21 @@ export class InputState {
      * how many key edges land within a single fixed-step window.
      */
     this.bombQueued = false;
+    /**
+     * Latched Afterburner DASH request (Story 10.5): the render↔sim edge seam for
+     * the discrete dash press, byte-for-byte mirroring `bombQueued`. The Phaser
+     * input boundary sets it on the dash key's / gamepad button's just-down edge
+     * (or the touch button's tap — queueDash); DashSystem reads-and-clears it once
+     * per fixed step (consumeDash). A latch (not a level) so one press yields at
+     * most one dash regardless of how many render frames the button is held or how
+     * many edges land within a single fixed-step window.
+     *
+     * ⚠ `clear()` deliberately does NOT clear this (nor `bombQueued`) — it resets
+     * only the continuous move/aim levels. ArenaScene's level-up-modal drain must
+     * therefore call `consumeDash()` explicitly beside `consumeBomb()`, or a dash
+     * queued under the card overlay would fire when the overlay closes.
+     */
+    this.dashQueued = false;
   }
 
   /**
@@ -51,6 +66,29 @@ export class InputState {
   consumeBomb() {
     const queued = this.bombQueued;
     this.bombQueued = false;
+    return queued;
+  }
+
+  /**
+   * Latch an Afterburner dash request. Called at the Phaser input boundary on the
+   * dash key's / gamepad button's just-down edge, or from the touch button's one-tap
+   * latch. Idempotent within a fixed-step window — repeated calls before the next
+   * consumeDash still yield a single latched request.
+   */
+  queueDash() {
+    this.dashQueued = true;
+  }
+
+  /**
+   * Consume the latched dash request: return whether one was queued and clear the
+   * latch (reads-and-clears) so the same press never dashes twice. Called once per
+   * fixed step by the DashSystem — UNCONDITIONALLY, so a press arriving during the
+   * cooldown or mid-dash is discarded rather than buffered into the next opening.
+   * @returns {boolean} true if a dash press was pending this step.
+   */
+  consumeDash() {
+    const queued = this.dashQueued;
+    this.dashQueued = false;
     return queued;
   }
 

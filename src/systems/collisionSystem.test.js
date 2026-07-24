@@ -973,3 +973,107 @@ describe('createSeeker base value', () => {
     expect(createGreenSquare().score).toBe(GREEN_SQUARE_SCORE);
   });
 });
+
+// --- applyPlayerDamage: the single player-damage path (Story 10.5) -----------
+// Pass 2 was extracted verbatim into this public helper so a LATER system (DashSystem)
+// can append kills through the SAME armor-respecting path bullets use. The existing
+// bullet-vs-armor / bullet-vs-one-shot coverage above is the byte-identity proof — it
+// passes UNEDITED against the extracted implementation. These cases pin the helper's own
+// contract, and in particular that it stays correct when called MORE THAN ONCE outside
+// fixedUpdate (the dash's usage), which is what the counter-increment rewrite enabled.
+describe('CollisionSystem — applyPlayerDamage (the shared damage path)', () => {
+  it('returns TRUE and reports a full kill for a one-shot enemy', () => {
+    const { enemyPool, system } = makeSystem();
+    const e = addSeeker(enemyPool, 100, 200);
+    e.xp = 9;
+    const killed = system.applyPlayerDamage(e, enemyPool, 1);
+    expect(killed).toBe(true);
+    expect(system.killedEnemies).toEqual([e]);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletDamageCount).toBe(1);
+    expect(system.bulletKillX).toEqual([100]);
+    expect(system.bulletKillY).toEqual([200]);
+    expect(system.bulletKillXp).toEqual([9]);
+    expect(enemyPool.activeCount).toBe(0);
+  });
+
+  it('returns FALSE for an armored survivor: hp drops, no kill, but damage IS credited', () => {
+    const armoredPool = new Pool(createArmored);
+    const system = new CollisionSystem(new Pool(createBullet), [armoredPool]);
+    const e = armoredPool.acquire();
+    e.hp = ARMORED_HP;
+    const killed = system.applyPlayerDamage(e, armoredPool, 1);
+    expect(killed).toBe(false);
+    expect(e.hp).toBeCloseTo(ARMORED_HP - 1, 10);
+    expect(system.killedEnemies).toHaveLength(0);
+    expect(system.bulletKillCount).toBe(0);
+    expect(system.bulletDamageCount).toBe(1); // the Story 9.2 governor still sees it
+    expect(armoredPool.activeCount).toBe(1);
+  });
+
+  it('keeps the counters and the parallel snapshots INDEX-ALIGNED across repeated calls', () => {
+    // The dash's usage: several calls outside fixedUpdate, interleaving survivors and
+    // kills. `bulletKillCount` must count KILLS only, and index k of every snapshot
+    // array must belong to the k-th kill.
+    const seekers = new Pool(createSeeker);
+    const armored = new Pool(createArmored);
+    const system = new CollisionSystem(new Pool(createBullet), [seekers, armored]);
+    const a = addSeeker(seekers, 1, 2);
+    a.xp = 11;
+    const tank = armored.acquire();
+    tank.hp = ARMORED_HP;
+    const b = addSeeker(seekers, 3, 4);
+    b.xp = 22;
+
+    expect(system.applyPlayerDamage(a, seekers, 1)).toBe(true);
+    expect(system.applyPlayerDamage(tank, armored, 1)).toBe(false);
+    expect(system.applyPlayerDamage(b, seekers, 1)).toBe(true);
+
+    expect(system.bulletKillCount).toBe(2);
+    expect(system.bulletDamageCount).toBe(3);
+    expect(system.killedEnemies).toEqual([a, b]);
+    expect(system.bulletKillX).toEqual([1, 3]);
+    expect(system.bulletKillY).toEqual([2, 4]);
+    expect(system.bulletKillXp).toEqual([11, 22]);
+    // killedEnemies[0 .. bulletKillCount) is exactly the player-damage kills.
+    expect(system.killedEnemies.slice(0, system.bulletKillCount)).toEqual([a, b]);
+  });
+
+  it('routes each kill to the pool it was GIVEN, not to a guessed owner', () => {
+    const seekers = new Pool(createSeeker);
+    const squares = new Pool(createGreenSquare);
+    const system = new CollisionSystem(new Pool(createBullet), [seekers, squares]);
+    const s = addSeeker(seekers, 0, 0);
+    const g = squares.acquire();
+    system.applyPlayerDamage(s, seekers, 1);
+    system.applyPlayerDamage(g, squares, 1);
+    expect(seekers.activeCount).toBe(0);
+    expect(squares.activeCount).toBe(0);
+    expect(seekers.freeCount).toBe(1);
+    expect(squares.freeCount).toBe(1);
+  });
+
+  it('guards a NON-FINITE xp to 0 (a malformed instance never poisons the XP snapshot)', () => {
+    const { enemyPool, system } = makeSystem();
+    const e = addSeeker(enemyPool, 0, 0);
+    e.xp = NaN;
+    system.applyPlayerDamage(e, enemyPool, 1);
+    expect(system.bulletKillXp).toEqual([0]);
+  });
+
+  it('the top-of-tick reset is the ONLY place the counters are zeroed', () => {
+    // Helper-appended state from a later system must survive to end-of-tick (so it is
+    // scored / rippled / orbed) and then be cleared by the NEXT fixedUpdate.
+    const { enemyPool, system } = makeSystem();
+    system.fixedUpdate(DT);
+    const e = addSeeker(enemyPool, 0, 0);
+    system.applyPlayerDamage(e, enemyPool, 1); // "a later system this tick"
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.killedEnemies).toHaveLength(1);
+    system.fixedUpdate(DT);
+    expect(system.bulletKillCount).toBe(0);
+    expect(system.bulletDamageCount).toBe(0);
+    expect(system.killedEnemies).toHaveLength(0);
+    expect(system.bulletKillX).toHaveLength(0);
+  });
+});

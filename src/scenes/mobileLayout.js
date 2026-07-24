@@ -5,8 +5,8 @@
 // convention. ArenaScene is the SOLE Phaser boundary: it reads the four CSS
 // safe-area insets (via the injectable readSafeAreaInsetsCss boundary), converts
 // them to arena-logical units through the FIT letterbox (logicalSafeInsets), and
-// maps them to inset-adjusted positions for the HUD, the DEV debug readout, and the
-// smart-bomb button (computeMobileLayout). BootScene requests the best-effort
+// maps them to inset-adjusted positions for the HUD, the DEV debug readout, the
+// smart-bomb button and the dash button (computeMobileLayout). BootScene requests the best-effort
 // landscape lock (lockLandscape). No Phaser import here.
 //
 // The crux is the letterbox conversion: Phaser's FIT + CENTER_BOTH scales the fixed
@@ -22,6 +22,7 @@ import {
   ARENA_BORDER_INSET,
   HUD_MARGIN,
   TOUCH_BOMB_BUTTON,
+  TOUCH_DASH_BUTTON,
 } from '../config/constants.js';
 
 /**
@@ -67,14 +68,19 @@ export function logicalSafeInsets(insetsCss, parentW, parentH, logicalW, logical
 
 /**
  * Map the logical safe-area insets to inset-adjusted positions for the DEV debug
- * readout (top-left), the HUD (top-right, right-anchored), and the smart-bomb button
- * (bottom-center). Each is pushed IN from its edge by the logical inset for that
- * edge, so none is clipped or under a notch / rounded corner / home indicator. With
- * all-zero insets (desktop / no notch) the result equals today's fixed positions
- * verbatim (zero regression). The bomb keeps its fixed x + radius and is only raised
- * by the bottom inset. `m` is the arena-border-inset + HUD margin the text sits at.
+ * readout (top-left), the HUD (top-right, right-anchored), the smart-bomb button
+ * (bottom-center) and the Afterburner dash button (bottom row, right of the bomb —
+ * Story 10.5). Each is pushed IN from its edge by the logical inset for that edge, so
+ * none is clipped or under a notch / rounded corner / home indicator. With all-zero
+ * insets (desktop / no notch) the result equals today's fixed positions verbatim for
+ * every entry INCLUDING the dash (zero regression). The bomb and the dash each keep
+ * their fixed x + radius and are only raised by the bottom inset — correct for the
+ * dash because its right rim sits 560px in from the right edge (ARENA_WIDTH 1560 minus
+ * its x + radius, 1000), so no plausible right inset can reach it. `m` is the
+ * arena-border-inset + HUD margin the text sits at.
  * @param {{top:number,right:number,bottom:number,left:number}} logicalInsets
- * @returns {{debug:{x:number,y:number}, hud:{x:number,y:number}, bomb:{x:number,y:number,radius:number}}}
+ * @returns {{debug:{x:number,y:number}, hud:{x:number,y:number},
+ *   bomb:{x:number,y:number,radius:number}, dash:{x:number,y:number,radius:number}}}
  */
 export function computeMobileLayout(logicalInsets) {
   const { top, right, bottom, left } = logicalInsets;
@@ -86,6 +92,11 @@ export function computeMobileLayout(logicalInsets) {
       x: TOUCH_BOMB_BUTTON.x,
       y: TOUCH_BOMB_BUTTON.y - bottom,
       radius: TOUCH_BOMB_BUTTON.radius,
+    },
+    dash: {
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y - bottom,
+      radius: TOUCH_DASH_BUTTON.radius,
     },
   };
 }

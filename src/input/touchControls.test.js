@@ -5,6 +5,7 @@ import {
   TOUCH_STICK_MAX_RADIUS,
   TOUCH_STICK_DEADZONE,
   TOUCH_BOMB_BUTTON,
+  TOUCH_DASH_BUTTON,
 } from '../config/constants.js';
 
 // TouchControls is the Phaser-free floating twin-stick + bomb model. It is driven
@@ -327,5 +328,152 @@ describe('TouchControls — snapshot', () => {
     // moveVector / aimVector likewise reuse a persistent object.
     expect(t.moveVector()).toBe(t.moveVector());
     expect(t.aimVector()).toBe(t.aimVector());
+  });
+});
+
+// --- Afterburner dash button (Story 10.5) ------------------------------------
+// The dash mirrors the bomb's plumbing exactly, PLUS an OWNERSHIP GATE the bomb does
+// not need: the bomb is always available, the dash is a purchased capability. While the
+// gate is closed the button does not exist as far as the player is concerned.
+const DASH_X = TOUCH_DASH_BUTTON.x;
+const DASH_Y = TOUCH_DASH_BUTTON.y;
+
+/** A TouchControls with the dash OWNED (what Afterburner Lv2+ produces). */
+function ownedDash() {
+  const t = new TouchControls();
+  t.setDashEnabled(true);
+  return t;
+}
+
+describe('TouchControls — the dash button ownership gate', () => {
+  it('defaults to CLOSED: a tap in the dash region spawns an ordinary aim stick', () => {
+    const t = new TouchControls();
+    t.onPointerDown(1, DASH_X, DASH_Y);
+    // Pre-10.5 behavior exactly: the full right half is aim area again.
+    expect(t.snapshot().aim.active).toBe(true);
+    expect(t.consumeDash()).toBe(false);
+    expect(t.isActive()).toBe(true); // …because of the STICK, not the dash
+  });
+
+  it('publishes enabled:false in the snapshot so the overlay skips drawing it', () => {
+    const t = new TouchControls();
+    expect(t.snapshot().dash.enabled).toBe(false);
+    t.setDashEnabled(true);
+    expect(t.snapshot().dash.enabled).toBe(true);
+  });
+
+  it('opening the gate restores EVERY dash behavior', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, DASH_X, DASH_Y);
+    expect(t.snapshot().aim.active).toBe(false); // no stick spawned
+    expect(t.snapshot().dash.pressed).toBe(true);
+    expect(t.isActive()).toBe(true);
+    expect(t.consumeDash()).toBe(true);
+  });
+
+  it('closing the gate with a latch PENDING clears it (no stale press fires later)', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, DASH_X, DASH_Y);
+    t.setDashEnabled(false);
+    expect(t.consumeDash()).toBe(false);
+    expect(t.snapshot().dash.pressed).toBe(false);
+    expect(t.isActive()).toBe(false);
+  });
+
+  it('while CLOSED, isActive() ignores the dash entirely', () => {
+    const t = new TouchControls();
+    // Force the internal owner id as a paranoid check that the gate, not just the
+    // hit test, is what keeps isActive() honest.
+    t._dashPointerId = 9;
+    expect(t.isActive()).toBe(false);
+  });
+});
+
+describe('TouchControls — dash button (owned)', () => {
+  it('a tap inside the rect latches ONE dash and spawns no stick', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, DASH_X, DASH_Y);
+    expect(t.moveVector()).toEqual({ x: 0, y: 0 });
+    expect(t.aimVector().active).toBe(false);
+    expect(t.consumeDash()).toBe(true);
+  });
+
+  it('consumeDash reads-and-clears (one tap can never dash twice)', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, DASH_X, DASH_Y);
+    expect(t.consumeDash()).toBe(true);
+    expect(t.consumeDash()).toBe(false);
+  });
+
+  it('a point just OUTSIDE the rim spawns an aim stick instead', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, DASH_X + TOUCH_DASH_BUTTON.radius + 1, DASH_Y);
+    expect(t.consumeDash()).toBe(false);
+    expect(t.snapshot().aim.active).toBe(true);
+  });
+
+  it('the pressed flag clears when that finger lifts, and stays independent of the bomb', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, TOUCH_BOMB_BUTTON.x, TOUCH_BOMB_BUTTON.y);
+    t.onPointerDown(2, DASH_X, DASH_Y);
+    expect(t.snapshot().bomb.pressed).toBe(true);
+    expect(t.snapshot().dash.pressed).toBe(true);
+    t.onPointerUp(2);
+    expect(t.snapshot().bomb.pressed).toBe(true);
+    expect(t.snapshot().dash.pressed).toBe(false);
+  });
+
+  it('reset() clears the dash latch and owner (pause reconciliation)', () => {
+    const t = ownedDash();
+    t.onPointerDown(1, DASH_X, DASH_Y);
+    t.reset();
+    expect(t.consumeDash()).toBe(false);
+    expect(t.snapshot().dash.pressed).toBe(false);
+    expect(t.isActive()).toBe(false);
+  });
+
+  it('setDashButton moves the hit region AND the snapshot rect together', () => {
+    const t = ownedDash();
+    t.setDashButton(300, 200, 40);
+    const s = t.snapshot().dash;
+    expect(s).toMatchObject({ x: 300, y: 200, radius: 40 });
+    t.onPointerDown(1, 300, 200);
+    expect(t.consumeDash()).toBe(true);
+    // The OLD center is no longer the dash button.
+    t.onPointerDown(2, DASH_X, DASH_Y);
+    expect(t.consumeDash()).toBe(false);
+  });
+
+  it('setDashButton with the radius omitted keeps the current radius', () => {
+    const t = ownedDash();
+    t.setDashButton(300, 200);
+    expect(t.snapshot().dash.radius).toBe(TOUCH_DASH_BUTTON.radius);
+  });
+});
+
+describe('TouchControls — the shipped bomb and dash rects do not overlap', () => {
+  it('leaves clear space between the two rims, so the fixed hit-test order is unobservable', () => {
+    const gap =
+      Math.hypot(
+        TOUCH_DASH_BUTTON.x - TOUCH_BOMB_BUTTON.x,
+        TOUCH_DASH_BUTTON.y - TOUCH_BOMB_BUTTON.y,
+      ) -
+      TOUCH_DASH_BUTTON.radius -
+      TOUCH_BOMB_BUTTON.radius;
+    expect(gap).toBeGreaterThan(0);
+    // And a tap on either center hits only that button.
+    const t = ownedDash();
+    t.onPointerDown(1, TOUCH_BOMB_BUTTON.x, TOUCH_BOMB_BUTTON.y);
+    expect(t.consumeBomb()).toBe(true);
+    expect(t.consumeDash()).toBe(false);
+    t.onPointerDown(2, DASH_X, DASH_Y);
+    expect(t.consumeDash()).toBe(true);
+    expect(t.consumeBomb()).toBe(false);
+  });
+
+  it('the dash button sits far enough from the RIGHT edge that no safe-area inset reaches it', () => {
+    // Why mobileLayout raises it by the BOTTOM inset only.
+    const clearance = ARENA_WIDTH - (TOUCH_DASH_BUTTON.x + TOUCH_DASH_BUTTON.radius);
+    expect(clearance).toBeGreaterThan(200);
   });
 });

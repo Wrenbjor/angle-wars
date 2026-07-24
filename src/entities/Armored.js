@@ -26,16 +26,28 @@ import {
 //             armored is non-lethal to the player (PlayerDeathSystem skips it) and
 //             frozen (ArmoredSystem skips its homing); it renders a spawn-in cue.
 //             Defaults to 0 (spawned-and-active); ArmoredSystem.spawn overwrites it.
-//  - hp     : the PROJECTILE-ONLY durability. ONLY the CollisionSystem (bullet)
-//             path decrements it, by the HITTING BULLET's `damage` (Story 10.2):
-//             the armored survives while hp exceeds that damage (hp -= damage), and
-//             a hit whose damage meets or exceeds the remaining hp kills it. So
-//             hits-to-kill is ceil(hp / damage) — ARMORED_HP only at the base damage
-//             unit of 1. The AoE/melee paths (smart bomb, black hole) ignore hp
-//             entirely — they release unconditionally = full damage for free. Reset
-//             to ARMORED_HP on every spawn. This per-instance `hp` field is what
-//             distinguishes the armored from the one-hit archetypes (which have no
-//             `hp` field and are released on their first bullet hit).
+//  - hp     : the PLAYER-DAMAGE durability. It is decremented ONLY through
+//             CollisionSystem.applyPlayerDamage — the single armor-respecting path,
+//             used by the bullet sweep and (Story 10.5) by the Afterburner Lv4+ dash
+//             contact, so an armored behaves identically whichever hits it. It drops
+//             by the HITTING source's `damage` (Story 10.2): the armored survives
+//             while hp exceeds that damage (hp -= damage), and a hit whose damage
+//             meets or exceeds the remaining hp kills it. So hits-to-kill is
+//             ceil(hp / damage) — ARMORED_HP only at the base damage unit of 1. The
+//             AoE paths (smart bomb, black hole) ignore hp entirely — they release
+//             unconditionally = full damage for free. Reset to ARMORED_HP on every
+//             spawn. This per-instance `hp` field is what distinguishes the armored
+//             from the one-hit archetypes (which have no `hp` field and are released
+//             on their first player-damage hit).
+//  - _dashHitSeq : the Afterburner dash's ONE-HIT-PER-DASH stamp (Story 10.5).
+//             LAZILY added by DashSystem's sweep on the first dash contact — it is
+//             deliberately NOT initialized by this factory, so an instance that has
+//             never been dash-hit simply lacks the field (`undefined` matches no
+//             `dashSeq`, which starts at 1). Holds the `dashSeq` of the dash that
+//             last hit this instance; the sweep skips any enemy already carrying the
+//             CURRENT seq, so one press lands one hit even when a wall clamp holds
+//             the ship still for the whole window. `dashSeq` only ever increases, so
+//             a recycled instance can never carry a stale stamp into a later dash.
 
 /**
  * Create a zeroed armored with its collision radius, base score/xp, inactive

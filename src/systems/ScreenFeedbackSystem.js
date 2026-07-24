@@ -16,7 +16,8 @@ import { HAPTIC_STYLE } from '../scenes/nativeFeel.js';
 //
 // Runs LAST in the world pipeline (registered after GridFieldSystem /
 // ParticleSystem), so within each fixed tick every input it reads is already
-// final: collisionSystem.bulletKillCount (this tick's bullet kills, before
+// final: collisionSystem.bulletKillCount (this tick's PLAYER-DAMAGE kills — bullets,
+// then the Story 10.5 dash sweep, both through applyPlayerDamage — before
 // BlackHole/Bomb appends), the bombSystem shockwave rising edge, the
 // playerDeathSystem.deathSeq increment, and the current ship/enemy positions. It
 // is a PURE read-only observer — it mutates ONLY its own latch fields and never
@@ -26,7 +27,7 @@ import { HAPTIC_STYLE } from '../scenes/nativeFeel.js';
 // Each fixed step it turns those events into three magnitude latches the render
 // loop consumes:
 //   - pending shake TRAUMA (accumulated add): +BOMB on a bomb edge, +DEATH on a
-//     death edge (death harder than a bomb), +KILL per bullet kill this tick, and
+//     death edge (death harder than a bomb), +KILL per player-damage kill this tick, and
 //     +NEARMISS per registered near-miss,
 //   - a FLASH request: raised on a bomb OR death edge (big events only),
 //   - a HIT-STOP request: raised on a bomb OR death edge (big events only).
@@ -48,7 +49,8 @@ import { HAPTIC_STYLE } from '../scenes/nativeFeel.js';
 export class ScreenFeedbackSystem extends System {
   /**
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem Source
-   *   of this tick's bullet-kill count (bulletKillCount) — the subtle per-kill nudge.
+   *   of this tick's PLAYER-DAMAGE kill count (bulletKillCount — bullets and the
+   *   Story 10.5 dash sweep) — the subtle per-kill nudge.
    * @param {import('./BombSystem.js').BombSystem} bombSystem Source of the bomb
    *   shockwave latch (shockwaveMs rising edge = a detonation big event).
    * @param {import('./PlayerDeathSystem.js').PlayerDeathSystem} playerDeathSystem
@@ -161,8 +163,9 @@ export class ScreenFeedbackSystem extends System {
       }
     }
 
-    // (3) Bullet kills — subtle nudge only (NO flash, NO hit-stop). bulletKillCount
-    //     is this tick's bullet kills, before BlackHole/Bomb appends (the same
+    // (3) Player-damage kills (bullets, then the Story 10.5 dash sweep) — subtle nudge
+    //     only (NO flash, NO hit-stop). bulletKillCount is this tick's player-damage
+    //     kills, before BlackHole/Bomb appends (the same
     //     source the grid ripple / particle burst read).
     const cs = this.collisionSystem;
     if (cs) {

@@ -82,18 +82,30 @@ export class CollisionSystem extends System {
     // this system. Reused array — no per-tick allocation.
     this.killedEnemies = [];
 
-    // Public read-only observability latch (Story 4.2): the number of enemies THIS
-    // system destroyed by a player bullet this tick — i.e. the length of
-    // killedEnemies at the end of THIS system's fixedUpdate, BEFORE later systems
-    // (BlackHoleSystem absorbs, BombSystem clears) append their own removals to the
-    // same shared array. The array is only ever appended to, never reordered, so
-    // killedEnemies[0 .. bulletKillCount) is exactly this tick's bullet kills. The
-    // GridFieldSystem reads this to emit an explosion ripple per bullet kill only.
-    // Purely observational — it never affects kills, scoring, lives, or any pool.
+    // Public read-only observability latch (Story 4.2): the number of enemies killed
+    // by PLAYER DAMAGE this tick. The array is only ever appended to, never reordered,
+    // so killedEnemies[0 .. bulletKillCount) is exactly this tick's player-damage
+    // kills — still contiguous, and still EXCLUDING the unscored BlackHoleSystem
+    // absorbs / BombSystem clears that are appended to the same shared array
+    // afterwards. The GridFieldSystem reads this to emit one explosion ripple per such
+    // kill. Purely observational — it never affects kills, scoring, lives, or any pool.
+    //
+    // ⚠ CONTRACT WIDENED in Story 10.5, name deliberately KEPT. It used to mean
+    // "bullet kills"; it now means "kills through applyPlayerDamage" — bullets first
+    // (pass 2 below), then the Afterburner dash's Lv4+ contact sweep. The `bulletKill*`
+    // / `bulletDamageCount` names are unchanged because SIX consumer systems read them
+    // and renaming is not that story's scope; read them as "player damage".
+    //
+    // Any FUTURE producer of player-damage kills must (a) append through
+    // `applyPlayerDamage`, never by hand, so the counters and the parallel snapshot
+    // arrays stay index-aligned, and (b) be registered BETWEEN this system and
+    // ScoringSystem — earlier and its kills land in arrays this system then resets,
+    // later and they are never scored.
     this.bulletKillCount = 0;
 
     // Public read-only observability latch (Story 9.3): the per-tick count of
-    // player-bullet hits that DEALT DAMAGE this tick — every hit that landed,
+    // PLAYER-DAMAGE hits that landed this tick (bullets, plus the Story 10.5 dash
+    // sweep — the same widened contract as bulletKillCount above) — every hit,
     // whether it KILLED (one-shot enemy, or an armored's final hit) OR only
     // decremented an armored survivor's hp. This is the HONEST build-power figure
     // (damage output, not just kills) that DpsTelemetrySystem reads: pouring fire
@@ -107,7 +119,7 @@ export class CollisionSystem extends System {
 
     // Public read-only coordinate SNAPSHOTS (Story 4.2), parallel to the first
     // bulletKillCount entries of killedEnemies: bulletKillX[k]/bulletKillY[k] are the
-    // position of the k-th bullet kill, captured AT KILL TIME. Snapshots are load-
+    // position of the k-th player-damage kill, captured AT KILL TIME. Snapshots are load-
     // bearing: this system releases a bullet-killed enemy back to its pool this tick,
     // and a later same-tick system (e.g. the SpawnDirector acquiring a fresh enemy)
     // can acquire() that very object and overwrite its x/y — so reading the enemy object's
@@ -159,8 +171,12 @@ export class CollisionSystem extends System {
     const killedEnemies = this.killedEnemies;
     killedEnemies.length = 0;
     // Reset the per-tick damage-hit count (Story 9.3) so a tick with no hits reports
-    // 0 and a prior tick's count never carries over. Refilled at the end of pass 2.
+    // 0 and a prior tick's count never carries over. Both counters are now INCREMENTED
+    // by applyPlayerDamage (Story 10.5) rather than assigned at the end of pass 2, so
+    // a later same-tick producer (DashSystem) appending through the same helper keeps
+    // them correct — which makes this top-of-tick reset the ONLY place they are zeroed.
     this.bulletDamageCount = 0;
+    this.bulletKillCount = 0;
     // Reset the parallel bullet-kill coordinate snapshots too (Story 4.2), and the
     // parallel XP snapshot (Story 8.1).
     const bulletKillX = this.bulletKillX;
@@ -205,19 +221,21 @@ export class CollisionSystem extends System {
       }
     }
 
-    // Pass 2: resolve each marked hit (safe to mutate the pools now). Every hit
-    // credits ONE integer damage-unit to `damageCount` (the honest per-hit build-
-    // power figure — Story 9.3; deliberately a HIT COUNT, not the scaled damage, so
-    // the DPS ring stays integer-valued and the Story 9.2 governor keeps its
-    // hits/sec calibration). An ARMORED survivor (a finite hp GREATER than the
-    // hitting bullet's damage, beyond the HP_EPSILON rounding guard) ABSORBS the
-    // hit: hp drops by that damage and the enemy is NOT released and NOT reported as
-    // a kill (drops no orb / no score / no kill-ripple — a non-killing armor hit). A
-    // one-hit enemy (no hp field, or an hp the hit meets or exceeds — the armored's
-    // final hit) runs the existing kill path UNCHANGED: record it in the public kill
-    // report + snapshots for the ScoringSystem/grid/XP and release it to its OWNING
-    // pool. Iterate the parallel arrays so each release routes to the pool that owns
-    // that instance.
+    // Pass 2: resolve each marked hit (safe to mutate the pools now) by delegating to
+    // `applyPlayerDamage` — the SHARED armor-respecting damage path (Story 10.5)
+    // extracted verbatim from what used to be inline here, so bullet behavior is
+    // byte-identical and the dash cannot drift from it. Every hit credits ONE integer
+    // damage-unit to `bulletDamageCount` (the honest per-hit build-power figure —
+    // Story 9.3; deliberately a HIT COUNT, not the scaled damage, so the DPS ring
+    // stays integer-valued and the Story 9.2 governor keeps its hits/sec calibration).
+    // An ARMORED survivor (a finite hp GREATER than the hitting bullet's damage,
+    // beyond the HP_EPSILON rounding guard) ABSORBS the hit: hp drops by that damage
+    // and the enemy is NOT released and NOT reported as a kill (drops no orb / no
+    // score / no kill-ripple — a non-killing armor hit). A one-hit enemy (no hp field,
+    // or an hp the hit meets or exceeds — the armored's final hit) runs the kill path:
+    // record it in the public kill report + snapshots for the ScoringSystem/grid/XP
+    // and release it to its OWNING pool. Iterate the parallel arrays so each release
+    // routes to the pool that owns that instance.
     //
     // The rounding tolerance exists because scaled damage is rarely binary-exact:
     // repeated `hp -= dmg` leaves a few-ULP positive residue, so an hp that is an
@@ -236,43 +254,69 @@ export class CollisionSystem extends System {
     // accumulated residue is ~4e-8. A durable fix has to stop the accumulation (integer
     // or fixed-point hp), not widen the tolerance. ARMORED_HP is 5 and Epic 11 is the
     // first content that could approach the limit, so this is recorded, not guessed at.
-    let damageCount = 0;
     for (let j = 0; j < enemies.length; j++) {
       const s = enemies[j];
       if (hitEnemies.has(s)) {
-        damageCount++; // every hit = 1 integer damage-unit (armor survivor OR kill)
-        const dmg = hitEnemies.get(s); // the hitting bullet's damage (Story 10.2)
-        if (Number.isFinite(s.hp) && s.hp > dmg + HP_EPSILON) {
-          // Armored survivor: absorb this bullet's damage and live. NOT released,
-          // NOT a kill. At the base damage unit (1) this is byte-for-byte the
-          // pre-10.2 `hp > 1` / `hp -= 1` branch.
-          s.hp -= dmg;
-          continue;
-        }
-        killedEnemies.push(s);
-        // Snapshot the kill coordinates NOW, before releasing the object to its
-        // pool — a later same-tick acquire() could overwrite s.x/s.y (Story 4.2).
-        bulletKillX.push(s.x);
-        bulletKillY.push(s.y);
-        // Snapshot the XP value too (Story 8.1), guarded to a finite number →
-        // 0 (mirrors scoring's finite-score guard) so a malformed instance can
-        // never credit a non-finite XP amount downstream.
-        bulletKillXp.push(Number.isFinite(s.xp) ? s.xp : 0);
-        owners[j].release(s);
+        // The hitting bullet's damage (Story 10.2), routed through the SHARED helper
+        // so a bullet and a dash resolve armor identically (Story 10.5).
+        this.applyPlayerDamage(s, owners[j], hitEnemies.get(s));
       }
     }
     for (const b of hitBullets) {
       this.bulletPool.release(b);
     }
-    // Latch this tick's damage-hit count (Story 9.3): kills PLUS non-killing armor
-    // hits, each 1 integer damage-unit. DpsTelemetrySystem reads this (not the
-    // kill-only bulletKillCount) so build power reflects damage dealt, not just kills.
-    this.bulletDamageCount = damageCount;
+  }
 
-    // Latch this tick's bullet-kill count (Story 4.2). Captured here, at the end of
-    // pass 2, so it reflects ONLY the enemies bullets destroyed this tick — before
-    // BlackHoleSystem/BombSystem append their (unscored) removals to killedEnemies.
-    // Read-only observability for the grid; changes no gameplay behavior.
-    this.bulletKillCount = killedEnemies.length;
+  /**
+   * Resolve ONE unit of PLAYER DAMAGE against one enemy — the single armor-respecting
+   * damage path (Story 10.5, extracted verbatim from pass 2 above).
+   *
+   * Called by pass 2 for every bullet hit, and by DashSystem for every Lv4+ dash
+   * contact. Extracting it is what makes an armored enemy behave IDENTICALLY whether a
+   * bullet or a dash hits it, instead of a bespoke second copy drifting out of step —
+   * and it is deliberately NOT the BombSystem's `hp`-ignoring outright release.
+   *
+   * Effects, in order:
+   *   1. credits ONE integer damage-unit to `bulletDamageCount` (the honest per-hit
+   *      build-power figure Story 9.3's DPS governor reads — a HIT COUNT, not the
+   *      scaled damage, so the ring stays integer-valued);
+   *   2. ARMORED SURVIVOR (a finite hp GREATER than `damage`, beyond the HP_EPSILON
+   *      rounding guard): hp drops by `damage`, the enemy is NOT released and NOT
+   *      reported as a kill (no orb / no score / no kill-ripple) — returns false;
+   *   3. otherwise KILL: appended to `killedEnemies` with its parallel x/y/xp
+   *      snapshots, released to its OWNING pool, and `bulletKillCount` INCREMENTED —
+   *      returns true.
+   *
+   * `bulletKillCount` / `bulletDamageCount` are incremented HERE rather than assigned
+   * at the end of pass 2, precisely so a LATER system appending through this helper
+   * keeps both counters correct and the snapshot arrays index-aligned.
+   * @param {{x:number,y:number,hp?:number,xp?:number}} enemy The enemy taking damage.
+   * @param {import('../core/Pool.js').Pool} ownerPool The pool that owns it (a kill
+   *   releases there).
+   * @param {number} damage The damage this hit deals.
+   * @returns {boolean} true if the enemy was KILLED, false if it survived (armor).
+   */
+  applyPlayerDamage(enemy, ownerPool, damage) {
+    // every hit = 1 integer damage-unit (armor survivor OR kill)
+    this.bulletDamageCount += 1;
+    if (Number.isFinite(enemy.hp) && enemy.hp > damage + HP_EPSILON) {
+      // Armored survivor: absorb this hit's damage and live. NOT released, NOT a
+      // kill. At the base damage unit (1) this is byte-for-byte the pre-10.2
+      // `hp > 1` / `hp -= 1` branch.
+      enemy.hp -= damage;
+      return false;
+    }
+    this.killedEnemies.push(enemy);
+    // Snapshot the kill coordinates NOW, before releasing the object to its pool —
+    // a later same-tick acquire() could overwrite enemy.x/y (Story 4.2).
+    this.bulletKillX.push(enemy.x);
+    this.bulletKillY.push(enemy.y);
+    // Snapshot the XP value too (Story 8.1), guarded to a finite number → 0 (mirrors
+    // scoring's finite-score guard) so a malformed instance can never credit a
+    // non-finite XP amount downstream.
+    this.bulletKillXp.push(Number.isFinite(enemy.xp) ? enemy.xp : 0);
+    ownerPool.release(enemy);
+    this.bulletKillCount += 1;
+    return true;
   }
 }

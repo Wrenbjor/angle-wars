@@ -3,7 +3,10 @@
 // Kept isolated from any Phaser types so they can be unit-tested headlessly and
 // reused by both the gamepad and keyboard paths.
 
-import { GAMEPAD_BOMB_BUTTONS } from '../config/constants.js';
+import {
+  GAMEPAD_BOMB_BUTTONS,
+  GAMEPAD_DASH_BUTTONS,
+} from '../config/constants.js';
 
 /**
  * Apply a radial (circular) deadzone to a 2D stick vector.
@@ -127,12 +130,45 @@ export function isBombButton(index, mapping) {
 }
 
 /**
+ * Whether a gamepad button index maps to the Afterburner DASH action (either
+ * analog-stick click) — Story 10.5.
+ *
+ * Mirrors `isBombButton` exactly, including its documented best-effort fallback:
+ * on the 'standard' mapping the canonical stick-click indices `[10,11]` are
+ * authoritative, and on a non-standard / unidentified pad we fall back to the SAME
+ * indices rather than leaving the dash unbindable for that player.
+ * `mappingWarning` names both actions' indices so either possible misbind is
+ * discoverable rather than silent.
+ *
+ * The dash is bound to the STICK CLICKS and NOT the triggers (6/7) deliberately:
+ * the triggers are analog and Phaser's `Button.threshold` defaults to 1, so a
+ * partially-pulled trigger never fires 'down' and never reports `pressed`. See
+ * GAMEPAD_DASH_BUTTONS in config/constants.js.
+ *
+ * @param {number} index The pressed gamepad button's index.
+ * @param {string} [mapping] The pad's `Gamepad.mapping` string. A missing /
+ *   undefined mapping is classified as NON-standard (the best-effort branch),
+ *   identical to `isBombButton` / `isStandardMapping` / `mappingWarning`.
+ * @returns {boolean} True only for the configured stick-click indices.
+ */
+export function isDashButton(index, mapping) {
+  if (isStandardMapping(mapping)) {
+    return GAMEPAD_DASH_BUTTONS.includes(index);
+  }
+  // Non-standard / unidentified pad: best-effort fall back to the same stick-click
+  // indices (see the doc note above) rather than leaving the dash unbindable.
+  return GAMEPAD_DASH_BUTTONS.includes(index);
+}
+
+/**
  * A one-line diagnostic for a pad whose mapping is not the canonical W3C
  * 'standard', or `null` for a standard pad.
  *
- * Surfaces the non-standard pad so a possible bomb-button misbind (see
- * `isBombButton`'s best-effort fallback) is discoverable rather than silent.
- * The sampler emits this at most once per instance via `console.warn`.
+ * Surfaces the non-standard pad so a possible bomb- or dash-button misbind (see the
+ * best-effort fallbacks in `isBombButton` / `isDashButton`) is discoverable rather
+ * than silent. The sampler emits this at most once per instance via `console.warn`.
+ * BOTH actions' indices are named: the diagnostic exists so an unbindable action is
+ * discoverable, and naming only one of two bound actions makes it half-true.
  *
  * @param {string} [mapping] The pad's `Gamepad.mapping` string.
  * @returns {string|null} A diagnostic message for a non-standard mapping, else null.
@@ -145,6 +181,7 @@ export function mappingWarning(mapping) {
   return (
     `Gamepad reports a non-standard mapping ${reported}; button positions ` +
     `may not match the standard layout, so the smart-bomb bumpers ` +
-    `(${GAMEPAD_BOMB_BUTTONS.join(', ')}) are a best-effort binding.`
+    `(${GAMEPAD_BOMB_BUTTONS.join(', ')}) and the dash stick-clicks ` +
+    `(${GAMEPAD_DASH_BUTTONS.join(', ')}) are best-effort bindings.`
   );
 }

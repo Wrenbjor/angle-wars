@@ -4,12 +4,18 @@ import {
   clampToUnitCircle,
   normalizeToUnit,
   isBombButton,
+  isDashButton,
   isStandardMapping,
   mappingWarning,
   GAMEPAD_STANDARD_MAPPING,
 } from './inputMath.js';
 import { InputState } from './InputState.js';
-import { MOVE_DEADZONE, AIM_DEADZONE } from '../config/constants.js';
+import {
+  MOVE_DEADZONE,
+  AIM_DEADZONE,
+  GAMEPAD_BOMB_BUTTONS,
+  GAMEPAD_DASH_BUTTONS,
+} from '../config/constants.js';
 
 const DZ = 0.25;
 
@@ -173,6 +179,101 @@ describe('mappingWarning', () => {
     expect(typeof mappingWarning('')).toBe('string');
     expect(mappingWarning('')).not.toBeNull();
     expect(typeof mappingWarning('some-oem-pad')).toBe('string');
+  });
+
+  it('names BOTH bound actions\' indices (Story 10.5)', () => {
+    // The diagnostic exists so an unbindable action is DISCOVERABLE; naming only one
+    // of the two bound actions makes it half-true.
+    const msg = mappingWarning('some-oem-pad');
+    for (const i of GAMEPAD_BOMB_BUTTONS) expect(msg).toContain(String(i));
+    for (const i of GAMEPAD_DASH_BUTTONS) expect(msg).toContain(String(i));
+  });
+});
+
+describe('isDashButton (Story 10.5)', () => {
+  it('accepts the configured stick-click indices on the standard mapping', () => {
+    expect(isDashButton(10, 'standard')).toBe(true);
+    expect(isDashButton(11, 'standard')).toBe(true);
+    expect(GAMEPAD_DASH_BUTTONS).toEqual([10, 11]);
+  });
+
+  it('rejects the ANALOG TRIGGERS (6/7) — Phaser Button.threshold defaults to 1', () => {
+    // The triggers are analog axes surfaced as buttons, and Phaser's default
+    // `Button.threshold` of 1 means a partially-pulled trigger never fires 'down' and
+    // never reports `pressed`. Binding the dash there would ship a DEAD control. This
+    // assertion exists so a future "the triggers would be nicer" change trips a test
+    // instead of shipping that bug.
+    expect(isDashButton(6, 'standard')).toBe(false);
+    expect(isDashButton(7, 'standard')).toBe(false);
+    expect(isDashButton(6)).toBe(false);
+    expect(isDashButton(7)).toBe(false);
+  });
+
+  it('rejects every index another action already claims', () => {
+    for (const i of [0, 1, 2, 3]) expect(isDashButton(i, 'standard')).toBe(false); // confirm
+    for (const i of GAMEPAD_BOMB_BUTTONS) expect(isDashButton(i, 'standard')).toBe(false);
+    for (const i of [14, 15]) expect(isDashButton(i, 'standard')).toBe(false); // card nav
+    expect(isDashButton(undefined, 'standard')).toBe(false);
+  });
+
+  it('falls back to the SAME indices on a non-standard / missing mapping (best effort)', () => {
+    // Mirrors isBombButton's documented fallback: refusing to bind would leave the
+    // dash unreachable, which is strictly worse than a possible misbind that
+    // mappingWarning makes discoverable.
+    expect(isDashButton(10)).toBe(true);
+    expect(isDashButton(11, '')).toBe(true);
+    expect(isDashButton(10, 'some-oem-pad')).toBe(true);
+    expect(isDashButton(0, '')).toBe(false);
+  });
+
+  it('never overlaps isBombButton on any index', () => {
+    for (let i = 0; i < 20; i++) {
+      expect(
+        isBombButton(i, 'standard') && isDashButton(i, 'standard'),
+        `index ${i} is claimed by both actions`,
+      ).toBe(false);
+    }
+  });
+});
+
+describe('InputState — the dash latch (Story 10.5)', () => {
+  it('queueDash latches and consumeDash reads-and-clears', () => {
+    const s = new InputState();
+    expect(s.dashQueued).toBe(false);
+    expect(s.consumeDash()).toBe(false);
+    s.queueDash();
+    expect(s.dashQueued).toBe(true);
+    expect(s.consumeDash()).toBe(true);
+    expect(s.dashQueued).toBe(false);
+    expect(s.consumeDash()).toBe(false);
+  });
+
+  it('is IDEMPOTENT within a step: repeated queues still yield ONE dash', () => {
+    const s = new InputState();
+    s.queueDash();
+    s.queueDash();
+    s.queueDash();
+    expect(s.consumeDash()).toBe(true);
+    expect(s.consumeDash()).toBe(false);
+  });
+
+  it('clear() deliberately does NOT clear it (the modal drain must consumeDash)', () => {
+    const s = new InputState();
+    s.queueDash();
+    s.queueBomb();
+    s.clear();
+    expect(s.dashQueued).toBe(true);
+    expect(s.bombQueued).toBe(true);
+  });
+
+  it('is INDEPENDENT of the bomb latch', () => {
+    const s = new InputState();
+    s.queueDash();
+    expect(s.consumeBomb()).toBe(false);
+    expect(s.consumeDash()).toBe(true);
+    s.queueBomb();
+    expect(s.consumeDash()).toBe(false);
+    expect(s.consumeBomb()).toBe(true);
   });
 });
 

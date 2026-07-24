@@ -7,13 +7,17 @@ import {
   SPREAD_MAX_ARC_DEG,
   SHIELD_MAX_CHARGES,
   SHIELD_RECHARGE_FLOOR_MS,
+  MOVE_SPEED_MULT_MAX,
+  DASH_COOLDOWN_FLOOR_MS,
 } from './constants.js';
 
 // Story 10.1 — the data-driven item registry: the ONE definition per item that the
 // offer, on-pick application, owned-state, and current level all read from. The four
 // Epic-10 items register with real id/name/track/rarity/fusion metadata and five
-// per-level descriptors; effect NUMBERS (stats) are deferred to each item's own story
-// (empty maps here), so these tests guard the SHAPE the framework depends on.
+// per-level descriptors. Effect NUMBERS (stats) landed in each item's own story —
+// Overcharge 10.2, Spread Cannon 10.3, Nanite Shield 10.4, Afterburner 10.5 — so all
+// four are now authored, and these tests guard both the SHAPE the framework depends on
+// and each item's shipped rungs.
 
 const EXPECTED_IDS = ['overcharge', 'spread-cannon', 'nanite-shield', 'afterburner'];
 
@@ -75,23 +79,17 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     }
   });
 
-  it('Afterburner still carries EMPTY stats (10.5 deferred)', () => {
-    // Stories 10.2, 10.3 and 10.4 authored Overcharge's, Spread Cannon's and Nanite
-    // Shield's numbers; this pin NARROWS to the ONE still-deferred item. It stops
-    // Afterburner (10.5) from silently landing its effect numbers here without its own
-    // story's wiring — the fold would apply them with no gameplay seam reading them.
+  it('carries NO empty stats map anywhere (all four Epic-10 items are authored)', () => {
+    // Story 10.5 landed the LAST deferred numbers. The old pin here asserted that
+    // Afterburner still carried `{}`; its replacement is the complement — nothing in
+    // the registry contributes nothing to the fold any more. An item re-emptied by a
+    // bad merge would be silently inert in play, and this catches it.
     for (const item of ITEM_REGISTRY) {
-      if (
-        item.id === 'overcharge' ||
-        item.id === 'spread-cannon' ||
-        item.id === 'nanite-shield'
-      ) {
-        continue;
-      }
       for (const lvl of item.levels) {
-        expect(lvl.stats, `${item.id} L${lvl.level} stats should still be empty`).toEqual(
-          {},
-        );
+        expect(
+          Object.keys(lvl.stats).length,
+          `${item.id} L${lvl.level} stats must not be empty`,
+        ).toBeGreaterThan(0);
       }
     }
   });
@@ -499,5 +497,121 @@ describe('ITEM_REGISTRY — Nanite Shield per-level stats (Story 10.4, PRD §13.
       expect(lvl.stats.shieldCharges).toBeLessThan(SHIELD_MAX_CHARGES);
       expect(lvl.stats.shieldRechargeMs).toBeGreaterThan(SHIELD_RECHARGE_FLOOR_MS);
     }
+  });
+});
+
+// --- Afterburner (Story 10.5) ------------------------------------------------
+describe('ITEM_REGISTRY — Afterburner stats (Story 10.5)', () => {
+  const AFTERBURNER_FIELDS = [
+    'moveSpeedMult',
+    'dashCooldownMs',
+    'dashIFrames',
+    'dashDamage',
+    'dashTrail',
+  ];
+
+  it('authors the exact five per-level stats maps, frozen', () => {
+    const levels = getItem('afterburner').levels;
+    expect(levels.map((l) => l.stats)).toEqual([
+      { moveSpeedMult: 0.12 },
+      { moveSpeedMult: 0.2, dashCooldownMs: 3000 },
+      { moveSpeedMult: 0.25, dashCooldownMs: 3000, dashIFrames: 1 },
+      {
+        moveSpeedMult: 0.25,
+        dashCooldownMs: 2000,
+        dashIFrames: 1,
+        dashDamage: 1,
+      },
+      {
+        moveSpeedMult: 0.35,
+        dashCooldownMs: 2000,
+        dashIFrames: 1,
+        dashDamage: 1,
+        dashTrail: 1,
+      },
+    ]);
+    for (const lvl of levels) {
+      expect(Object.isFrozen(lvl.stats), `L${lvl.level} stats not frozen`).toBe(true);
+    }
+  });
+
+  it('authors LEVELS as TOTALS, not deltas (the properties a delta slip breaks)', () => {
+    const [, l2, l3, l4, l5] = getItem('afterburner').levels;
+    // L3's desc names only the i-frames, but it must RESTATE L2's cooldown — a delta
+    // slip here would DELETE the dash on the level that adds i-frames to it.
+    expect(l3.stats.dashCooldownMs).toBe(l2.stats.dashCooldownMs);
+    // L4's desc names only the cooldown + damage, but it must restate L3's speed and
+    // i-frames. The unchanged 0.25 reads like a copy-paste slip and is deliberate.
+    expect(l4.stats.moveSpeedMult).toBe(l3.stats.moveSpeedMult);
+    expect(l4.stats.dashIFrames).toBe(1);
+    // L5 restates every prior flag alongside its own trail.
+    expect(l5.stats.dashIFrames).toBe(1);
+    expect(l5.stats.dashDamage).toBe(1);
+    expect(l5.stats.dashCooldownMs).toBe(l4.stats.dashCooldownMs);
+  });
+
+  it('DECREASES dashCooldownMs from L3 to L4 while every other field is monotonic', () => {
+    const levels = getItem('afterburner').levels;
+    // The cooldown is the one field that goes DOWN across levels, which is only sound
+    // because level entries are TOTALS (the fold reads ONE level's map, never a sum).
+    expect(levels[3].stats.dashCooldownMs).toBeLessThan(levels[2].stats.dashCooldownMs);
+    for (let i = 1; i < levels.length; i++) {
+      const prev = levels[i - 1].stats;
+      const cur = levels[i].stats;
+      for (const key of ['moveSpeedMult', 'dashIFrames', 'dashDamage', 'dashTrail']) {
+        expect(
+          cur[key] ?? 0,
+          `${key} must not regress from L${i} to L${i + 1}`,
+        ).toBeGreaterThanOrEqual(prev[key] ?? 0);
+      }
+    }
+  });
+
+  it('carries no stat key outside the five rungs the story owns', () => {
+    for (const lvl of getItem('afterburner').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect(AFTERBURNER_FIELDS).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item authoring any Afterburner field (the additive-fold tripwire)', () => {
+    // Same hazard the shield tripwire guards: the fold ADDS, so a second author of
+    // `dashCooldownMs` would make the dash SLOWER, and a second `moveSpeedMult` author
+    // would stack additively rather than multiplicatively. Land that decision here.
+    for (const key of AFTERBURNER_FIELDS) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual([
+        'afterburner',
+      ]);
+    }
+  });
+
+  it('stays inside the movement/dash SAFETY clamps at every level (they are not levers)', () => {
+    for (const lvl of getItem('afterburner').levels) {
+      // STRICT, deliberately: a shipped value ON a guard would already mean the guard
+      // had become a balance lever — the state these tests exist to forbid.
+      // `MOVE_SPEED_MULT_MAX` clamps the FOLDED multiplier in `_moveSpeedMult()`
+      // (base 1 + the bonus, e.g. 1.35 at Lv5), not the raw registry bonus, so fold
+      // onto the base here to assert against the quantity the clamp actually guards —
+      // otherwise an authored bonus of 2.5 (folded 3.5, which the clamp WOULD engage)
+      // would slip past a bare `0.35 < 3` check.
+      expect(1 + lvl.stats.moveSpeedMult).toBeLessThan(MOVE_SPEED_MULT_MAX);
+      if (lvl.stats.dashCooldownMs !== undefined) {
+        expect(lvl.stats.dashCooldownMs).toBeGreaterThan(DASH_COOLDOWN_FLOOR_MS);
+      }
+    }
+  });
+
+  it('keeps the Story 10.1 desc strings verbatim (prose, never rewritten to the totals)', () => {
+    expect(getItem('afterburner').levels.map((l) => l.desc)).toEqual([
+      '+12% move speed',
+      '+20% speed + dash (3s cooldown)',
+      '+25% speed + dash i-frames',
+      '2s dash cooldown + dash damages on contact',
+      '+35% speed + burning dash trail',
+    ]);
   });
 });

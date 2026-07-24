@@ -6,8 +6,9 @@ import { System } from '../core/System.js';
 // Runs LAST in the world pipeline (registered after ScreenFeedbackSystem), so
 // within each fixed tick every source it reads is already final: the fire count
 // (firingSystem.volleysFiredCount — fire EVENTS, falling back to shotsFiredCount on a
-// pre-10.3 source), the bullet-kill count (collisionSystem.
-// bulletKillCount — this tick's bullet kills, before BlackHole/Bomb appends), the
+// pre-10.3 source), the player-damage kill count (collisionSystem.
+// bulletKillCount — this tick's kills through applyPlayerDamage: bullets, then the
+// Story 10.5 dash sweep, before BlackHole/Bomb appends), the
 // spawn count (spawnDirector.spawnCount), the bomb shockwave rising edge
 // (bombSystem.shockwaveMs), the death latch (playerDeathSystem.deathSeq increment),
 // and the difficulty ramp (spawnDirector.progressAt). It is a PURE read-only
@@ -39,7 +40,8 @@ export class AudioDirectorSystem extends System {
    *   tick's fire-event count (volleysFiredCount, falling back to shotsFiredCount when
    *   absent) — the fire SFX cue.
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem Source of
-   *   this tick's bullet-kill count (bulletKillCount) — the kill SFX cue.
+   *   this tick's PLAYER-DAMAGE kill count (bulletKillCount — bullets and the
+   *   Story 10.5 dash sweep) — the kill SFX cue.
    * @param {import('./BombSystem.js').BombSystem} bombSystem Source of the bomb
    *   shockwave latch (shockwaveMs rising edge = a detonation) — the bomb SFX cue.
    * @param {import('./PlayerDeathSystem.js').PlayerDeathSystem} playerDeathSystem
@@ -125,7 +127,8 @@ export class AudioDirectorSystem extends System {
       if (n > 0) this._pendingFire += n;
     }
 
-    // (2) Kill — accumulate this tick's bullet kills (the SAME source the grid ripple
+    // (2) Kill — accumulate this tick's player-damage kills: bullets, then the Story
+    //     10.5 dash sweep (the SAME source the grid ripple
     //     / particle burst / screen juice read, before BlackHole/Bomb appends).
     const cs = this.collisionSystem;
     if (cs) {

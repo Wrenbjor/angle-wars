@@ -24,7 +24,8 @@ import {
 // Runs inside world.fixedUpdate(dt). It reads the three per-tick DROP reports every
 // scored-death seam publishes (recycle-safe snapshots captured at kill time, before
 // any pool release):
-//   - collisionSystem.bulletKillX/Y/Xp[0 .. bulletKillCount) — bullet kills only
+//   - collisionSystem.bulletKillX/Y/Xp[0 .. bulletKillCount) — PLAYER-DAMAGE kills
+//     only (bullets, then the Story 10.5 dash sweep, both through applyPlayerDamage)
 //     (the count already excludes bomb-cleared / black-hole-absorbed removals, which
 //     credit no score today and therefore drop NO XP — economy parity),
 //   - blackHoleSystem.defusedX/defusedY — safe IMPLOSIONS ("defused"), value
@@ -59,7 +60,8 @@ import {
 export class XpOrbSystem extends System {
   /**
    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem Source of
-   *   this tick's bullet-kill drop report: bulletKillX/Y/Xp[0 .. bulletKillCount).
+   *   this tick's PLAYER-DAMAGE kill drop report: bulletKillX/Y/Xp[0 ..
+   *   bulletKillCount) — bullets and the Story 10.5 dash sweep.
    * @param {import('./BlackHoleSystem.js').BlackHoleSystem} blackHoleSystem Source of
    *   this tick's defuse report: defusedX/defusedY (safe implosions).
    * @param {import('./MirrorReflectorSystem.js').MirrorReflectorSystem} mirrorReflectorSystem
@@ -167,7 +169,8 @@ export class XpOrbSystem extends System {
     // (2) Spawn this tick's drops from the three reports, honoring the cap. Advance-
     //     then-spawn: a fresh orb waits one tick before it can drift/collect.
 
-    // Bullet kills — the recycle-safe snapshots [0 .. bulletKillCount). The count
+    // Player-damage kills (bullets, then the Story 10.5 dash sweep) — the recycle-safe
+    // snapshots [0 .. bulletKillCount). The count
     // already excludes bomb/absorb removals (unscored → no XP). The xp snapshot is
     // already finite-guarded in the CollisionSystem.
     const cs = this.collisionSystem;

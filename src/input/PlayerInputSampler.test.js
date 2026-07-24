@@ -14,8 +14,19 @@ vi.mock('phaser', () => ({
           W: 'W', S: 'S', A: 'A', D: 'D',
           UP: 'UP', DOWN: 'DOWN', LEFT: 'LEFT', RIGHT: 'RIGHT',
           SHIFT: 'SHIFT',
+          Q: 'Q',
         },
-        JustDown: () => false,
+        // Story 10.5: a CONTROLLABLE just-down edge so the keyboard dash (and any
+        // future edge-triggered key) can be exercised. A key only reports an edge
+        // while the test sets `_justDown`, and — like the real JustDown — the edge is
+        // CONSUMED by the read, so holding the key cannot re-queue every frame.
+        // Every pre-10.5 test leaves `_justDown` unset, so this still reports false
+        // for them (byte-identical behavior).
+        JustDown: (key) => {
+          if (!key || !key._justDown) return false;
+          key._justDown = false;
+          return true;
+        },
       },
     },
   },
@@ -24,8 +35,14 @@ vi.mock('phaser', () => ({
 const { PlayerInputSampler } = await import('./PlayerInputSampler.js');
 const { InputState } = await import('./InputState.js');
 const { INPUT_METHOD } = await import('./inputMethod.js');
-const { MOVE_DEADZONE, AIM_DEADZONE, ARENA_WIDTH, TOUCH_STICK_MAX_RADIUS, TOUCH_BOMB_BUTTON } =
-  await import('../config/constants.js');
+const {
+  MOVE_DEADZONE,
+  AIM_DEADZONE,
+  ARENA_WIDTH,
+  TOUCH_STICK_MAX_RADIUS,
+  TOUCH_BOMB_BUTTON,
+  TOUCH_DASH_BUTTON,
+} = await import('../config/constants.js');
 
 // A left-half / right-half touch x (owns the move / aim stick respectively).
 const TOUCH_LEFT_X = 200;
@@ -683,5 +700,205 @@ describe('PlayerInputSampler touch screen-anchoring + bomb rect (Story 7.2)', ()
     expect(h.input.consumeBomb()).toBe(true);
     // And the overlay snapshot reflects the shifted rect.
     expect(h.sampler.touchSnapshot().bomb.y).toBe(ny);
+  });
+});
+
+// --- Afterburner dash bindings (Story 10.5) ----------------------------------
+// Full parity with the smart bomb on ALL THREE shipped input methods: keyboard `Q`,
+// either gamepad stick click, and the on-screen touch button — plus the pause freeze
+// and the ownership gate the bomb does not need.
+describe('PlayerInputSampler keyboard dash (Q)', () => {
+  it('binds `Q` and queues exactly ONE dash per press (holding does not re-queue)', () => {
+    const h = makeHarness();
+    expect(h.keys.dash).toBeDefined();
+
+    h.keys.dash._justDown = true;
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(true);
+
+    // Key still held, no new edge → nothing further queued.
+    h.keys.dash.isDown = true;
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(false);
+  });
+
+  it('does not collide with the bomb key (a Shift edge queues no dash and vice versa)', () => {
+    const h = makeHarness();
+    h.keys.bomb._justDown = true;
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(true);
+    expect(h.input.consumeDash()).toBe(false);
+
+    h.keys.dash._justDown = true;
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(true);
+    expect(h.input.consumeBomb()).toBe(false);
+  });
+});
+
+describe('PlayerInputSampler gamepad dash listener', () => {
+  it('a STICK CLICK queues exactly one dash; a bumper / face button queues none', () => {
+    const h = makeHarness({ pad: makePad() });
+
+    h.fireGamepadDown(10); // L3
+    expect(h.input.consumeDash()).toBe(true);
+    expect(h.input.consumeDash()).toBe(false);
+
+    h.fireGamepadDown(11); // R3
+    expect(h.input.consumeDash()).toBe(true);
+
+    h.fireGamepadDown(4); // bumper — the BOMB, not the dash
+    expect(h.input.consumeDash()).toBe(false);
+    expect(h.input.consumeBomb()).toBe(true);
+
+    h.fireGamepadDown(0); // face button — the card confirm
+    expect(h.input.consumeDash()).toBe(false);
+  });
+
+  it('the ANALOG TRIGGERS queue nothing (Phaser Button.threshold defaults to 1)', () => {
+    const h = makeHarness({ pad: makePad() });
+    h.fireGamepadDown(6);
+    h.fireGamepadDown(7);
+    expect(h.input.consumeDash()).toBe(false);
+    expect(h.input.consumeBomb()).toBe(false);
+  });
+
+  it('a stick click while paused queues no dash (respects the pause freeze)', () => {
+    const h = makeHarness({ pad: makePad() });
+    h.setPaused(true);
+    h.fireGamepadDown(10);
+    expect(h.input.consumeDash()).toBe(false);
+
+    h.setPaused(false);
+    h.fireGamepadDown(10);
+    expect(h.input.consumeDash()).toBe(true);
+  });
+});
+
+describe('PlayerInputSampler activity readers see a DASH-ONLY input', () => {
+  it('isKbmActive flips on the dash key alone', () => {
+    const h = makeHarness();
+    expect(h.sampler.isKbmActive()).toBe(false);
+    h.keys.dash.isDown = true;
+    expect(h.sampler.isKbmActive()).toBe(true);
+  });
+
+  it('isGamepadActive flips on a held stick click alone (sticks resting)', () => {
+    // buttons[10] pressed, both sticks centered.
+    const buttons = new Array(12).fill(false);
+    buttons[10] = true;
+    const pad = makePad({ buttons });
+    const h = makeHarness({ pad });
+    expect(h.sampler.isGamepadActive(pad)).toBe(true);
+    // …and it really is the dash button doing it (index 11 too, nothing else).
+    const other = makePad({ buttons: new Array(12).fill(false) });
+    expect(h.sampler.isGamepadActive(other)).toBe(false);
+  });
+
+  it('a dash-only gamepad press hot-swaps the active method to GAMEPAD', () => {
+    const buttons = new Array(12).fill(false);
+    buttons[11] = true;
+    const h = makeHarness({ pad: makePad({ buttons }) });
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.KBM);
+    h.sampler.sample();
+    expect(h.sampler.activeMethod).toBe(INPUT_METHOD.GAMEPAD);
+  });
+});
+
+describe('PlayerInputSampler touch dash button (Story 10.5)', () => {
+  it('is GATED by ownership: with the default gate closed a tap spawns an aim stick', () => {
+    const h = makeHarness();
+    h.firePointer('pointerdown', {
+      id: 9,
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+    });
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(false);
+    expect(h.sampler.touchSnapshot().aim.active).toBe(true);
+    expect(h.sampler.touchSnapshot().dash.enabled).toBe(false);
+  });
+
+  it('once ENABLED, a tap latches exactly one dash and spawns no stick', () => {
+    const h = makeHarness();
+    h.sampler.setDashEnabled(true);
+    h.firePointer('pointerdown', {
+      id: 9,
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+    });
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(true);
+    expect(h.sampler.touchSnapshot().aim.active).toBe(false);
+    expect(h.sampler.isTouchActive()).toBe(true);
+
+    // Finger still down, no new edge → no re-latch.
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(false);
+  });
+
+  it('resetTouch() clears a dash latch caught at the pause edge', () => {
+    const h = makeHarness();
+    h.sampler.setDashEnabled(true);
+    h.firePointer('pointerdown', {
+      id: 9,
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+    });
+    h.sampler.resetTouch();
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(false);
+  });
+
+  it('setDashButton passthrough moves the tap target AND the snapshot together', () => {
+    const h = makeHarness();
+    h.sampler.setDashEnabled(true);
+    const ny = TOUCH_DASH_BUTTON.y - (TOUCH_DASH_BUTTON.radius + 20);
+    h.sampler.setDashButton(TOUCH_DASH_BUTTON.x, ny, TOUCH_DASH_BUTTON.radius);
+
+    h.firePointer('pointerdown', {
+      id: 9,
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+    });
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(false); // old center is no longer the button
+
+    h.firePointer('pointerdown', { id: 10, x: TOUCH_DASH_BUTTON.x, y: ny });
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(true);
+    expect(h.sampler.touchSnapshot().dash.y).toBe(ny);
+  });
+
+  it('setDashEnabled(false) with a latch pending drops it (no stale press fires later)', () => {
+    const h = makeHarness();
+    h.sampler.setDashEnabled(true);
+    h.firePointer('pointerdown', {
+      id: 9,
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+    });
+    h.sampler.setDashEnabled(false);
+    h.sampler.sample();
+    expect(h.input.consumeDash()).toBe(false);
+    expect(h.sampler.isTouchActive()).toBe(false);
+  });
+
+  it('the bomb button is unaffected by the dash gate (both taps work when enabled)', () => {
+    const h = makeHarness();
+    h.sampler.setDashEnabled(true);
+    h.firePointer('pointerdown', {
+      id: 9,
+      x: TOUCH_BOMB_BUTTON.x,
+      y: TOUCH_BOMB_BUTTON.y,
+    });
+    h.firePointer('pointerdown', {
+      id: 10,
+      x: TOUCH_DASH_BUTTON.x,
+      y: TOUCH_DASH_BUTTON.y,
+    });
+    h.sampler.sample();
+    expect(h.input.consumeBomb()).toBe(true);
+    expect(h.input.consumeDash()).toBe(true);
   });
 });

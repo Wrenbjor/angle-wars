@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {
   applyRadialDeadzone,
   isBombButton,
+  isDashButton,
   mappingWarning,
 } from './inputMath.js';
 import { INPUT_METHOD, resolveActiveMethod } from './inputMethod.js';
@@ -10,6 +11,7 @@ import {
   MOVE_DEADZONE,
   AIM_DEADZONE,
   GAMEPAD_BOMB_BUTTONS,
+  GAMEPAD_DASH_BUTTONS,
 } from '../config/constants.js';
 
 // PlayerInputSampler — the thin Phaser input boundary.
@@ -63,6 +65,13 @@ export class PlayerInputSampler {
     // which are the game-over restart inputs — so a detonation can never double as
     // a restart. On the gamepad the bomb is either bumper (GAMEPAD_BOMB_BUTTONS),
     // wired below as an edge listener at parity with the keyboard latch.
+    //
+    // The Afterburner DASH (Story 10.5) is bound to `Q`: it sits under the left hand
+    // already resting on WASD, and it is deliberately none of the excluded keys —
+    // not Ctrl (Ctrl+W closes the tab on the web build), not Enter/Space/pointer (the
+    // game-over restart inputs), and not any key already bound (Shift = bomb, M =
+    // mute, -/+ = volume, Esc/P = pause, S = settings/down). On the gamepad the dash
+    // is either analog-stick click (GAMEPAD_DASH_BUTTONS), wired below beside the bomb.
     const KC = Phaser.Input.Keyboard.KeyCodes;
     this.keys = scene.input.keyboard.addKeys({
       up: KC.W,
@@ -74,6 +83,7 @@ export class PlayerInputSampler {
       arrowLeft: KC.LEFT,
       arrowRight: KC.RIGHT,
       bomb: KC.SHIFT,
+      dash: KC.Q,
     });
 
     // Gamepad smart-bomb: latch on the button's just-pressed EDGE via the
@@ -95,6 +105,18 @@ export class PlayerInputSampler {
       // falls back to the same indices as a documented best-effort.
       if (!this.scene._paused && isBombButton(button.index, pad?.mapping)) {
         this.input.queueBomb();
+      }
+    });
+
+    // Gamepad Afterburner DASH (Story 10.5): the SAME edge pattern, the SAME
+    // `_paused` gate and the SAME mapping pass-through as the bomb listener above —
+    // one press, one latched request the DashSystem consumes at sim rate, and a press
+    // while paused latches nothing (asymmetric with a frozen `Q` otherwise, and a
+    // wasted dash on resume). Registered as its own listener rather than folded into
+    // the bomb's, so each action's filter stays a single pure predicate.
+    scene.input.gamepad?.on('down', (pad, button) => {
+      if (!this.scene._paused && isDashButton(button.index, pad?.mapping)) {
+        this.input.queueDash();
       }
     });
 
@@ -177,6 +199,29 @@ export class PlayerInputSampler {
   }
 
   /**
+   * Reposition the touch DASH button (Story 10.5), a thin passthrough to the touch
+   * model exactly like setBombButton. ArenaScene calls this from _applyMobileLayout at
+   * create and on every scale resize.
+   * @param {number} x New center x (arena-logical).
+   * @param {number} y New center y (arena-logical).
+   * @param {number} [radius] New radius (defaults to the current radius).
+   */
+  setDashButton(x, y, radius) {
+    this.touch.setDashButton(x, y, radius);
+  }
+
+  /**
+   * Push the touch dash button's OWNERSHIP GATE (Story 10.5) — a thin passthrough to
+   * the touch model. ArenaScene calls this every render frame with
+   * `dashSystem.dashEnabled()`, because the dash is unlocked MID-RUN by a card pick and
+   * the button has to appear the moment the fold grants it.
+   * @param {boolean} on Whether the dash is currently owned.
+   */
+  setDashEnabled(on) {
+    this.touch.setDashEnabled(on);
+  }
+
+  /**
    * Return the currently-connected gamepad, or null. The gamepad plugin is only
    * present when enabled in the game config (input.gamepad = true).
    *
@@ -250,6 +295,7 @@ export class PlayerInputSampler {
     this.sampleMove(pad);
     this.sampleAim(pad);
     this.sampleBomb();
+    this.sampleDash();
   }
 
   /**
@@ -267,7 +313,11 @@ export class PlayerInputSampler {
     const rs = pad.rightStick;
     const aim = applyRadialDeadzone(rs.x, rs.y, AIM_DEADZONE);
     if (aim.x !== 0 || aim.y !== 0) return true;
-    return GAMEPAD_BOMB_BUTTONS.some((i) => pad.buttons?.[i]?.pressed);
+    if (GAMEPAD_BOMB_BUTTONS.some((i) => pad.buttons?.[i]?.pressed)) return true;
+    // Story 10.5: a dash-only press must also flip the active method to GAMEPAD —
+    // without this clause, dashing while every stick rests would leave the method on
+    // KBM/TOUCH and the pad's sticks unread.
+    return GAMEPAD_DASH_BUTTONS.some((i) => pad.buttons?.[i]?.pressed);
   }
 
   /**
@@ -288,7 +338,10 @@ export class PlayerInputSampler {
       k.arrowDown.isDown ||
       k.arrowLeft.isDown ||
       k.arrowRight.isDown ||
-      k.bomb.isDown;
+      k.bomb.isDown ||
+      // Story 10.5: a dash-only press must also flip the active method to KBM, for
+      // the same reason the bomb key is in this chain.
+      k.dash.isDown;
 
     const p = this.scene.input.activePointer;
     // A thumb must never register as the mouse (no cross-device aim bleed): gate
@@ -324,6 +377,24 @@ export class PlayerInputSampler {
     // makes touchActive true and flips the method to TOUCH this same frame.
     if (this.touch.consumeBomb()) {
       this.input.queueBomb();
+    }
+  }
+
+  /**
+   * Latch an Afterburner dash request on the dash key's just-pressed EDGE, and fold
+   * in the touch button's one-tap latch — sampleBomb's structure exactly. JustDown
+   * returns true once per physical press (holding `Q` does not re-queue every frame),
+   * and the touch latch is consumed every frame regardless of the active method (like
+   * the gamepad listener), since tapping the button also makes touchActive true and
+   * flips the method to TOUCH this same frame. The gamepad stick-click dash is wired
+   * as its own edge listener in the constructor.
+   */
+  sampleDash() {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
+      this.input.queueDash();
+    }
+    if (this.touch.consumeDash()) {
+      this.input.queueDash();
     }
   }
 

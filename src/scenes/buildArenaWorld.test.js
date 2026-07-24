@@ -25,6 +25,9 @@ import {
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
   SHIELD_ABSORB_INVULN_MS,
+  PLAYER_INVULN_MS,
+  DASH_DURATION_MS,
+  SPAWN_SAFE_RADIUS,
 } from '../config/constants.js';
 import { xpToNextLevel } from '../systems/LevelSystem.js';
 
@@ -43,7 +46,9 @@ import { xpToNextLevel } from '../systems/LevelSystem.js';
 // after ScoringSystem, before BlackHoleSystem; Story 9.3 added ArmoredSystem in the
 // enemy section, after MirrorReflectorSystem and before SpawnDirector; Story 10.4 added
 // NaniteShieldSystem between ExtraLifeSystem and PlayerDeathSystem — a slot that is
-// load-bearing in BOTH directions, see the shield's wiring test below).
+// load-bearing in BOTH directions, see the shield's wiring test below; Story 10.5 added
+// DashSystem immediately after CollisionSystem and before ScoringSystem — a slot that is
+// load-bearing in THREE directions, see the dash's wiring tests below).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -56,6 +61,7 @@ const CANONICAL_ORDER = [
   'ArmoredSystem',
   'SpawnDirector',
   'CollisionSystem',
+  'DashSystem',
   'ScoringSystem',
   'DpsTelemetrySystem',
   'BlackHoleSystem',
@@ -105,6 +111,7 @@ const RETURN_HANDLES = [
   'armoredSystem',
   'spawnDirector',
   'collisionSystem',
+  'dashSystem',
   'scoringSystem',
   'dpsTelemetrySystem',
   'blackHoleSystem',
@@ -130,7 +137,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 26 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 27 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -506,6 +513,47 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(order.indexOf('NaniteShieldSystem')).toBeLessThan(
       order.indexOf('PlayerDeathSystem'),
     );
+  });
+
+  it('constructs the dashSystem in its load-bearing slot, over enemyPools and the shared handles', () => {
+    const ctx = buildArenaWorld();
+    // The sweep's reach is the five COMBAT archetype pools — the SAME array the factory
+    // returns, never deathPools. The Black Hole and the Mirror Reflector are out of
+    // scope (the scoping BombSystem.detonateAt / the shield pulse already apply), and
+    // only an IDENTITY pin catches a narrower list: every behavioral case drives the
+    // seeker pool, which any plausible wrong array still contains.
+    expect(ctx.dashSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(ctx.dashSystem.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
+    expect(ctx.dashSystem.enemyPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
+    // The shared ship / input / stat store / collision seam, not copies.
+    expect(ctx.dashSystem.ship).toBe(ctx.ship);
+    expect(ctx.dashSystem.inputState).toBe(ctx.inputState);
+    expect(ctx.dashSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.dashSystem.collisionSystem).toBe(ctx.collisionSystem);
+    // The three consumers hold THIS instance.
+    expect(ctx.playerMovementSystem.dashSystem).toBe(ctx.dashSystem);
+    expect(ctx.playerDeathSystem.dashSystem).toBe(ctx.dashSystem);
+    expect(ctx.particleSystem.dashSystem).toBe(ctx.dashSystem);
+    // …and the movement system reads the SAME store the fold mutates.
+    expect(ctx.playerMovementSystem.playerStats).toBe(ctx.playerStats);
+  });
+
+  it('pins the DashSystem slot: immediately AFTER CollisionSystem and BEFORE ScoringSystem', () => {
+    // Load-bearing in three directions. After CollisionSystem, so a dash kill appends to
+    // latches that system has already RESET this tick; before ScoringSystem (and so
+    // before DpsTelemetry / XpOrb / GridField / Particle), so the kill is scored and
+    // produces its full feedback; and later than PlayerMovementSystem, which is why
+    // movement reads the dash window one fixed step after it opens.
+    const ctx = buildArenaWorld();
+    const order = ctx.world.systems.map((s) => s.constructor.name);
+    const dash = order.indexOf('DashSystem');
+    expect(dash).toBe(order.indexOf('CollisionSystem') + 1);
+    expect(order.indexOf('ScoringSystem')).toBe(dash + 1);
+    expect(dash).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
+    expect(dash).toBeLessThan(order.indexOf('XpOrbSystem'));
+    expect(dash).toBeLessThan(order.indexOf('GridFieldSystem'));
+    expect(dash).toBeLessThan(order.indexOf('ParticleSystem'));
+    expect(dash).toBeGreaterThan(order.indexOf('PlayerMovementSystem'));
   });
 
   it('honors an injected rng — every rng-taking system receives it', () => {
@@ -1062,5 +1110,255 @@ describe('buildArenaWorld — Nanite Shield through the ASSEMBLED world (Story 1
     expect(stillActive.has(contact)).toBe(true);
     expect(stillActive.has(bystander)).toBe(true);
     expect(ctx.scoreState.score).toBe(scoreBefore);
+  });
+});
+
+describe('buildArenaWorld — Afterburner through the ASSEMBLED world (Story 10.5)', () => {
+  // The story's headline observables at the surface the intent states them at: a card
+  // pick folds the SHARED playerStats, and from that instant the ship is measurably
+  // faster, a dash button actually dashes, and a Lv4 dash kill pays out like a bullet
+  // kill. The FIRST test drives the whole chain for real — XP → level crossings → the
+  // offers the REAL weighted draw produced → queueSelection → LevelUpSystem's fold →
+  // DashSystem → PlayerMovementSystem. The later tests construct the owned state
+  // directly where the claim is about the EFFECT rather than the pick path (already
+  // covered), so reaching Lv4/Lv5 through real draws would add long setup pinning nothing.
+
+  function seededRng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function xpForLevel(level) {
+    let need = 0;
+    for (let l = 1; l < level; l++) need += xpToNextLevel(l);
+    return need;
+  }
+
+  /**
+   * Level up through REAL banked XP and the REAL weighted draw until Afterburner is in
+   * the offer, then pick it. Bounded, so a draw regression fails as "never offered"
+   * rather than hanging. Returns the ctx for chaining.
+   */
+  function pickAfterburnerForReal(ctx) {
+    let level = 1;
+    let slot = -1;
+    for (let attempt = 0; attempt < 20 && slot < 0; attempt++) {
+      level += 1;
+      ctx.scoreState.xp = xpForLevel(level);
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      expect(ctx.levelSystem.level).toBe(level);
+      expect(ctx.levelUpSystem.pendingSelections).toBeGreaterThanOrEqual(1);
+      slot = ctx.levelUpSystem.currentOffer.findIndex((c) => c.id === 'afterburner');
+      if (slot < 0) {
+        ctx.levelUpSystem.queueSelection(0);
+        ctx.world.fixedUpdate(FIXED_STEP_MS);
+      }
+    }
+    expect(slot, 'the real weighted draw never offered afterburner').toBeGreaterThanOrEqual(0);
+    ctx.levelUpSystem.queueSelection(slot);
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+    return ctx;
+  }
+
+  /** Raise Afterburner to `level` through the REAL registry fold, no hand-written stats. */
+  function ownAfterburner(ctx, level) {
+    ctx.progressionState.ownedCards.afterburner = level;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+    expect(ctx.playerStats.dashCooldownMs).toBeGreaterThan(0);
+  }
+
+  /**
+   * Hold a direction to steady state through the WHOLE assembled world, so a regression
+   * anywhere in registry → fold → movement is caught (driving PlayerMovementSystem
+   * directly is the exact shape of the miss this story was re-specced to fix).
+   *
+   * Only POSITION is re-pinned each tick — to arena centre, keeping the arena clamp out
+   * of the measurement — never velocity. The ship is also held invulnerable so a
+   * spawned enemy cannot respawn it mid-measurement and zero the velocity we are
+   * reading; that is a death-flow effect, not a movement one.
+   */
+  function measureTopSpeed(ctx, ticks = 200) {
+    ctx.inputState.setMove(1, 0);
+    for (let i = 0; i < ticks; i++) {
+      ctx.ship.x = ARENA_WIDTH / 2;
+      ctx.ship.y = ARENA_HEIGHT / 2;
+      ctx.playerState.invulnMs = PLAYER_INVULN_MS;
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+    }
+    return Math.hypot(ctx.ship.vx, ctx.ship.vy);
+  }
+
+  it('offer → pick → fold → dash: the REAL level-up path makes the ship dash', () => {
+    const ctx = buildArenaWorld({ rng: seededRng(20105) });
+    expect(ctx.playerStats.moveSpeedMult).toBe(PLAYER_STATS_BASE.moveSpeedMult);
+    expect(ctx.dashSystem.dashEnabled()).toBe(false);
+
+    pickAfterburnerForReal(ctx);
+    expect(ctx.progressionState.ownedCards.afterburner).toBe(1);
+    // Lv1 is a SPEED rung only — the dash is not owned yet.
+    expect(ctx.playerStats.moveSpeedMult).toBeCloseTo(1.12, 10);
+    expect(ctx.playerStats.dashCooldownMs).toBe(0);
+    expect(ctx.dashSystem.dashEnabled()).toBe(false);
+
+    // Take it to Lv2 through the same real fold (no hand-written ownedCards stats).
+    ownAfterburner(ctx, 2);
+    expect(ctx.dashSystem.dashEnabled()).toBe(true);
+    // No system was reconstructed — the same SHARED store instance carried the upgrade.
+    expect(ctx.dashSystem.playerStats).toBe(ctx.playerStats);
+
+    // Park the ship, hold a direction, queue a dash through the real latch and step the
+    // assembled world: the ship must travel the dash distance.
+    ctx.playerState.invulnMs = 0;
+    ctx.ship.x = ARENA_WIDTH / 2;
+    ctx.ship.y = ARENA_HEIGHT / 2;
+    ctx.ship.vx = 0;
+    ctx.ship.vy = 0;
+    const x0 = ctx.ship.x;
+    ctx.inputState.setMove(1, 0);
+    ctx.inputState.queueDash();
+
+    let dashTicks = 0;
+    for (let i = 0; i < 20; i++) {
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      if (ctx.dashSystem.movementActive) dashTicks += 1;
+    }
+    expect(ctx.dashSystem.dashSeq).toBe(1);
+    expect(dashTicks).toBe(Math.ceil(DASH_DURATION_MS / FIXED_STEP_MS));
+    const travelled = ctx.ship.x - x0;
+    // Well past what ordinary movement could cover in the same ~0.33s, and clear of the
+    // game's own "clear of the player" distance.
+    expect(travelled).toBeGreaterThan(SPAWN_SAFE_RADIUS);
+  });
+
+  it('ACHIEVED SPEED: each rung is measurably distinct through registry → fold → movement', () => {
+    // The end-to-end counterpart of the unit test: a regression ANYWHERE in the chain
+    // (a re-authored registry rung, a fold slip, a movement change) is caught here.
+    const expected = [520, 582.4, 624, 650, 650, 702];
+    const measured = [];
+    for (let level = 0; level <= 5; level++) {
+      const ctx = buildArenaWorld({ rng: () => 0.5 });
+      if (level > 0) ownAfterburnerLevel(ctx, level);
+      measured.push(measureTopSpeed(ctx));
+    }
+    for (let i = 0; i < expected.length; i++) {
+      expect(measured[i], `Afterburner Lv${i} achieved speed`).toBeCloseTo(expected[i], 3);
+    }
+    // Lv3 and Lv4 share a rung by design; every OTHER pair is distinguishable in play.
+    const distinct = [measured[0], measured[1], measured[2], measured[3], measured[5]];
+    for (let i = 1; i < distinct.length; i++) {
+      expect(distinct[i] - distinct[i - 1]).toBeGreaterThan(1);
+    }
+  });
+
+  /** Own Afterburner at `level` (0 = unowned) through the REAL registry fold. */
+  function ownAfterburnerLevel(ctx, level) {
+    ctx.progressionState.ownedCards.afterburner = level;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+  }
+
+  it('Lv4: an enemy on the dash path is KILLED, SCORED and drops an XP ORB', () => {
+    // The property that distinguishes a dash kill from BombSystem's silent removal.
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ownAfterburner(ctx, 4);
+    ctx.playerState.invulnMs = 0;
+    ctx.ship.x = ARENA_WIDTH / 2;
+    ctx.ship.y = ARENA_HEIGHT / 2;
+    ctx.ship.vx = 0;
+    ctx.ship.vy = 0;
+
+    // A live seeker from the REAL archetype pool, placed ALONG the dash path but well
+    // clear of the ship at rest — the dash has to travel into it. (Standing in contact
+    // before the press would kill the player on the opening tick, which is correct: the
+    // protected window is exactly the TRAVELLED window, so the tick before the ship
+    // moves is deliberately not protected.)
+    const seeker = ctx.enemySystem.enemyPool.acquire();
+    seeker.x = ctx.ship.x + 100;
+    seeker.y = ctx.ship.y;
+    seeker.vx = 0;
+    seeker.vy = 0;
+    seeker.telegraphMs = 0;
+
+    const scoreBefore = ctx.scoreState.score;
+    const orbsBefore = ctx.xpOrbSystem.pool.activeCount;
+    const particlesBefore = ctx.particleSystem.pool.activeCount;
+    const activeRipples = () =>
+      ctx.gridFieldSystem.ripples.filter((r) => r.active).length;
+    const ripplesBefore = activeRipples();
+
+    ctx.inputState.setMove(1, 0);
+    ctx.inputState.queueDash();
+    // Run the whole window: the dash opens on the first tick and travels into the
+    // enemy a few ticks later. Track the orb PEAK — the dash leaves the ship right on
+    // top of the drop, so the orb is magnet-collected within a few ticks and an
+    // end-of-run count would read 0 for a drop that really happened.
+    let orbPeak = orbsBefore;
+    for (let i = 0; i < 14; i++) {
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      orbPeak = Math.max(orbPeak, ctx.xpOrbSystem.pool.activeCount);
+    }
+
+    // Killed and released, and it really was the DASH (no bullet reached it — the
+    // firing system needs an active aim channel, which nothing set).
+    let stillActive = false;
+    ctx.enemySystem.enemyPool.forEachActive((s) => {
+      if (s === seeker) stillActive = true;
+    });
+    expect(stillActive).toBe(false);
+    // …scored through the ordinary per-kill seam…
+    expect(ctx.scoreState.score).toBeGreaterThan(scoreBefore);
+    // …an XP orb dropped (and, since the ship is right there, was banked)…
+    expect(orbPeak).toBeGreaterThan(orbsBefore);
+    expect(ctx.scoreState.xp).toBeGreaterThan(0);
+    // …a particle burst sprayed and the grid rippled — the FULL kill feedback.
+    expect(ctx.particleSystem.pool.activeCount).toBeGreaterThan(particlesBefore);
+    expect(activeRipples()).toBeGreaterThan(ripplesBefore);
+  });
+
+  it('Lv4: an ARMORED survivor still credits the Story 9.2 DPS governor', () => {
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ownAfterburner(ctx, 4);
+    ctx.playerState.invulnMs = 0;
+    ctx.ship.x = ARENA_WIDTH / 2;
+    ctx.ship.y = ARENA_HEIGHT / 2;
+
+    const tank = ctx.armoredSystem.enemyPool.acquire();
+    tank.x = ctx.ship.x + 100;
+    tank.y = ctx.ship.y;
+    tank.vx = 0;
+    tank.vy = 0;
+    tank.telegraphMs = 0;
+    tank.hp = ARMORED_HP;
+
+    ctx.inputState.setMove(1, 0);
+    ctx.inputState.queueDash();
+    for (let i = 0; i < 14; i++) ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    expect(tank.hp).toBeLessThan(ARMORED_HP);
+    expect(ctx.dpsTelemetrySystem.dps).toBeGreaterThan(0);
+  });
+
+  it('an UNOWNED build is byte-identical to pre-10.5 and a queued dash press is discarded', () => {
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    expect(ctx.dashSystem.dashEnabled()).toBe(false);
+    expect(measureTopSpeed(ctx)).toBeCloseTo(520, 3);
+    ctx.inputState.queueDash();
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+    expect(ctx.inputState.dashQueued).toBe(false); // consumed and discarded
+    expect(ctx.dashSystem.active).toBe(false);
+    expect(ctx.dashSystem.dashSeq).toBe(0);
   });
 });

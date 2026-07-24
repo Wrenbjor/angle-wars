@@ -8,9 +8,10 @@
 // headless-testable in vitest (a mock graphics that records its calls).
 //
 // Draws (per redraw): a base ring at MAX_RADIUS + a thumb knob at the current point
-// for EACH active stick, plus the smart-bomb button (brighter while pressed). Fixed
-// logical-coordinate placeholder styling only — the real aesthetic and device-aware
-// placement are Epic 4 / Story 7.2.
+// for EACH active stick, the smart-bomb button (brighter while pressed), and — only
+// while the snapshot says the dash is OWNED — the Afterburner dash button (Story 10.5).
+// Fixed logical-coordinate placeholder styling only — the real aesthetic and
+// device-aware placement are Epic 4 / Story 7.2.
 
 import {
   TOUCH_STICK_MAX_RADIUS,
@@ -21,6 +22,7 @@ import {
   COLOR_TOUCH_STICK_BASE,
   COLOR_TOUCH_STICK_KNOB,
   COLOR_TOUCH_BOMB,
+  COLOR_TOUCH_DASH,
 } from '../config/constants.js';
 
 /**
@@ -28,17 +30,21 @@ import {
  * constants so the draw helper carries no inline magic numbers. Frozen: immutable
  * config read live on every render frame.
  * @type {{maxRadius:number, knobRadius:number, lineWidth:number, alpha:number,
- *   bombPressedAlpha:number, baseColor:number, knobColor:number, bombColor:number}}
+ *   bombPressedAlpha:number, baseColor:number, knobColor:number, bombColor:number,
+ *   dashColor:number}}
  */
 export const TOUCH_OVERLAY_STYLE = Object.freeze({
   maxRadius: TOUCH_STICK_MAX_RADIUS,
   knobRadius: TOUCH_OVERLAY_KNOB_RADIUS,
   lineWidth: TOUCH_OVERLAY_LINE_WIDTH,
   alpha: TOUCH_OVERLAY_ALPHA,
+  // Shared by the bomb and the dash button — one pressed-alpha for the whole
+  // bottom button row, so they brighten identically under a thumb.
   bombPressedAlpha: TOUCH_OVERLAY_BOMB_PRESSED_ALPHA,
   baseColor: COLOR_TOUCH_STICK_BASE,
   knobColor: COLOR_TOUCH_STICK_KNOB,
   bombColor: COLOR_TOUCH_BOMB,
+  dashColor: COLOR_TOUCH_DASH,
 });
 
 /** Draw one floating stick: a base ring at MAX_RADIUS + a thumb knob at the touch. */
@@ -69,4 +75,18 @@ export function drawTouchOverlay(graphics, snapshot, style) {
   graphics.fillCircle(bomb.x, bomb.y, bomb.radius);
   graphics.lineStyle(style.lineWidth, style.bombColor, style.alpha);
   graphics.strokeCircle(bomb.x, bomb.y, bomb.radius);
+
+  // Afterburner dash button (Story 10.5) — drawn exactly as the bomb is, but SKIPPED
+  // ENTIRELY while the ownership gate is closed. The gate is the same `enabled` flag
+  // the model's hit test reads, so a build that cannot dash never SEES the button and
+  // never CLAIMS that region — one flag, both behaviors, so they cannot disagree.
+  // The gate is per-BUTTON, not per-overlay: the bomb above is unaffected.
+  const dash = snapshot.dash;
+  if (dash && dash.enabled) {
+    const dashAlpha = dash.pressed ? style.bombPressedAlpha : style.alpha;
+    graphics.fillStyle(style.dashColor, dashAlpha);
+    graphics.fillCircle(dash.x, dash.y, dash.radius);
+    graphics.lineStyle(style.lineWidth, style.dashColor, style.alpha);
+    graphics.strokeCircle(dash.x, dash.y, dash.radius);
+  }
 }
