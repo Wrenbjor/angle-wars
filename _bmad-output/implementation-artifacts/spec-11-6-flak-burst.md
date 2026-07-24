@@ -2,11 +2,11 @@
 title: 'Story 11.6 — Flak Burst'
 type: 'feature'
 created: '2026-07-24'
-status: 'in-review'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true
 baseline_revision: '02666a7f73847a287bb7dd932c6890467bdd3c89'
-final_revision: '7f53fa983cbcdf04f3ba552cf550445c94ec2d56'
+final_revision: '3e1f748e274052fa971fdf00e1d7cea9e4a1de3d'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings: []
