@@ -6,7 +6,7 @@ status: 'in-review'
 review_loop_iteration: 0
 followup_review_recommended: true
 baseline_revision: '84aaa4a4f826e6f3bff8d49641fef2d58ed2bb0a'
-final_revision: '095859a916328f85c268c7a7b518b23a1a251489'
+final_revision: '413df1b4e22b7e3bf245a683055b5c1aa64ebc08'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings: []
