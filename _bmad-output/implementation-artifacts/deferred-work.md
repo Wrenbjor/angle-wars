@@ -568,3 +568,7 @@ source_spec: `spec-11-2-seeker-drones.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260723-101850-abdc; this entry preserves the lingering recommendation for a deliberate later review.
 status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-3-mine-layer.md`
+  summary: MineLayerSystem never releases live mines when the Mine Layer goes owned→unowned, so orphaned armed mines keep aging/pulling/detonating (free damage) after the item is gone.
+  evidence: The unowned branch of `fixedUpdate` (MineLayerSystem.js) only zeroes `_dropAccumMs`; it does not clamp the live mine pool to 0 the way SeekerDroneSystem's count-sync does. Unreachable in shipped play (owned card levels only increase; no item-removal path exists), but Epic 12's `mine-layer → singularity-field` fusion — whose metadata this story registers — will consume the item and make the transition reachable.

@@ -996,6 +996,93 @@ export const COLOR_SEEKER_DRONE = 0x33ffaa;
 // so a shot reads as its own moving element.
 export const COLOR_DRONE_SHOT = 0x66ffcc;
 
+// --- Mine Layer (Story 11.3 / PRD §13.3) ------------------------------------
+// The third Epic-11 "exotic" offense item and the first AoE-DETONATION entity: the
+// kiting ship drops timed mines in its wake that ARM after a delay, then DETONATE when a
+// combat enemy enters the armed mine's blast — dealing FULL damage to every enemy in the
+// blast through the shared CollisionSystem.applyPlayerDamage seam. Because a detonation
+// carries 90 damage and every current enemy (armored included, hp 5) dies at <= its own
+// hp, one detonation is a FULL-damage AoE kill (the "zone of denial" answer to the
+// projectile-resistant armored archetype — contrast the drone SHOT, which the armored
+// resists). MineLayerSystem owns the mine pool + the drop accumulator; the shared
+// player-stat store owns only the derived drop-period/cap/detonate-radius/pull/chain.
+//
+// The geometry/feel/colour values below are tunable placeholders; the *_MAX_* /
+// *_BASE_* / floor / arm / damage values are SAFETY/authored constants (like
+// SHIELD_MAX_CHARGES / FIRE_INTERVAL_FLOOR_MS / ORBIT_BLADE_BASE_DAMAGE), documented as
+// such — never balance levers.
+
+// Mine collision/render half-extent (px). Used for the placeholder filled circle and as
+// a small term the detonate/pull tests can read. Tunable feel.
+export const MINE_RADIUS = 7;
+// Junk-fold fallback / base for the drop period (ms between mine drops). `mineDropPeriodMs`
+// comes off the shared player-stat store and is ALSO the ownership gate: a non-finite /
+// non-positive value means UNOWNED (no drops), so this base is only the documented shipped
+// L1 cadence, never a junk fallback (junk → no drops, the pre-11.3 behavior).
+export const MINE_BASE_DROP_PERIOD_MS = 2000;
+// Absolute LOWER bound (ms) on the effective drop period — a SAFETY guard framed exactly
+// like SEEKER_DRONE_PERIOD_FLOOR_MS, never a balance lever. `_dropPeriodMs()` maps a
+// non-finite / non-positive fold to 0 (unowned), but a finite BUT tiny-positive corrupted
+// period (e.g. 0.5ms) would still pass, and then the drop `while (_dropAccumMs >= period)`
+// loop runs `1 + floor(dt/period)` iterations per tick — a same-tick drop burst that
+// churns the mine pool past its cap. Clamping the finite-positive branch up to this floor
+// keeps the drain bounded: it sits comfortably above the fixed step (FIXED_STEP_MS ≈
+// 16.7ms), so even a floored period drops at most ~1 mine/tick. Far below every authored
+// value (the L1 2s cadence), so no shipped build reaches it.
+export const MINE_DROP_PERIOD_FLOOR_MS = 100;
+// SAFETY/authored: the ARM delay (ms) between a mine being dropped and becoming armed. An
+// unarmed mine is inert (no detonation, no pull). Constant across levels (stamped per
+// mine at drop, so a level change never re-arms a live mine), never a balance lever.
+export const MINE_ARM_MS = 3000;
+// Junk-fold fallback / base for the detonate (blast) radius (px). `mineDetonateRadius`
+// comes off the shared store, so a non-finite / non-positive value degrades to this
+// authored base (60, the shipped L1 radius). Tunable feel within the max clamp below.
+export const MINE_BASE_DETONATE_RADIUS = 60;
+// Absolute UPPER bound on the detonate radius — a SAFETY clamp in the shape of
+// MINE_MAX_CAP / SEEKER_DRONE_MAX_COUNT, bounding what a corrupted `mineDetonateRadius` fold
+// can make the blast reach. It sits with DELIBERATE HEADROOM above the shipped maximum of
+// 100 (Lv2+) — just as MINE_MAX_CAP (16) sits above the shipped 12 — so a future authored
+// radius between 100 and 240 folds through unchanged and only an ABSURD value (1e9) is pulled
+// back. Setting it AT the shipped 100 would make it an invisible balance ceiling (a legit
+// >100 radius silently clamped, no test failure); the headroom keeps it a pure safety guard,
+// never a balance lever.
+export const MINE_MAX_DETONATE_RADIUS = 240;
+// SAFETY/authored: the damage a detonation deals to EVERY enemy in the blast, routed
+// through CollisionSystem.applyPlayerDamage. At 90 (matching ORBIT_BLADE_BASE_DAMAGE) it
+// one-shots the armored archetype (hp 5 <= 90+ε), which is what makes a mine AoE-FULL-
+// damage (FR33) — a lower value would silently make mines armor-resisted. Not a lever.
+export const MINE_DETONATE_DAMAGE = 90;
+// Radius (px) within which a Lv4+ armed mine pulls combat enemies inward each tick. Tunable
+// feel — larger than the blast so an enemy is dragged into the blast before it detonates.
+export const MINE_PULL_RADIUS = 150;
+// Pull STRENGTH (px/s) for the Lv4+ position-nudge, calibrated BELOW
+// BLACKHOLE_GRAVITY_STRENGTH (300) so a mine's tug is gentler than a black hole's. A
+// position nudge (not a velocity force), dt-scaled for frame-rate independence — the
+// BlackHoleSystem._pull model. Tunable feel.
+export const MINE_PULL_STRENGTH = 220;
+// Radius (px) within which a Lv5 detonation chains to OTHER armed mines. Tunable feel.
+export const MINE_CHAIN_RADIUS = 120;
+// Authored base for the live-mine cap (the shipped L1 value). The cap comes off the folded
+// `mineCap`; a junk fold degrades to this base. Documented, not a junk-only fallback.
+export const MINE_BASE_CAP = 10;
+// Absolute UPPER bound on the live mine count — a SAFETY clamp in the shape of
+// SEEKER_DRONE_MAX_COUNT, bounding what a corrupted `mineCap` fold can ask the pool to
+// hold live. The shipped maximum is 12 (Lv2+, the NFR11 stress bar: 12 mines alongside 5
+// blades + 5 drones), so it sits above every authorable value and no shipped build reaches
+// it. Not a balance lever.
+export const MINE_MAX_CAP = 16;
+// Idle mine instances prewarmed into the pool at construction, so a drop never hits the
+// factory once running. Sized to the safety clamp — the most mines the system can ever
+// hold live at once.
+export const MINE_POOL_PREWARM = MINE_MAX_CAP;
+// Placeholder UNARMED-mine colour (0xRRGGBB) — a dim amber, so an inert (not-yet-armed)
+// mine reads as harmless at a glance. Epic 4 owns the real aesthetic.
+export const COLOR_MINE_UNARMED = 0x886644;
+// Placeholder ARMED-mine colour (0xRRGGBB) — a bright amber, so an armed (lethal) mine
+// reads as a live threat, contrasting the dim unarmed dot (the epic's armed-vs-unarmed UX
+// note). Epic 4 owns the real aesthetic.
+export const COLOR_MINE_ARMED = 0xffaa22;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.

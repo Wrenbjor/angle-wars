@@ -276,6 +276,46 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.seekerDroneHoming).toBe(0);
   });
 
+  // --- Mine Layer (Story 11.3) ---------------------------------------------
+  it('folds the SHIPPED Mine Layer rungs 1..5 to the exact fields', () => {
+    // Drives the REAL registry, not a fixture: a re-authoring slip in itemRegistry.js has to
+    // fail here as well as in the registry's own suite. period 2000/2000/1300/1300/1300, cap
+    // 10/12/12/12/12, radius 60/100/100/100/100, pull 0/0/0/1/1, chain 0/0/0/0/1.
+    const expected = [
+      { mineDropPeriodMs: 2000, mineCap: 10, mineDetonateRadius: 60, minePull: 0, mineChain: 0 },
+      { mineDropPeriodMs: 2000, mineCap: 12, mineDetonateRadius: 100, minePull: 0, mineChain: 0 },
+      { mineDropPeriodMs: 1300, mineCap: 12, mineDetonateRadius: 100, minePull: 0, mineChain: 0 },
+      { mineDropPeriodMs: 1300, mineCap: 12, mineDetonateRadius: 100, minePull: 1, mineChain: 0 },
+      { mineDropPeriodMs: 1300, mineCap: 12, mineDetonateRadius: 100, minePull: 1, mineChain: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'mine-layer': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.mineDropPeriodMs, `L${level} period`).toBe(e.mineDropPeriodMs);
+      expect(ps.mineCap, `L${level} cap`).toBe(e.mineCap);
+      expect(ps.mineDetonateRadius, `L${level} radius`).toBe(e.mineDetonateRadius);
+      expect(ps.minePull, `L${level} pull`).toBe(e.minePull);
+      expect(ps.mineChain, `L${level} chain`).toBe(e.mineChain);
+      // Mine Layer touches nothing on the fire/volley/movement/defense/blade/drone seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+      expect(ps.orbitBladeCount).toBe(0);
+      expect(ps.seekerDroneCount).toBe(0);
+    }
+  });
+
+  it('leaves the five Mine Layer fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.mineDropPeriodMs).toBe(0);
+    expect(ps.mineCap).toBe(0);
+    expect(ps.mineDetonateRadius).toBe(0);
+    expect(ps.minePull).toBe(0);
+    expect(ps.mineChain).toBe(0);
+  });
+
   it('leaves all five Afterburner fields at base when it is UNOWNED', () => {
     const ps = createPlayerStats();
     recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);

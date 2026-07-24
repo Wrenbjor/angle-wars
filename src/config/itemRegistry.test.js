@@ -24,6 +24,7 @@ const EXPECTED_IDS = [
   'spread-cannon',
   'orbit-blade',
   'seeker-drones',
+  'mine-layer',
   'nanite-shield',
   'afterburner',
 ];
@@ -146,6 +147,12 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
       partner: 'nanite-shield',
       epic: 'swarm-protocol',
     });
+    // Story 11.3: Mine Layer Lv5 + Gravity Well Lv3 → Singularity Field (Epic 12 resolves it;
+    // the partner `gravity-well` is forward-looking, landing in Story 11.7).
+    expect(getItem('mine-layer').fusion).toEqual({
+      partner: 'gravity-well',
+      epic: 'singularity-field',
+    });
     expect(getItem('nanite-shield').fusion).toEqual({
       partner: 'afterburner',
       epic: 'phase-armor',
@@ -206,6 +213,7 @@ describe('getItem / getItemsByTrack', () => {
       'spread-cannon',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
     ]);
     expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
     // Every returned entry actually belongs to the requested track.
@@ -766,6 +774,136 @@ describe('ITEM_REGISTRY — Seeker Drones per-level stats (Story 11.2, PRD §13.
       '3 drones / +40% fire rate',
       '4 drones / homing shots',
       '5 drones / +60% damage',
+    ]);
+  });
+});
+
+// --- Mine Layer (Story 11.3) -------------------------------------------------
+describe('ITEM_REGISTRY — Mine Layer per-level stats (Story 11.3, PRD §13.3)', () => {
+  // The exact per-level maps. `mineDropPeriodMs`/`mineCap`/`mineDetonateRadius` are
+  // ADDITIVE/COUNT fields (base 0), and `minePull`/`mineChain` are FLAGS. `mineDropPeriodMs`
+  // is ALSO the ownership gate (0 = unowned). Every map is the TOTAL at that level.
+  const EXPECTED_MINE_STATS = [
+    { mineDropPeriodMs: 2000, mineCap: 10, mineDetonateRadius: 60 },
+    { mineDropPeriodMs: 2000, mineCap: 12, mineDetonateRadius: 100 },
+    { mineDropPeriodMs: 1300, mineCap: 12, mineDetonateRadius: 100 },
+    { mineDropPeriodMs: 1300, mineCap: 12, mineDetonateRadius: 100, minePull: 1 },
+    {
+      mineDropPeriodMs: 1300,
+      mineCap: 12,
+      mineDetonateRadius: 100,
+      minePull: 1,
+      mineChain: 1,
+    },
+  ];
+
+  it('pins all five levels exactly (frozen, totals-at-level)', () => {
+    const ml = getItem('mine-layer');
+    expect(ml.levels).toHaveLength(EXPECTED_MINE_STATS.length);
+    ml.levels.forEach((lvl, i) => {
+      expect(lvl.stats, `mine-layer L${lvl.level}`).toEqual(EXPECTED_MINE_STATS[i]);
+      expect(Object.isFrozen(lvl.stats)).toBe(true);
+    });
+  });
+
+  it('the track/rarity/maxLevel and guarantee shape match the framework contract', () => {
+    const ml = getItem('mine-layer');
+    expect(ml.track).toBe('offense');
+    expect(ml.rarity).toBeGreaterThan(0);
+    expect(ml.maxLevel).toBe(ITEM_MAX_LEVEL);
+    expect(ml.guaranteeFromLevel).toBeNull();
+  });
+
+  it('levels are TOTALS, not deltas — the carried-forward rungs are restated', () => {
+    // The fold reads ONLY the current level's map, so a level whose desc reads as a delta must
+    // still restate the fields it inherits — otherwise picking L3 ('drops every 1.3s') would
+    // silently REMOVE the cap/blast, and L4 ('mines pull enemies inward') / L5 ('detonation
+    // chains…') would drop everything they inherit.
+    const [l1, l2, l3, l4, l5] = getItem('mine-layer').levels.map((l) => l.stats);
+    // L2's desc is '+2 mine cap / 100r blast', yet it restates L1's drop period.
+    expect(l2.mineDropPeriodMs).toBe(l1.mineDropPeriodMs);
+    // L3's desc is 'drops every 1.3s' alone, yet it restates the L2 cap AND blast radius.
+    expect(l3.mineCap).toBe(l2.mineCap);
+    expect(l3.mineDetonateRadius).toBe(l2.mineDetonateRadius);
+    // L4's desc is 'mines pull enemies inward' alone, yet it restates the L3 period/cap/radius.
+    expect(l4.mineDropPeriodMs).toBe(l3.mineDropPeriodMs);
+    expect(l4.mineCap).toBe(l3.mineCap);
+    expect(l4.mineDetonateRadius).toBe(l3.mineDetonateRadius);
+    // L5's desc is 'detonation chains to adjacent mines' alone, yet it restates the L4 pull.
+    expect(l5.minePull).toBe(l4.minePull);
+    // Every level from L1 on drops mines with a real cap + blast radius.
+    for (const s of [l1, l2, l3, l4, l5]) {
+      expect(s.mineDropPeriodMs).toBeGreaterThan(0);
+      expect(s.mineCap).toBeGreaterThanOrEqual(1);
+      expect(s.mineDetonateRadius).toBeGreaterThan(0);
+    }
+  });
+
+  it('the pull flag exists ONLY from Lv4 and the chain flag ONLY at Lv5 (PRD §13.3)', () => {
+    const levels = getItem('mine-layer').levels;
+    for (const lvl of levels.slice(0, 3)) {
+      expect(lvl.stats.minePull, `L${lvl.level} must not pull`).toBeUndefined();
+    }
+    expect(levels[3].stats.minePull).toBe(1);
+    expect(levels[4].stats.minePull).toBe(1);
+    for (const lvl of levels.slice(0, 4)) {
+      expect(lvl.stats.mineChain, `L${lvl.level} must not chain`).toBeUndefined();
+    }
+    expect(levels[4].stats.mineChain).toBe(1);
+  });
+
+  it('cap rises monotonically, the drop period never gets slower, the radius never shrinks', () => {
+    const levels = getItem('mine-layer').levels;
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i].stats.mineCap).toBeGreaterThanOrEqual(levels[i - 1].stats.mineCap);
+      expect(levels[i].stats.mineDropPeriodMs).toBeLessThanOrEqual(
+        levels[i - 1].stats.mineDropPeriodMs,
+      );
+      expect(levels[i].stats.mineDetonateRadius).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.mineDetonateRadius,
+      );
+    }
+  });
+
+  it('carries no stat key outside the five mine rungs the story owns', () => {
+    for (const lvl of getItem('mine-layer').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect([
+          'mineDropPeriodMs',
+          'mineCap',
+          'mineDetonateRadius',
+          'minePull',
+          'mineChain',
+        ]).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item authoring any Mine Layer field (the additive-fold tripwire)', () => {
+    // The fold ADDS, so a SECOND item authoring `mineDropPeriodMs` would make drops SLOWER,
+    // and a second `mineCap` author would inflate the cap. An Epic 11/12 author who wants a
+    // second mine-affecting item must fold a RATE or a `*Mult`.
+    for (const key of [
+      'mineDropPeriodMs',
+      'mineCap',
+      'mineDetonateRadius',
+      'minePull',
+      'mineChain',
+    ]) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual(['mine-layer']);
+    }
+  });
+
+  it('keeps the PRD §13.3 desc strings verbatim (prose, never rewritten to the totals)', () => {
+    expect(getItem('mine-layer').levels.map((l) => l.desc)).toEqual([
+      'mine every 2s / 3s arm / 60r',
+      '+2 mine cap / 100r blast',
+      'drops every 1.3s',
+      'mines pull enemies inward',
+      'detonation chains to adjacent mines',
     ]);
   });
 });

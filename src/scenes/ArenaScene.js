@@ -29,6 +29,9 @@ import {
   SEEKER_DRONE_RADIUS,
   COLOR_DRONE_SHOT,
   SEEKER_DRONE_SHOT_RADIUS,
+  COLOR_MINE_ARMED,
+  COLOR_MINE_UNARMED,
+  MINE_RADIUS,
   COLOR_DEBUG_TEXT,
   DEBUG_FONT,
   COLOR_HUD_TEXT,
@@ -258,6 +261,9 @@ export class ArenaScene extends Phaser.Scene {
     // Story 11.2: the Seeker Drones runtime. Held so the per-frame render can draw one
     // filled circle per active drone AND per active shot from its two pools.
     this.seekerDroneSystem = arena.seekerDroneSystem;
+    // Story 11.3: the Mine Layer runtime. Held so the per-frame render can draw one filled
+    // circle per active mine from its pool, armed-vs-unarmed by colour.
+    this.mineLayerSystem = arena.mineLayerSystem;
     this.scoringSystem = arena.scoringSystem;
     this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
@@ -469,6 +475,13 @@ export class ArenaScene extends Phaser.Scene {
     // 4 owns the real aesthetic. Zero per-frame allocation (mirrors the orbit-blade render).
     this.seekerDroneGraphics = this.add.graphics();
     this.droneShotGraphics = this.add.graphics();
+    // Mine Layer mines (Story 11.3) are placeholder filled neon dots (one per active mine),
+    // cleared and redrawn each render frame from the MineLayerSystem's pool. Coloured
+    // COLOR_MINE_ARMED when armed (ageMs >= armMs) else COLOR_MINE_UNARMED, so armed-vs-unarmed
+    // reads at a glance (the epic's UX note). Drawn above the enemy/xp layers with the other
+    // exotic weapons; reads sim state only. Epic 4 owns the real aesthetic. Zero per-frame
+    // allocation (mirrors the orbit-blade/drone render).
+    this.mineGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -511,6 +524,7 @@ export class ArenaScene extends Phaser.Scene {
         this.orbitBladeGraphics,
         this.seekerDroneGraphics,
         this.droneShotGraphics,
+        this.mineGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
@@ -1593,6 +1607,19 @@ export class ArenaScene extends Phaser.Scene {
     dsg.fillStyle(COLOR_DRONE_SHOT, 1);
     this.seekerDroneSystem.shotPool.forEachActive((s) => {
       dsg.fillCircle(s.x, s.y, SEEKER_DRONE_SHOT_RADIUS);
+    });
+
+    // Redraw active Mines from the pool: clear once, then a filled MINE_RADIUS dot per live
+    // mine, coloured COLOR_MINE_ARMED once armed (ageMs >= armMs) else COLOR_MINE_UNARMED — so
+    // armed-vs-unarmed reads at a glance (the epic UX note). fillStyle is re-set per mine so
+    // the two colours can interleave in one pass. Additive blend + camera bloom make each mine
+    // glow. Rendering reads the sim state; it never advances it. Zero per-frame allocation
+    // (mirrors the orbit-blade/drone render). (Story 11.3)
+    const mg = this.mineGraphics;
+    mg.clear();
+    this.mineLayerSystem.pool.forEachActive((m) => {
+      mg.fillStyle(m.ageMs >= m.armMs ? COLOR_MINE_ARMED : COLOR_MINE_UNARMED, 1);
+      mg.fillCircle(m.x, m.y, MINE_RADIUS);
     });
 
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is

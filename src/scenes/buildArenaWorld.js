@@ -29,6 +29,7 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { DashSystem } from '../systems/DashSystem.js';
 import { OrbitBladeSystem } from '../systems/OrbitBladeSystem.js';
 import { SeekerDroneSystem } from '../systems/SeekerDroneSystem.js';
+import { MineLayerSystem } from '../systems/MineLayerSystem.js';
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
@@ -55,7 +56,7 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 29 systems registered in the SAME order (Story 6.3 added
+// state + pools, the SAME 30 systems registered in the SAME order (Story 6.3 added
 // the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
 // after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it;
 // Story 8.3 added the LevelUpSystem right after LevelSystem; Story 9.1 added the
@@ -66,7 +67,8 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 // ScoringSystem; Story 11.1 added the OrbitBladeSystem immediately after DashSystem and
 // before ScoringSystem, mirroring the dash's load-bearing slot; Story 11.2 added the
 // SeekerDroneSystem immediately after OrbitBladeSystem and before ScoringSystem, the same
-// load-bearing slot), the same
+// load-bearing slot; Story 11.3 added the MineLayerSystem immediately after SeekerDroneSystem
+// and before ScoringSystem, the same load-bearing slot), the same
 // enemyPools / deathPools composition (the reflector pool is deliberately in NEITHER;
 // the armored pool IS in both), and both load-bearing
 // late-binds
@@ -372,6 +374,34 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   );
   world.addSystem(seekerDroneSystem);
 
+  // --- Mine Layer (Story 11.3 / Epic 11) ----------------------------------
+  // The third Epic-11 EXOTIC item and the first AoE-DETONATION entity: the kiting ship drops
+  // timed mines in its wake that arm, then detonate on an approaching enemy, dealing FULL AoE
+  // damage. Owns its own mine Pool + the drop accumulator (the shared playerStats store owns
+  // only the derived drop-period/cap/detonate-radius/pull/chain). Registered IMMEDIATELY after
+  // SeekerDroneSystem and BEFORE ScoringSystem — the same load-bearing slot the drone, the
+  // blade and the dash use:
+  //   - AFTER CollisionSystem, so a mine kill appends to per-tick kill latches that system has
+  //     ALREADY RESET this tick (registering earlier would drop them into arrays about to be
+  //     cleared);
+  //   - BEFORE ScoringSystem — and therefore before DpsTelemetrySystem, XpOrbSystem,
+  //     GridFieldSystem and ParticleSystem — so a mine kill is SCORED and produces the full
+  //     kill feedback (XP orb, ripple, spray, SFX), exactly like a bullet kill;
+  //   - AFTER the movers (CollisionSystem is after them), which is why the Lv4 pull is a
+  //     POSITION nudge that accumulates instead of being erased next tick.
+  // Scoped to `enemyPools` (the five COMBAT archetypes), never `deathPools` — the Black Hole
+  // and the Mirror Reflector are out of scope (the same scoping SeekerDroneSystem /
+  // OrbitBladeSystem apply). Routes every detonation hit through
+  // collisionSystem.applyPlayerDamage, so a 90-damage AoE detonation is a FULL-damage kill
+  // against the armored archetype (unlike the projectile-resisted drone shot).
+  const mineLayerSystem = new MineLayerSystem(
+    ship,
+    enemyPools,
+    collisionSystem,
+    playerStats,
+  );
+  world.addSystem(mineLayerSystem);
+
   // --- Scoring ------------------------------------------------------------
   // ScoringSystem runs immediately after CollisionSystem so this tick's kills
   // are already recorded, and before PlayerDeathSystem. It owns no pool; it
@@ -627,6 +657,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     dashSystem,
     orbitBladeSystem,
     seekerDroneSystem,
+    mineLayerSystem,
     scoringSystem,
     dpsTelemetrySystem,
     blackHoleSystem,

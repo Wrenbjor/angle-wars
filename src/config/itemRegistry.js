@@ -359,6 +359,105 @@ export const ITEM_REGISTRY = Object.freeze([
     // the actual fusion consumption; this only registers the metadata.
     fusion: Object.freeze({ partner: 'nanite-shield', epic: 'swarm-protocol' }),
   }),
+  Object.freeze({
+    id: 'mine-layer',
+    name: 'Mine Layer',
+    title: 'Mine Layer',
+    track: 'offense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.3 — the third Epic-11 EXOTIC offense item (PRD §13.3) and the first
+    // AoE-DETONATION entity: the kiting ship drops timed mines that arm, then detonate on
+    // an approaching enemy, dealing FULL damage to every enemy in the blast. Five fold
+    // fields, all read by MineLayerSystem:
+    //   - mineDropPeriodMs   : the interval (ms) between drops (additive/count field, base
+    //                          0 — an unowned Mine Layer means NO drops, no detonation, no
+    //                          pull). Also the OWNERSHIP GATE: 0 = unowned. A smaller value
+    //                          drops FASTER (2000 → 1300). An ABSOLUTE INTERVAL onto a base
+    //                          of 0, never a fraction (the same authoring rule
+    //                          shieldRechargeMs / seekerDronePeriodMs follow);
+    //   - mineCap            : the MAXIMUM live mine count — a drop over the cap evicts the
+    //                          oldest mine first (10 → 12);
+    //   - mineDetonateRadius : the blast radius (px) stamped on each new mine at drop,
+    //                          routed through the shared CollisionSystem.applyPlayerDamage
+    //                          seam (armor-respecting). A mine detonation is AoE and deals
+    //                          FULL damage to the armored archetype (via MINE_DETONATE_DAMAGE
+    //                          = 90 >= ARMORED_HP), unlike the projectile-resisted drone shot;
+    //   - minePull           : the Lv4+ pull FLAG (>= 1 enables) — an armed mine drags nearby
+    //                          combat enemies inward each tick;
+    //   - mineChain          : the Lv5 chain FLAG (>= 1 enables) — a detonation chains to
+    //                          adjacent armed mines.
+    //
+    // The live mine pool and the drop accumulator are RUNTIME state on MineLayerSystem, for
+    // the same reason the shield's live charge count and the blade's live phase are: the
+    // fold RESETS every field and re-derives the whole store on EVERY card pick. Per-mine
+    // detonate radius / pull / chain are STAMPED at DROP time, so a mine laid at Lv1 keeps
+    // its 60r/no-pull/no-chain shape even after a later upgrade (the drone-shot convention).
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header): L3 ('drops every
+    // 1.3s') restates the cap AND the L2 100r blast; L4 ('mines pull enemies inward') and
+    // L5 ('detonation chains to adjacent mines') restate every field they inherit — even
+    // though each `desc` reads as a delta. The `desc` strings stay exactly as PRD §13.3
+    // shipped them — player-facing prose, never rewritten to match the totals. The period
+    // 2000/2000/1300/1300/1300, cap 10/12/12/12/12, radius 60/100/100/100/100, pull from
+    // Lv4, chain from Lv5.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: 'mine every 2s / 3s arm / 60r',
+        stats: Object.freeze({
+          mineDropPeriodMs: 2000,
+          mineCap: 10,
+          mineDetonateRadius: 60,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '+2 mine cap / 100r blast',
+        stats: Object.freeze({
+          mineDropPeriodMs: 2000,
+          mineCap: 12,
+          mineDetonateRadius: 100,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: 'drops every 1.3s',
+        stats: Object.freeze({
+          mineDropPeriodMs: 1300,
+          mineCap: 12,
+          mineDetonateRadius: 100,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: 'mines pull enemies inward',
+        stats: Object.freeze({
+          mineDropPeriodMs: 1300,
+          mineCap: 12,
+          mineDetonateRadius: 100,
+          minePull: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: 'detonation chains to adjacent mines',
+        stats: Object.freeze({
+          mineDropPeriodMs: 1300,
+          mineCap: 12,
+          mineDetonateRadius: 100,
+          minePull: 1,
+          mineChain: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Mine Layer is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Mine Layer Lv5 + Gravity Well Lv3 → Singularity Field (PRD §13.5 — mines becoming
+    // mini black holes). Epic 12 owns the actual fusion consumption; this only registers
+    // the metadata (the partner `gravity-well` lands in Story 11.7).
+    fusion: Object.freeze({ partner: 'gravity-well', epic: 'singularity-field' }),
+  }),
   // --- Defense ---
   Object.freeze({
     id: 'nanite-shield',

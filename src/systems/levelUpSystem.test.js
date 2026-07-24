@@ -340,9 +340,10 @@ describe('LevelUpSystem — level-up moment state machine', () => {
 });
 
 describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
-  // A SHORT offer: pre-banish 4 of the 6 registry items (Story 11.1 added orbit-blade,
-  // Story 11.2 added seeker-drones, so banishing 4 leaves 2), then cross a level. The offer
-  // is exactly the 2 eligible cards; a pick against a 2-card offer applies normally.
+  // A SHORT offer: pre-banish 5 of the 7 registry items (Story 11.1 added orbit-blade,
+  // Story 11.2 added seeker-drones, Story 11.3 added mine-layer, so banishing 5 leaves 2),
+  // then cross a level. The offer is exactly the 2 eligible cards; a pick against a 2-card
+  // offer applies normally.
   it('short offer (2 eligible): offer holds exactly 2 cards, and a pick applies', () => {
     const { sys, levelStub, prog } = build();
     prog.banishedIds = new Set([
@@ -350,6 +351,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'nanite-shield',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -373,6 +375,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'nanite-shield',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -385,7 +388,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     expect(sys.selectionActive).toBe(true);
   });
 
-  // An EMPTY offer: all 6 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
+  // An EMPTY offer: all 7 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
   // with no card applied, the overlay closes, and the landing invuln is granted.
   it('empty offer (0 eligible): the owed pick auto-drains, no card applied, landing invuln granted', () => {
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: 0 });
@@ -394,6 +397,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'spread-cannon',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
       'nanite-shield',
       'afterburner',
     ]);
@@ -417,6 +421,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'spread-cannon',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
       'nanite-shield',
       'afterburner',
     ]);
@@ -434,6 +439,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'spread-cannon',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
       'nanite-shield',
       'afterburner',
     ]);
@@ -450,6 +456,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'spread-cannon',
       'orbit-blade',
       'seeker-drones',
+      'mine-layer',
       'nanite-shield',
       'afterburner',
     ]);

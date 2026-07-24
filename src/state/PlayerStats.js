@@ -165,6 +165,41 @@ export const PLAYER_STATS_BASE = Object.freeze({
   seekerDroneDamage: 0,
   seekerDronePeriodMs: 0,
   seekerDroneHoming: 0,
+  // Mine Layer (Story 11.3). The third Epic-11 EXOTIC item and the first AoE-detonation
+  // entity: the kiting ship drops timed mines that arm, then detonate on an approaching
+  // enemy. Four are ADDITIVE/COUNT fields and one (`minePull`/`mineChain`) is a FLAG — all
+  // base at 0, so no Mine Layer owned means NO drops, no detonation and no pull (exactly
+  // the pre-11.3 behavior).
+  //
+  // These are the DERIVED PARAMETERS only. The live mine POOL and the drop ACCUMULATOR are
+  // RUNTIME state on systems/MineLayerSystem.js, for exactly the reason the shield's live
+  // charge count, the dash's live window, the blade's live phase and the drone's live pool
+  // are: this fold RESETS every field and re-derives the whole store on EVERY card pick, so
+  // a live timer/pool kept here would be reset by picking any unrelated item.
+  //  - mineDropPeriodMs   : the interval (ms) between mine drops AND the OWNERSHIP GATE —
+  //                         0 means unowned (no drops at all), which is why it bases at 0.
+  //                         An ABSOLUTE INTERVAL onto a base of 0, never a fraction (the
+  //                         same authoring rule shieldRechargeMs / orbitBladePeriodMs /
+  //                         seekerDronePeriodMs follow). A smaller value drops FASTER.
+  //                         ⚠ Like every other non-`Mult` field it folds ADDITIVELY, so a
+  //                         hypothetical SECOND mine-drop item would make drops SLOWER; Mine
+  //                         Layer is the only such item — an Epic-12 author adding one must
+  //                         fold a RATE or a `*Mult`, not stack another interval.
+  //  - mineCap            : the MAXIMUM live mine count (10..12 shipped). When a drop would
+  //                         exceed it the OLDEST live mine is evicted first. Clamped to
+  //                         MINE_MAX_CAP against a corrupted fold.
+  //  - mineDetonateRadius : the blast radius (px) STAMPED on each new mine at drop, routed
+  //                         through the shared applyPlayerDamage seam so armor/scoring/XP
+  //                         behave exactly as for a bullet. 60/100/100/100/100 shipped.
+  //  - minePull           : the Lv4+ pull FLAG (>= 1 enables) — an armed mine drags nearby
+  //                         combat enemies inward each tick. Off (0) below Lv4.
+  //  - mineChain          : the Lv5 chain FLAG (>= 1 enables) — a detonation chains to
+  //                         adjacent armed mines. Off (0) below Lv5.
+  mineDropPeriodMs: 0,
+  mineCap: 0,
+  mineDetonateRadius: 0,
+  minePull: 0,
+  mineChain: 0,
 });
 
 /**

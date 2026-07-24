@@ -50,8 +50,9 @@ import { xpToNextLevel } from '../systems/LevelSystem.js';
 // DashSystem immediately after CollisionSystem and before ScoringSystem — a slot that is
 // load-bearing in THREE directions, see the dash's wiring tests below; Story 11.1 added
 // OrbitBladeSystem immediately after DashSystem and before ScoringSystem; Story 11.2 added
-// SeekerDroneSystem immediately after OrbitBladeSystem and before ScoringSystem — the same
-// load-bearing slot, see its wiring tests below).
+// SeekerDroneSystem immediately after OrbitBladeSystem and before ScoringSystem; Story 11.3
+// added MineLayerSystem immediately after SeekerDroneSystem and before ScoringSystem — the
+// same load-bearing slot, see its wiring tests below).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -67,6 +68,7 @@ const CANONICAL_ORDER = [
   'DashSystem',
   'OrbitBladeSystem',
   'SeekerDroneSystem',
+  'MineLayerSystem',
   'ScoringSystem',
   'DpsTelemetrySystem',
   'BlackHoleSystem',
@@ -119,6 +121,7 @@ const RETURN_HANDLES = [
   'dashSystem',
   'orbitBladeSystem',
   'seekerDroneSystem',
+  'mineLayerSystem',
   'scoringSystem',
   'dpsTelemetrySystem',
   'blackHoleSystem',
@@ -144,7 +147,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 29 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 30 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -556,11 +559,12 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     const dash = order.indexOf('DashSystem');
     expect(dash).toBe(order.indexOf('CollisionSystem') + 1);
     // Story 11.1 inserted OrbitBladeSystem immediately after DashSystem (mirroring the
-    // dash's load-bearing slot); Story 11.2 inserted SeekerDroneSystem right after it — so
-    // ScoringSystem is now dash + 3, not dash + 1.
+    // dash's load-bearing slot); Story 11.2 inserted SeekerDroneSystem right after it; Story
+    // 11.3 inserted MineLayerSystem right after that — so ScoringSystem is now dash + 4.
     expect(order.indexOf('OrbitBladeSystem')).toBe(dash + 1);
     expect(order.indexOf('SeekerDroneSystem')).toBe(dash + 2);
-    expect(order.indexOf('ScoringSystem')).toBe(dash + 3);
+    expect(order.indexOf('MineLayerSystem')).toBe(dash + 3);
+    expect(order.indexOf('ScoringSystem')).toBe(dash + 4);
     expect(dash).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
     expect(dash).toBeLessThan(order.indexOf('XpOrbSystem'));
     expect(dash).toBeLessThan(order.indexOf('GridFieldSystem'));
@@ -595,10 +599,11 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     const order = ctx.world.systems.map((s) => s.constructor.name);
     const orbit = order.indexOf('OrbitBladeSystem');
     expect(orbit).toBe(order.indexOf('DashSystem') + 1);
-    // Story 11.2 inserted SeekerDroneSystem between OrbitBladeSystem and ScoringSystem, so
-    // ScoringSystem is now orbit + 2, not orbit + 1.
+    // Story 11.2 inserted SeekerDroneSystem after OrbitBladeSystem; Story 11.3 inserted
+    // MineLayerSystem after that — so ScoringSystem is now orbit + 3.
     expect(order.indexOf('SeekerDroneSystem')).toBe(orbit + 1);
-    expect(order.indexOf('ScoringSystem')).toBe(orbit + 2);
+    expect(order.indexOf('MineLayerSystem')).toBe(orbit + 2);
+    expect(order.indexOf('ScoringSystem')).toBe(orbit + 3);
     expect(orbit).toBeGreaterThan(order.indexOf('CollisionSystem'));
     expect(orbit).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
     expect(orbit).toBeLessThan(order.indexOf('XpOrbSystem'));
@@ -633,12 +638,48 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     const order = ctx.world.systems.map((s) => s.constructor.name);
     const drones = order.indexOf('SeekerDroneSystem');
     expect(drones).toBe(order.indexOf('OrbitBladeSystem') + 1);
-    expect(order.indexOf('ScoringSystem')).toBe(drones + 1);
+    // Story 11.3 inserted MineLayerSystem between SeekerDroneSystem and ScoringSystem, so
+    // ScoringSystem is now drones + 2, not drones + 1.
+    expect(order.indexOf('MineLayerSystem')).toBe(drones + 1);
+    expect(order.indexOf('ScoringSystem')).toBe(drones + 2);
     expect(drones).toBeGreaterThan(order.indexOf('CollisionSystem'));
     expect(drones).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
     expect(drones).toBeLessThan(order.indexOf('XpOrbSystem'));
     expect(drones).toBeLessThan(order.indexOf('GridFieldSystem'));
     expect(drones).toBeLessThan(order.indexOf('ParticleSystem'));
+  });
+
+  it('constructs the mineLayerSystem over enemyPools and the shared handles (Story 11.3)', () => {
+    const ctx = buildArenaWorld();
+    // The detonation + pull reach the five COMBAT archetype pools — the SAME array the
+    // factory returns, never deathPools. The Black Hole and the Mirror Reflector are out of
+    // scope (the scoping SeekerDroneSystem / OrbitBladeSystem already apply).
+    expect(ctx.mineLayerSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(ctx.mineLayerSystem.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
+    expect(ctx.mineLayerSystem.enemyPools).not.toContain(
+      ctx.mirrorReflectorSystem.enemyPool,
+    );
+    // The shared ship / stat store / collision seam, not copies.
+    expect(ctx.mineLayerSystem.ship).toBe(ctx.ship);
+    expect(ctx.mineLayerSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.mineLayerSystem.collisionSystem).toBe(ctx.collisionSystem);
+  });
+
+  it('pins the MineLayerSystem slot: immediately AFTER SeekerDroneSystem and BEFORE ScoringSystem', () => {
+    // Load-bearing exactly like the drone/blade/dash slot: after CollisionSystem so a mine
+    // kill appends to latches already reset this tick; before ScoringSystem (and so before
+    // DpsTelemetry / XpOrb / GridField / Particle) so the kill is scored and produces its
+    // full feedback.
+    const ctx = buildArenaWorld();
+    const order = ctx.world.systems.map((s) => s.constructor.name);
+    const mine = order.indexOf('MineLayerSystem');
+    expect(mine).toBe(order.indexOf('SeekerDroneSystem') + 1);
+    expect(order.indexOf('ScoringSystem')).toBe(mine + 1);
+    expect(mine).toBeGreaterThan(order.indexOf('CollisionSystem'));
+    expect(mine).toBeLessThan(order.indexOf('DpsTelemetrySystem'));
+    expect(mine).toBeLessThan(order.indexOf('XpOrbSystem'));
+    expect(mine).toBeLessThan(order.indexOf('GridFieldSystem'));
+    expect(mine).toBeLessThan(order.indexOf('ParticleSystem'));
   });
 
   it('honors an injected rng — every rng-taking system receives it', () => {
