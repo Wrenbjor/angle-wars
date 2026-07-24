@@ -27,9 +27,11 @@ const EXPECTED_IDS = [
   'mine-layer',
   'piercing-lance',
   'ricochet-rounds',
+  'flak-burst',
   'nanite-shield',
   'afterburner',
 ];
+
 
 describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
   it('registers exactly the four Epic-10 items with distinct ids', () => {
@@ -218,7 +220,9 @@ describe('getItem / getItemsByTrack', () => {
       'mine-layer',
       'piercing-lance',
       'ricochet-rounds',
+      'flak-burst',
     ]);
+
     expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner']);
     // Every returned entry actually belongs to the requested track.
     for (const i of offense) expect(i.track).toBe('offense');

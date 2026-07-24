@@ -269,7 +269,22 @@ export const PLAYER_STATS_BASE = Object.freeze({
   ricochetDmgPerBounce: 0,
   ricochetOffEnemies: 0,
   ricochetSeek: 0,
+  // Flak Burst (Story 11.6). The sixth Epic-11 EXOTIC item and second BASE-GUN MODIFIER of
+  // the epic: it turns every Nth bullet fired by the player into an airburst shell that detonates
+  // on enemy impact or wall contact into a radial cluster of fragments. All four fields are
+  // folded here and STAMPED onto each bullet at spawn when `flakCadence > 0` (the ownership gate).
+  // All four are ADDITIVE/COUNT fields (base 0 — no Flak Burst owned means the pre-11.6 gun).
+  //  - flakCadence           : cadence N (5 → 4 → 4 → 3 → 3) AND ownership gate (0 = unowned).
+  //  - flakFragments         : primary fragment count per airburst (6 → 8 → 8 → 12 → 12).
+  //  - flakDamageMult        : fragment damage multiplier fraction (0.5 = +50% at Lv3+).
+  //  - flakSecondaryAirburst : Lv5 secondary airburst FLAG (>= 1 enables) — primary fragments
+  //                            airburst once on hit or expiration into 4 sub-fragments.
+  flakCadence: 0,
+  flakFragments: 0,
+  flakDamageMult: 0,
+  flakSecondaryAirburst: 0,
 });
+
 
 /**
  * The base value for a stat key not present in PLAYER_STATS_BASE — inferred from the

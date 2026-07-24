@@ -194,6 +194,11 @@ export class FiringSystem extends System {
       if (e.telegraphMs > 0) return;
       this._enemies.push(e);
     };
+    // --- Story 11.6 Flak Burst --------------------------------------------------
+    // Late-bound by buildArenaWorld AFTER FlakSystem is instantiated.
+    this.flakSystem = null;
+    this._flakCounter = 0;
+
     // Hoisted expired-bullet collector — a stable instance-field arrow created once,
     // so `forEachActive` reuses one closure instead of allocating a fresh arrow per
     // tick. Seek-steers (Lv5) then advances each active bullet; on a border crossing it
@@ -208,6 +213,18 @@ export class FiringSystem extends System {
       b.x += b.vx * this._dtSec;
       b.y += b.vy * this._dtSec;
       if (isOutsideArena(b.x, b.y)) {
+        if (b.isFlak) {
+          b.isFlak = false;
+          if (this.flakSystem) {
+            this.flakSystem.triggerAirburst(
+              b.x,
+              b.y,
+              b.flakFragments,
+              b.flakDamageMult,
+              b.flakSecondaryAirburst >= 1,
+            );
+          }
+        }
         // Ricochet: a bullet with bounce budget reflects off the wall and stays live; a
         // bullet with no budget (0 = unowned, or exhausted) despawns exactly as pre-11.5.
         if (b.bouncesRemaining > 0) {
@@ -217,6 +234,7 @@ export class FiringSystem extends System {
         }
       }
     };
+
     // Fire-cadence accumulator (ms). Seeded to the EFFECTIVE interval so the first
     // active tick fires immediately (responsive), not after a full interval of
     // delay — at base this is exactly FIRE_INTERVAL_MS, as before Story 10.2.
@@ -390,6 +408,62 @@ export class FiringSystem extends System {
   }
 
   /**
+   * Stamp Flak Burst metadata onto a newly acquired bullet (Story 11.6).
+   * Tracks firing cadence N: every Nth bullet fired gets stamped with flak parameters.
+   * A bullet acquired when flakCadence is 0 (unowned) or when counter < N has its flak
+   * fields reset to 0 / false so recycled bullets never leak stale airburst state.
+   * @param {object} b The bullet to stamp.
+   */
+  _stampFlak(b) {
+    const ps = this.playerStats;
+    let cadence = 0;
+    let count = 0;
+    let dmgMult = 0;
+    let secondary = 0;
+    if (ps !== null && ps !== undefined) {
+      const c = ps.flakCadence;
+      if (Number.isFinite(c) && c > 0) {
+        cadence = Math.min(Math.max(Math.floor(c), 0), 10);
+      }
+      const f = ps.flakFragments;
+      if (Number.isFinite(f) && f > 0) {
+        count = Math.min(Math.max(Math.floor(f), 0), 32);
+      }
+      const m = ps.flakDamageMult;
+      if (Number.isFinite(m) && m > 0) {
+        dmgMult = m;
+      }
+      const s = ps.flakSecondaryAirburst;
+      if (Number.isFinite(s) && s >= 1) {
+        secondary = 1;
+      }
+    }
+
+    if (cadence > 0) {
+      this._flakCounter++;
+      if (this._flakCounter >= cadence) {
+        this._flakCounter = 0;
+        b.isFlak = true;
+        b.flakFragments = count;
+        b.flakDamageMult = dmgMult;
+        b.flakSecondaryAirburst = secondary;
+      } else {
+        b.isFlak = false;
+        b.flakFragments = 0;
+        b.flakDamageMult = 0;
+        b.flakSecondaryAirburst = 0;
+      }
+    } else {
+      this._flakCounter = 0;
+      b.isFlak = false;
+      b.flakFragments = 0;
+      b.flakDamageMult = 0;
+      b.flakSecondaryAirburst = 0;
+    }
+  }
+
+
+  /**
    * The nearest materialized combat enemy to a point, or null when none exist (Ricochet Lv5
    * seek). Reads the hoisted `_enemies` scratch (already filtered of telegraphing enemies),
    * so it allocates nothing. Squared distance — no sqrt. Mirrors SeekerDroneSystem._nearestEnemy.
@@ -537,6 +611,7 @@ export class FiringSystem extends System {
           b.vy = input.aimY * BULLET_SPEED;
           b.damage = damage; // Story 10.2 — stamped ONCE, at spawn
           stampRicochet(b, this._ricochet); // Story 11.5 — stamped from the LIVE fold
+          this._stampFlak(b); // Story 11.6 — stamped from the LIVE fold
           this.shotsFiredCount++; // Story 4.5 read-only bullet counter
         } else {
           // SPREAD VOLLEY — fan `ways` bullets across the cached cone. Each bullet's
@@ -561,9 +636,11 @@ export class FiringSystem extends System {
             // Story 11.5's identical obligation for the five ricochet fields — every bullet in
             // the volley, or a recycled instance leaks the previous shot's bounce state.
             stampRicochet(b, this._ricochet);
+            this._stampFlak(b);
             this.shotsFiredCount++;
           }
         }
+
         // One trigger-pull = one fire EVENT, whatever the bullet count (the audio cue).
         this.volleysFiredCount++;
         this._accumMs -= interval;

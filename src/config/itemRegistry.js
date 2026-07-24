@@ -633,6 +633,79 @@ export const ITEM_REGISTRY = Object.freeze([
     // actual fusion consumption; this only registers the metadata.
     fusion: Object.freeze({ partner: 'spread-cannon', epic: 'kaleidoscope' }),
   }),
+  Object.freeze({
+    id: 'flak-burst',
+    name: 'Flak Burst',
+    title: 'Flak Burst',
+    track: 'offense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.6 — the sixth Epic-11 EXOTIC offense item (PRD §13.3) and second BASE-GUN
+    // MODIFIER of the epic: Flak Burst turns every Nth bullet fired into an airburst shell
+    // that detonates on enemy impact or wall contact into a radial cluster of fragments.
+    // Four fold fields, all read by FiringSystem / FlakSystem:
+    //   - flakCadence           : cadence N (5 → 4 → 4 → 3 → 3) AND ownership gate (0 = unowned);
+    //   - flakFragments         : primary fragment count per airburst (6 → 8 → 8 → 12 → 12);
+    //   - flakDamageMult        : fragment damage multiplier fraction (0.5 = +50% at Lv3+);
+    //   - flakSecondaryAirburst : Lv5 secondary airburst FLAG (>= 1 enables) — primary fragments
+    //                            airburst once on hit or expiration into 4 sub-fragments.
+    //
+    // ⚠ Every map is the TOTAL at that level (see entry-shape header): L3 restates cadence/fragments
+    // AND adds +50% fragment damage; L4 restates fragment damage AND updates cadence/fragments;
+    // L5 restates cadence/fragments/damage AND adds secondary airbursts.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: 'Every 5th bullet airbursts / 6 fragments',
+        stats: Object.freeze({
+          flakCadence: 5,
+          flakFragments: 6,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: 'Every 4th bullet / 8 fragments',
+        stats: Object.freeze({
+          flakCadence: 4,
+          flakFragments: 8,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+50% fragment damage',
+        stats: Object.freeze({
+          flakCadence: 4,
+          flakFragments: 8,
+          flakDamageMult: 0.5,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: 'Every 3rd bullet / 12 fragments',
+        stats: Object.freeze({
+          flakCadence: 3,
+          flakFragments: 12,
+          flakDamageMult: 0.5,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: 'Secondary airbursts',
+        stats: Object.freeze({
+          flakCadence: 3,
+          flakFragments: 12,
+          flakDamageMult: 0.5,
+          flakSecondaryAirburst: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Flak Burst is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Flak Burst Lv5 + Overcharge Lv3 → Fragmentation Cascade (PRD §13.5). Epic 12 owns the
+    // actual fusion consumption; this only registers the metadata.
+    fusion: Object.freeze({ partner: 'overcharge', epic: 'fragmentation-cascade' }),
+  }),
+
   // --- Defense ---
   Object.freeze({
     id: 'nanite-shield',

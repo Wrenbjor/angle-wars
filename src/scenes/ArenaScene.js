@@ -37,7 +37,9 @@ import {
   COLOR_LANCE_TRAIL,
   LANCE_BOLT_RADIUS,
   LANCE_TRAIL_NODE_RADIUS,
+  COLOR_FLAK_FRAGMENT,
   COLOR_DEBUG_TEXT,
+
   DEBUG_FONT,
   COLOR_HUD_TEXT,
   HUD_FONT,
@@ -272,7 +274,11 @@ export class ArenaScene extends Phaser.Scene {
     // Story 11.4: the Piercing Lance runtime. Held so the per-frame render can draw one filled
     // circle per active bolt AND per active trail node from its two pools.
     this.piercingLanceSystem = arena.piercingLanceSystem;
+    // Story 11.6: the Flak Burst runtime. Held so the per-frame render can draw one filled
+    // circle per active fragment from its pool.
+    this.flakSystem = arena.flakSystem;
     this.scoringSystem = arena.scoringSystem;
+
     this.dpsTelemetrySystem = arena.dpsTelemetrySystem;
     this.blackHoleSystem = arena.blackHoleSystem;
     this.bombSystem = arena.bombSystem;
@@ -499,6 +505,7 @@ export class ArenaScene extends Phaser.Scene {
     // (mirrors the mine/drone render).
     this.lanceBoltGraphics = this.add.graphics();
     this.lanceTrailGraphics = this.add.graphics();
+    this.flakGraphics = this.add.graphics();
 
     // Placeholder vector shape: a triangle with its nose along +x, drawn once
     // in local space (centered on 0,0) and transformed per frame from the ship
@@ -544,12 +551,14 @@ export class ArenaScene extends Phaser.Scene {
         this.mineGraphics,
         this.lanceTrailGraphics,
         this.lanceBoltGraphics,
+        this.flakGraphics,
         this.bombShockwaveGraphics,
         this.particleGraphics,
         this.borderGraphics,
       ],
       Phaser.BlendModes.ADD,
     );
+
     addNeonBloom(this.cameras.main, this._qualityProfile.bloom);
 
     // --- Touch controls overlay (Story 7.1) ---------------------------------
@@ -1661,6 +1670,17 @@ export class ArenaScene extends Phaser.Scene {
     this.piercingLanceSystem.pool.forEachActive((b) => {
       lbg.fillCircle(b.x, b.y, LANCE_BOLT_RADIUS);
     });
+
+    // Redraw active Flak fragments from the pool: clear once, then a filled dot per live
+    // fragment in COLOR_FLAK_FRAGMENT. Additive blend + camera bloom make each fragment glow.
+    // (Story 11.6)
+    const flg = this.flakGraphics;
+    flg.clear();
+    flg.fillStyle(COLOR_FLAK_FRAGMENT, 1);
+    this.flakSystem.flakPool.forEachActive((f) => {
+      flg.fillCircle(f.x, f.y, f.radius);
+    });
+
 
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is
     // the driving input, else clear it. Runs at render rate after sample() (which

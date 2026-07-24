@@ -46,6 +46,8 @@ export class CollisionSystem extends System {
     super();
     this.bulletPool = bulletPool;
     this.enemyPools = enemyPools;
+    this.flakSystem = null;
+
 
     // Reusable scratch: materialized active sets, refilled each tick. `_owners`
     // is parallel to `_enemies` — `_owners[i]` is the pool that owns `_enemies[i]`
@@ -219,6 +221,19 @@ export class CollisionSystem extends System {
               ? Math.max(PLAYER_BULLET_MIN_DAMAGE, b.damage)
               : PLAYER_BULLET_BASE_DAMAGE,
           );
+          // Flak Burst (Story 11.6): airburst on enemy hit
+          if (b.isFlak) {
+            b.isFlak = false;
+            if (this.flakSystem) {
+              this.flakSystem.triggerAirburst(
+                b.x,
+                b.y,
+                b.flakFragments,
+                b.flakDamageMult,
+                b.flakSecondaryAirburst >= 1,
+              );
+            }
+          }
           // Ricochet Rounds (Story 11.5): a bullet flagged to bounce off enemies WITH budget
           // left reflects OFF the enemy it hit (still dealing the damage recorded above),
           // grows its damage, spends a bounce, and STAYS LIVE — it is NOT added to hitBullets
@@ -230,6 +245,7 @@ export class CollisionSystem extends System {
             hitBullets.add(b); // bullet consumed — at most one enemy per bullet
           }
           break;
+
         }
       }
     }

@@ -621,4 +621,40 @@ describe('recomputePlayerStats — Nanite Shield against the REAL registry (Stor
     expect(ps.damageMult).toBeCloseTo(1.95, 10);
     expect(ps.spreadWays).toBe(9);
   });
+
+  // --- Flak Burst (Story 11.6) ---------------------------------------------
+  it('folds the SHIPPED Flak Burst rungs 1..5 to the exact fields', () => {
+    // Drives the REAL registry, not a fixture: cadence 5/4/4/3/3, fragments 6/8/8/12/12,
+    // damageMult 0/0/0.5/0.5/0.5, secondaryAirburst 0/0/0/0/1.
+    const expected = [
+      { flakCadence: 5, flakFragments: 6, flakDamageMult: 0, flakSecondaryAirburst: 0 },
+      { flakCadence: 4, flakFragments: 8, flakDamageMult: 0, flakSecondaryAirburst: 0 },
+      { flakCadence: 4, flakFragments: 8, flakDamageMult: 0.5, flakSecondaryAirburst: 0 },
+      { flakCadence: 3, flakFragments: 12, flakDamageMult: 0.5, flakSecondaryAirburst: 0 },
+      { flakCadence: 3, flakFragments: 12, flakDamageMult: 0.5, flakSecondaryAirburst: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'flak-burst': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.flakCadence, `L${level} cadence`).toBe(e.flakCadence);
+      expect(ps.flakFragments, `L${level} fragments`).toBe(e.flakFragments);
+      expect(ps.flakDamageMult, `L${level} damageMult`).toBeCloseTo(e.flakDamageMult, 10);
+      expect(ps.flakSecondaryAirburst, `L${level} secondaryAirburst`).toBe(e.flakSecondaryAirburst);
+      // Flak Burst touches nothing on defense or movement seams
+      expect(ps.damageMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+    }
+  });
+
+  it('leaves the four Flak Burst fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.flakCadence).toBe(0);
+    expect(ps.flakFragments).toBe(0);
+    expect(ps.flakDamageMult).toBe(0);
+    expect(ps.flakSecondaryAirburst).toBe(0);
+  });
 });
+

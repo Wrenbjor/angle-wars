@@ -1192,6 +1192,19 @@ export const RICOCHET_MAX_BOUNCES = 16;
 // (+25%), so no authored build reaches it. Not a balance lever.
 export const RICOCHET_DMG_PER_BOUNCE_MAX = 4;
 
+// --- Flak Burst (Story 11.6) ------------------------------------------------
+// Flak Burst turns every Nth bullet into an airburst shell that detonates on enemy impact
+// or wall contact into a radial cluster of fragments. Active live fragments are capped at
+// FLAK_MAX_LIVE_FRAGMENTS (120) to guarantee NFR11 zero-allocation bounds.
+export const FLAK_FRAGMENT_RADIUS = 3;
+export const FLAK_FRAGMENT_SPEED = 320;
+export const FLAK_FRAGMENT_LIFETIME_MS = 600;
+export const FLAK_FRAGMENT_BASE_DAMAGE = 10;
+export const FLAK_MAX_LIVE_FRAGMENTS = 120;
+export const FLAK_FRAGMENT_POOL_PREWARM = 120;
+export const COLOR_FLAK_FRAGMENT = 0xffaa00;
+
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.

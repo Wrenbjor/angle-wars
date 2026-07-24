@@ -31,6 +31,8 @@ import { OrbitBladeSystem } from '../systems/OrbitBladeSystem.js';
 import { SeekerDroneSystem } from '../systems/SeekerDroneSystem.js';
 import { MineLayerSystem } from '../systems/MineLayerSystem.js';
 import { PiercingLanceSystem } from '../systems/PiercingLanceSystem.js';
+import { FlakSystem } from '../systems/FlakSystem.js';
+
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
@@ -437,6 +439,32 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   );
   world.addSystem(piercingLanceSystem);
 
+  // --- Flak Burst (Story 11.6 / Epic 11) ----------------------------------
+  // The sixth Epic-11 EXOTIC item and second BASE-GUN MODIFIER of the epic: turns every Nth
+  // bullet fired into an airburst shell that detonates on enemy impact or wall contact into
+  // a radial cluster of fragments. Owns its own fragment Pool (the shared playerStats store
+  // owns only the derived cadence/fragments/damageMult/secondary-airburst). Registered
+  // IMMEDIATELY after PiercingLanceSystem and BEFORE ScoringSystem — the same load-bearing
+  // slot the lance, mine, drone, blade and dash use:
+  //   - AFTER CollisionSystem, so a fragment kill appends to per-tick kill latches that system
+  //     has ALREADY RESET this tick;
+  //   - BEFORE ScoringSystem — and therefore before DpsTelemetrySystem, XpOrbSystem,
+  //     GridFieldSystem and ParticleSystem — so a fragment kill is SCORED and produces the
+  //     full kill feedback (XP orb, ripple, spray, SFX), exactly like a bullet kill.
+  // Scoped to `enemyPools` (the five COMBAT archetypes), never `deathPools`. Routes every
+  // hit through collisionSystem.applyPlayerDamage, so a 10+ damage fragment is a FULL-damage
+  // kill against the armored archetype (15 damage at Lv3+ > ARMORED_HP 5).
+  const flakSystem = new FlakSystem(
+    ship,
+    enemyPools,
+    collisionSystem,
+    playerStats,
+  );
+  world.addSystem(flakSystem);
+  firingSystem.flakSystem = flakSystem;
+  collisionSystem.flakSystem = flakSystem;
+
+
   // --- Scoring ------------------------------------------------------------
   // ScoringSystem runs immediately after CollisionSystem so this tick's kills
   // are already recorded, and before PlayerDeathSystem. It owns no pool; it
@@ -694,6 +722,8 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     seekerDroneSystem,
     mineLayerSystem,
     piercingLanceSystem,
+    flakSystem,
+
     scoringSystem,
     dpsTelemetrySystem,
     blackHoleSystem,

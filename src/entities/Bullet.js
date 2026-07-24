@@ -79,5 +79,12 @@ export function createBullet() {
     bounceOffEnemies: false,
     seek: false,
     bounced: false,
+    // Flak Burst (Story 11.6) — cold defaults = unowned. Stamped per spawn by FiringSystem
+    // from the live flak fold.
+    isFlak: false,
+    flakFragments: 0,
+    flakDamageMult: 0,
+    flakSecondaryAirburst: 0,
   };
 }
+
