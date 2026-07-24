@@ -216,9 +216,17 @@ export class FiringSystem extends System {
         if (b.isFlak) {
           b.isFlak = false;
           if (this.flakSystem) {
+            const clampedX = Math.max(
+              ARENA_BORDER_INSET + 1,
+              Math.min(ARENA_WIDTH - ARENA_BORDER_INSET - 1, b.x),
+            );
+            const clampedY = Math.max(
+              ARENA_BORDER_INSET + 1,
+              Math.min(ARENA_HEIGHT - ARENA_BORDER_INSET - 1, b.y),
+            );
             this.flakSystem.triggerAirburst(
-              b.x,
-              b.y,
+              clampedX,
+              clampedY,
               b.flakFragments,
               b.flakDamageMult,
               b.flakSecondaryAirburst >= 1,

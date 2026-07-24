@@ -1676,10 +1676,12 @@ export class ArenaScene extends Phaser.Scene {
     // (Story 11.6)
     const flg = this.flakGraphics;
     flg.clear();
-    flg.fillStyle(COLOR_FLAK_FRAGMENT, 1);
-    this.flakSystem.flakPool.forEachActive((f) => {
-      flg.fillCircle(f.x, f.y, f.radius);
-    });
+    if (this.flakSystem && this.flakSystem.flakPool) {
+      flg.fillStyle(COLOR_FLAK_FRAGMENT, 1);
+      this.flakSystem.flakPool.forEachActive((f) => {
+        flg.fillCircle(f.x, f.y, f.radius);
+      });
+    }
 
 
     // Story 7.1: draw the touch overlay from the sampler's snapshot while touch is

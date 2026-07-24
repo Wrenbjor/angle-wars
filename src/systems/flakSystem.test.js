@@ -209,6 +209,7 @@ describe('FlakSystem & Flak Burst Mechanics (Story 11.6)', () => {
     flakSystem.flakPool.forEachActive((f) => secondaryFragments.push(f));
     for (const sf of secondaryFragments) {
       expect(sf.canAirburst).toBe(false);
+      expect(sf.damage).toBe(15);
     }
 
     // Let secondary fragments expire due to lifetime

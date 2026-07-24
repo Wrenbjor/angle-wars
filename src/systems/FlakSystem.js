@@ -48,12 +48,8 @@ export class FlakSystem extends System {
 
     // Fragment object pool — hard capped to FLAK_MAX_LIVE_FRAGMENTS (120)
     this.flakPool = new Pool(createFlakFragment);
-    const warm = [];
     for (let i = 0; i < FLAK_FRAGMENT_POOL_PREWARM; i++) {
-      warm.push(this.flakPool.acquire());
-    }
-    for (let i = 0; i < warm.length; i++) {
-      this.flakPool.release(warm[i]);
+      this.flakPool.release(this.flakPool.acquire());
     }
 
     // Reusable scratch for active fragments
@@ -90,6 +86,15 @@ export class FlakSystem extends System {
     const mult = Number.isFinite(damageMult) && damageMult > 0 ? damageMult : 0;
     const damage = FLAK_FRAGMENT_BASE_DAMAGE * (1 + mult);
 
+    const spawnX = Math.max(
+      ARENA_BORDER_INSET + 1,
+      Math.min(ARENA_WIDTH - ARENA_BORDER_INSET - 1, x),
+    );
+    const spawnY = Math.max(
+      ARENA_BORDER_INSET + 1,
+      Math.min(ARENA_HEIGHT - ARENA_BORDER_INSET - 1, y),
+    );
+
     for (let i = 0; i < numFragments; i++) {
       if (this.flakPool.activeCount >= FLAK_MAX_LIVE_FRAGMENTS) {
         // Enforce hard live-fragment cap (NFR11 zero allocation)
@@ -97,8 +102,8 @@ export class FlakSystem extends System {
       }
       const angle = (i / numFragments) * Math.PI * 2;
       const f = this.flakPool.acquire();
-      f.x = x;
-      f.y = y;
+      f.x = spawnX;
+      f.y = spawnY;
       f.vx = Math.cos(angle) * FLAK_FRAGMENT_SPEED;
       f.vy = Math.sin(angle) * FLAK_FRAGMENT_SPEED;
       f.radius = FLAK_FRAGMENT_RADIUS;
@@ -159,7 +164,7 @@ export class FlakSystem extends System {
               this._killedThisTick.add(e);
             }
             if (f.canAirburst) {
-              const subMult = f.damage / FLAK_FRAGMENT_BASE_DAMAGE - 1;
+              const subMult = Math.max(0, f.damage / FLAK_FRAGMENT_BASE_DAMAGE - 1);
               this.triggerAirburst(f.x, f.y, 4, subMult, false);
             }
             this.flakPool.release(f);
@@ -171,7 +176,7 @@ export class FlakSystem extends System {
       if (!hitEnemy) {
         if (f.lifetimeMs <= 0 || isOutsideArena(f.x, f.y)) {
           if (f.canAirburst) {
-            const subMult = f.damage / FLAK_FRAGMENT_BASE_DAMAGE - 1;
+            const subMult = Math.max(0, f.damage / FLAK_FRAGMENT_BASE_DAMAGE - 1);
             this.triggerAirburst(f.x, f.y, 4, subMult, false);
           }
           this.flakPool.release(f);

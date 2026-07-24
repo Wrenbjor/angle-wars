@@ -2,7 +2,7 @@
 title: 'Story 11.6 — Flak Burst'
 type: 'feature'
 created: '2026-07-24'
-status: 'done'
+status: 'in-review'
 review_loop_iteration: 0
 followup_review_recommended: true
 baseline_revision: '02666a7f73847a287bb7dd932c6890467bdd3c89'
@@ -103,6 +103,18 @@ No spec amendments.
 ### 2026-07-24 — Review pass
 - intent_gap: 0
 - bad_spec: 0
+- patch: 4: (high 0, medium 1, low 3)
+- defer: 0
+- reject: 5: (high 0, medium 1, low 4)
+- addressed_findings:
+  - `[medium]` `[patch]` Clamped arena border airburst detonation coordinates inside arena bounds (`ARENA_BORDER_INSET + 1`) in `FiringSystem.js` and `FlakSystem.js` so wall airburst fragments do not immediately despawn on frame 1 via `isOutsideArena`.
+  - `[low]` `[patch]` Clamped `subMult` to `Math.max(0, ...)` to prevent negative floating-point multipliers, and removed temporary array allocation in `FlakSystem` constructor pool prewarming.
+  - `[low]` `[patch]` Added `if (this.flakSystem && this.flakSystem.flakPool)` null guard in `ArenaScene.js` flak rendering loop.
+  - `[low]` `[patch]` Added secondary sub-fragment `damage` assertion (`expect(sf.damage).toBe(15)`) in `src/systems/flakSystem.test.js`.
+
+### 2026-07-24 — Review pass
+- intent_gap: 0
+- bad_spec: 0
 - patch: 2: (high 0, medium 2, low 0)
 - defer: 0
 - reject: 10: (high 0, medium 0, low 10)
@@ -126,43 +138,3 @@ No spec amendments.
 - `npm test` -- expected: entire test suite passes without regressions.
 - `npm run build` -- expected: production build succeeds.
 
-## Auto Run Result
-
-Status: done
-
-### Summary of change
-Story 11.6 ships Flak Burst — Epic 11's sixth exotic offense item and second base-gun modifier — as a data-driven item. Every Nth bullet fired by the player airbursts into a radial cluster of pooled fragments (6 → 8 → 8 → 12 → 12) on enemy impact or wall contact. Fragments deal full damage to armored enemies via `collisionSystem.applyPlayerDamage`. Higher levels boost damage (+50%) and at Lv5 enable secondary airbursts where primary fragments airburst once into 4 sub-fragments upon hit or expiration. Hard live-fragment cap of 120 (`FLAK_MAX_LIVE_FRAGMENTS`) enforces NFR11 zero per-frame allocation.
-
-### Files changed
-- `src/config/constants.js` — Flak constants (radius 3, speed 320, lifetime 600ms, base damage 10, max live fragments 120, prewarm 120, tint 0xffaa00).
-- `src/state/PlayerStats.js` — extended `PLAYER_STATS_BASE` with `flakCadence`, `flakFragments`, `flakDamageMult`, `flakSecondaryAirburst`.
-- `src/config/itemRegistry.js` — added data-driven `flak-burst` definition under Offense track.
-- `src/entities/Bullet.js` — added cold default flak fields to `createBullet()`.
-- `src/entities/FlakFragment.js` — NEW entity factory for flak fragments.
-- `src/systems/FlakSystem.js` — NEW system managing fragment pool, airburst spawning, movement, expiration, Lv5 secondary airbursts, and enemy collision.
-- `src/systems/FiringSystem.js` — flak cadence stamping on every Nth bullet and wall airburst trigger.
-- `src/systems/CollisionSystem.js` — enemy impact airburst trigger.
-- `src/scenes/buildArenaWorld.js` — wired `FlakSystem` into world pipeline.
-- `src/scenes/ArenaScene.js` -- added `flakGraphics` render loop.
-- `src/systems/flakSystem.test.js` -- NEW unit test suite covering all flak mechanics and verification gaps.
-- `src/state/playerStats.test.js`, `src/config/itemRegistry.test.js`, `src/scenes/buildArenaWorld.test.js`, `src/systems/cardOffer.test.js`, `src/systems/levelUpSystem.test.js` — updated tests for 10-item registry and 32-system pipeline.
-
-### Review findings breakdown
-- Reviewers: Blind Hunter (adversarial), Edge Case Hunter, Verification Gap, Intent Alignment — all run in parallel.
-- **Patches applied: 2** (medium 2, low 0):
-  1. `[medium]` Added 3 unit test cases in `flakSystem.test.js` covering CollisionSystem bullet flak airburst, primary fragment secondary airburst on enemy hit, and spread-cannon volley flak stamping.
-  2. `[medium]` Verified deterministic 360° radial distribution in FlakSystem and exact velocity vectors in test assertions.
-- **Deferred: 0.**
-- **Rejected: 10** (all low) — design/sweep CCD opinions, transient null resets, and non-recursive secondary airburst constraints already satisfied.
-
-### Verification performed
-- `npx vitest run src/systems/flakSystem.test.js` → 10 passed.
-- `npm test` → 75 files, **2017 tests passed**, 0 regressions.
-- `npm run build` → production build succeeded (111 modules).
-
-### Follow-up review recommendation
-`true`. Triaged 2 medium patches; score = 3×2 = 6 ≥ 5.
-
-### Residual risks
-- None. All fragment allocations are bounded by the prewarmed pool (120 max live instances), ensuring zero per-frame allocation in hot loops.
-- `git status --porcelain` residual: `sprint-status.yaml` was already modified before this run; left in place.
