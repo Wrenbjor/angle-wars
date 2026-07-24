@@ -1,35 +1,35 @@
 installation:
-  version: 6.10.1-next.18
+  version: 6.10.1-next.20
   installDate: 2026-07-19T14:58:02.450Z
-  lastUpdated: 2026-07-19T14:58:02.450Z
+  lastUpdated: 2026-07-24T19:52:26.894Z
 modules:
   - name: core
-    version: 6.10.1-next.18
+    version: 6.10.1-next.20
     installDate: 2026-07-19T14:58:02.026Z
-    lastUpdated: 2026-07-19T14:58:02.435Z
+    lastUpdated: 2026-07-24T19:52:26.885Z
     source: built-in
     npmPackage: null
     repoUrl: null
   - name: bmm
-    version: 6.10.1-next.18
+    version: 6.10.1-next.20
     installDate: 2026-07-19T14:58:01.971Z
-    lastUpdated: 2026-07-19T14:58:02.437Z
+    lastUpdated: 2026-07-24T19:52:26.886Z
     source: built-in
     npmPackage: null
     repoUrl: null
   - name: bmad-loop
     version: main
     installDate: 2026-07-19T14:58:02.049Z
-    lastUpdated: 2026-07-19T14:58:02.442Z
+    lastUpdated: 2026-07-24T19:52:26.889Z
     source: external
     npmPackage: null
     repoUrl: https://github.com/bmad-code-org/bmad-loop
     channel: next
-    sha: 16e707f7f79a51e1f811daddabdfb87b1a9dc79e
+    sha: d4d1764c1e9573145f889610d57978cf8b56a680
   - name: gds
     version: main
     installDate: 2026-07-19T14:58:02.235Z
-    lastUpdated: 2026-07-19T14:58:02.447Z
+    lastUpdated: 2026-07-24T19:52:26.892Z
     source: external
     npmPackage: bmad-game-dev-studio
     repoUrl: https://github.com/bmad-code-org/bmad-module-game-dev-studio.git
@@ -38,7 +38,7 @@ modules:
   - name: cis
     version: main
     installDate: 2026-07-19T14:58:02.273Z
-    lastUpdated: 2026-07-19T14:58:02.450Z
+    lastUpdated: 2026-07-24T19:52:26.894Z
     source: external
     npmPackage: bmad-creative-intelligence-suite
     repoUrl: https://github.com/bmad-code-org/bmad-module-creative-intelligence-suite
