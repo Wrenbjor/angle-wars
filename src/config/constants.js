@@ -768,6 +768,8 @@ export const PLAYER_START_LIVES = 3;
 // Respawn invulnerability window (ms): after a death that respawns the ship,
 // enemy contact does no harm for this long. Counted down by the fixed-step dt.
 export const PLAYER_INVULN_MS = 2000;
+// Reinforced Hull Lv2+ bonus respawn invulnerability (ms) — Story 11.8.
+export const REINFORCED_HULL_IFRAMES_BONUS_MS = 1500;
 // Blink cadence (ms) for the invulnerability indication: the ship sprite's alpha
 // toggles every this-many ms of remaining invulnerability. Purely a render cue
 // derived from sim state (invulnMs) — no separate render timer.

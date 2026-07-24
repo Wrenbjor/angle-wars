@@ -917,6 +917,67 @@ export const ITEM_REGISTRY = Object.freeze([
     // Gravity Well Lv5 + Mine Layer Lv3 → Event Horizon (PRD §13.5).
     fusion: Object.freeze({ partner: 'mine-layer', epic: 'event-horizon' }),
   }),
+  Object.freeze({
+    id: 'reinforced-hull',
+    name: 'Reinforced Hull',
+    title: 'Reinforced Hull',
+    track: 'defense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.8 — the fourth Epic-11 EXOTIC defense item (PRD §13.4): adds extra max lives,
+    // extends respawn invulnerability duration, and softens run multiplier reset on death.
+    // Three fold fields, all read by PlayerDeathSystem:
+    //   - extraLives            : +1 max life on pick (+1 at Lv1, Lv3, Lv5);
+    //   - respawnIFramesMs      : additional respawn i-frames duration in ms (1500ms at Lv2+);
+    //   - softenMultiplierReset : Lv4+ flag (>= 1 enables 50% multiplier drop on death instead of 1x).
+    //
+    // ⚠ Every map is the TOTAL at that level: L2 restates extraLives: 1; L3 restates respawnIFramesMs: 1500;
+    // L4 restates extraLives: 2 and respawnIFramesMs: 1500; L5 restates respawnIFramesMs: 1500 and softenMultiplierReset: 1.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '+1 max life',
+        stats: Object.freeze({ extraLives: 1 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '3.5s respawn i-frames',
+        stats: Object.freeze({
+          extraLives: 1,
+          respawnIFramesMs: 1500,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+1 max life',
+        stats: Object.freeze({
+          extraLives: 2,
+          respawnIFramesMs: 1500,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: 'death drops multiplier to 50%',
+        stats: Object.freeze({
+          extraLives: 2,
+          respawnIFramesMs: 1500,
+          softenMultiplierReset: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '+1 max life',
+        stats: Object.freeze({
+          extraLives: 3,
+          respawnIFramesMs: 1500,
+          softenMultiplierReset: 1,
+        }),
+      }),
+    ]),
+    guaranteeFromLevel: null,
+    // Reinforced Hull Lv5 + Bomb Capacitor Lv3 → Revenant (PRD §13.5).
+    fusion: Object.freeze({ partner: 'bomb-capacitor', epic: 'revenant' }),
+  }),
 ]);
 
 

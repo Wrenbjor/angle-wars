@@ -31,6 +31,7 @@ const EXPECTED_IDS = [
   'nanite-shield',
   'afterburner',
   'gravity-well',
+  'reinforced-hull',
 ];
 
 
@@ -225,7 +226,12 @@ describe('getItem / getItemsByTrack', () => {
       'flak-burst',
     ]);
 
-    expect(defense.map((i) => i.id)).toEqual(['nanite-shield', 'afterburner', 'gravity-well']);
+    expect(defense.map((i) => i.id)).toEqual([
+      'nanite-shield',
+      'afterburner',
+      'gravity-well',
+      'reinforced-hull',
+    ]);
     // Every returned entry actually belongs to the requested track.
     for (const i of offense) expect(i.track).toBe('offense');
     for (const i of defense) expect(i.track).toBe('defense');
@@ -1128,6 +1134,72 @@ describe('ITEM_REGISTRY — Gravity Well per-level stats (Story 11.7, PRD §13.4
       'XP orbs home toward ship (540 px/s)',
       '+25% base XP value from orbs',
       '+150% pickup radius / XP orbs pull nearby enemies',
+    ]);
+  });
+});
+
+// --- Reinforced Hull (Story 11.8) ------------------------------------------
+describe('ITEM_REGISTRY — Reinforced Hull stats (Story 11.8)', () => {
+  const REINFORCED_HULL_FIELDS = [
+    'extraLives',
+    'respawnIFramesMs',
+    'softenMultiplierReset',
+  ];
+
+  it('authors the exact five per-level stats maps, frozen', () => {
+    const levels = getItem('reinforced-hull').levels;
+    expect(levels.map((l) => l.stats)).toEqual([
+      { extraLives: 1 },
+      { extraLives: 1, respawnIFramesMs: 1500 },
+      { extraLives: 2, respawnIFramesMs: 1500 },
+      { extraLives: 2, respawnIFramesMs: 1500, softenMultiplierReset: 1 },
+      { extraLives: 3, respawnIFramesMs: 1500, softenMultiplierReset: 1 },
+    ]);
+    for (const lvl of levels) {
+      expect(Object.isFrozen(lvl.stats), `L${lvl.level} stats not frozen`).toBe(true);
+    }
+  });
+
+  it('authors LEVELS as TOTALS, not deltas', () => {
+    const [l1, l2, l3, l4, l5] = getItem('reinforced-hull').levels.map((l) => l.stats);
+    // L2 restates extraLives: 1 and adds respawnIFramesMs: 1500
+    expect(l2.extraLives).toBe(l1.extraLives);
+    // L3 restates respawnIFramesMs: 1500 and updates extraLives: 2
+    expect(l3.respawnIFramesMs).toBe(l2.respawnIFramesMs);
+    // L4 restates extraLives: 2 & respawnIFramesMs: 1500 and adds softenMultiplierReset: 1
+    expect(l4.extraLives).toBe(l3.extraLives);
+    expect(l4.respawnIFramesMs).toBe(l3.respawnIFramesMs);
+    // L5 restates respawnIFramesMs & softenMultiplierReset and updates extraLives: 3
+    expect(l5.respawnIFramesMs).toBe(l4.respawnIFramesMs);
+    expect(l5.softenMultiplierReset).toBe(l4.softenMultiplierReset);
+  });
+
+  it('carries no stat key outside the three rungs the story owns', () => {
+    for (const lvl of getItem('reinforced-hull').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect(REINFORCED_HULL_FIELDS).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item authoring any Reinforced Hull field (the additive-fold tripwire)', () => {
+    for (const key of REINFORCED_HULL_FIELDS) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual([
+        'reinforced-hull',
+      ]);
+    }
+  });
+
+  it('keeps the PRD §13.4 desc strings verbatim', () => {
+    expect(getItem('reinforced-hull').levels.map((l) => l.desc)).toEqual([
+      '+1 max life',
+      '3.5s respawn i-frames',
+      '+1 max life',
+      'death drops multiplier to 50%',
+      '+1 max life',
     ]);
   });
 });

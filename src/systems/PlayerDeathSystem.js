@@ -84,6 +84,10 @@ export class PlayerDeathSystem extends System {
    *   in-flight dash. Optional (slot 6, mirroring `shieldSystem` at slot 5) so every
    *   existing caller and test stub is unchanged and a build with no dash behaves
    *   byte-for-byte as it did pre-10.5.
+   * @param {{extraLives?:number, respawnIFramesMs?:number, softenMultiplierReset?:number}|null} [playerStats=null]
+   *   Optional runtime player-stat modifier store (Story 11.8 — Reinforced Hull).
+   *   When provided, extra lives delta is synced on level up, respawn i-frames scale by
+   *   `respawnIFramesMs`, and `resetMultiplier` receives `playerStats` to soften reset.
    */
   constructor(
     ship,
@@ -92,6 +96,7 @@ export class PlayerDeathSystem extends System {
     scoreState = null,
     shieldSystem = null,
     dashSystem = null,
+    playerStats = null,
   ) {
     super();
     this.ship = ship;
@@ -100,6 +105,9 @@ export class PlayerDeathSystem extends System {
     this.scoreState = scoreState;
     this.shieldSystem = shieldSystem;
     this.dashSystem = dashSystem;
+    this.playerStats = playerStats;
+
+    this._syncedExtraLives = 0;
 
     // Public read-only observability latch (Story 4.2): the player's death point.
     // On every death (both a respawning death and the final game-over death) the
@@ -126,6 +134,19 @@ export class PlayerDeathSystem extends System {
    */
   fixedUpdate(dt) {
     const ps = this.playerState;
+
+    // Story 11.8 (Reinforced Hull) — sync extra lives delta when playerStats.extraLives increases.
+    if (this.playerStats) {
+      const rawExtra = this.playerStats.extraLives;
+      const extra = Number.isFinite(rawExtra) ? Math.max(0, Math.min(3, Math.floor(rawExtra))) : 0;
+      if (extra > this._syncedExtraLives) {
+        const delta = extra - this._syncedExtraLives;
+        ps.lives += delta;
+        this._syncedExtraLives = extra;
+      } else if (extra < this._syncedExtraLives) {
+        this._syncedExtraLives = extra;
+      }
+    }
 
     // Story 6.2: consume the one-tick programmatic-death REQUEST read-and-clear at
     // the very top (the InputState.consumeBomb idiom), BEFORE the guards. Clearing
@@ -279,7 +300,10 @@ export class PlayerDeathSystem extends System {
       ship.vx = 0;
       ship.vy = 0;
       ship.angle = sp.angle;
-      ps.invulnMs = PLAYER_INVULN_MS;
+      const rawBonus = this.playerStats?.respawnIFramesMs;
+      const bonusMs = Number.isFinite(rawBonus) && rawBonus >= 0 ? rawBonus : 0;
+      const newInvuln = PLAYER_INVULN_MS + bonusMs;
+      ps.invulnMs = Math.max(ps.invulnMs || 0, newInvuln);
     } else {
       // Last life: game-over. Do not respawn or grant invulnerability.
       ps.lives = 0;
@@ -290,7 +314,7 @@ export class PlayerDeathSystem extends System {
     // so a system built without a score surface still runs the death flow
     // unchanged. Score itself is untouched: you keep the points, lose the streak.
     if (this.scoreState) {
-      resetMultiplier(this.scoreState);
+      resetMultiplier(this.scoreState, this.playerStats);
     }
   }
 }

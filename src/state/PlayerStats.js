@@ -294,6 +294,13 @@ export const PLAYER_STATS_BASE = Object.freeze({
   gravityWellHoming: 0,
   xpValueMult: 1,
   gravityWellPullEnemies: 0,
+  // Reinforced Hull (Story 11.8 / PRD §13.4). Defense item: +max lives, respawn i-frames, and 50% multiplier reset.
+  //  - extraLives            : count of extra max lives granted (+1 at Lv1, Lv3, Lv5).
+  //  - respawnIFramesMs      : additional respawn i-frames duration in ms (1500ms at Lv2+).
+  //  - softenMultiplierReset : Lv4+ flag (>= 1 enables 50% multiplier drop on death instead of 1x).
+  extraLives: 0,
+  respawnIFramesMs: 0,
+  softenMultiplierReset: 0,
 });
 
 

@@ -44,13 +44,24 @@ export function createScoreState() {
 }
 
 /**
- * Reset the multiplier back to its starting value and clear its kill-progress.
- * Called at the death seam so the streak is wiped the instant the player dies
+ * Reset the multiplier back to its starting value (or 50% if softenMultiplierReset >= 1)
+ * and clear its kill-progress.
+ * Called at the death seam so the streak is wiped/softened the instant the player dies
  * (both a respawning death and the final game-over death). Leaves the score
  * itself untouched — you keep the points you earned, but lose the streak.
  * @param {{multiplier:number, multiplierKills:number}} scoreState
+ * @param {{softenMultiplierReset?:number}|null} [playerStats=null]
  */
-export function resetMultiplier(scoreState) {
-  scoreState.multiplier = SCORE_MULTIPLIER_START;
-  scoreState.multiplierKills = 0;
+export function resetMultiplier(scoreState, playerStats = null) {
+  if (scoreState) {
+    if (playerStats && playerStats.softenMultiplierReset >= 1) {
+      scoreState.multiplier = Math.max(
+        SCORE_MULTIPLIER_START,
+        Math.floor(scoreState.multiplier * 0.5),
+      );
+    } else {
+      scoreState.multiplier = SCORE_MULTIPLIER_START;
+    }
+    scoreState.multiplierKills = 0;
+  }
 }

@@ -696,6 +696,38 @@ describe('recomputePlayerStats — Nanite Shield against the REAL registry (Stor
     expect(ps.xpValueMult).toBe(1);
     expect(ps.gravityWellPullEnemies).toBe(0);
   });
+
+  // --- Reinforced Hull (Story 11.8) ----------------------------------------
+  it('folds the SHIPPED Reinforced Hull rungs 1..5 to the exact fields', () => {
+    // extraLives 1/1/2/2/3, respawnIFramesMs 0/1500/1500/1500/1500, softenMultiplierReset 0/0/0/1/1.
+    const expected = [
+      { extraLives: 1, respawnIFramesMs: 0, softenMultiplierReset: 0 },
+      { extraLives: 1, respawnIFramesMs: 1500, softenMultiplierReset: 0 },
+      { extraLives: 2, respawnIFramesMs: 1500, softenMultiplierReset: 0 },
+      { extraLives: 2, respawnIFramesMs: 1500, softenMultiplierReset: 1 },
+      { extraLives: 3, respawnIFramesMs: 1500, softenMultiplierReset: 1 },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'reinforced-hull': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.extraLives, `L${level} extraLives`).toBe(e.extraLives);
+      expect(ps.respawnIFramesMs, `L${level} respawnIFramesMs`).toBe(e.respawnIFramesMs);
+      expect(ps.softenMultiplierReset, `L${level} softenMultiplierReset`).toBe(e.softenMultiplierReset);
+      // Reinforced Hull touches nothing on fire/movement/shield/orbit seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.shieldCharges).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+    }
+  });
+
+  it('leaves the three Reinforced Hull fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.extraLives).toBe(0);
+    expect(ps.respawnIFramesMs).toBe(0);
+    expect(ps.softenMultiplierReset).toBe(0);
+  });
 });
 
 

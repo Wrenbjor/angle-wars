@@ -627,6 +627,8 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     // Story 10.5: a Lv3+ dash window suppresses lethal contact entirely, and every
     // death CANCELS an in-flight dash (so a respawn is never flung back out).
     dashSystem,
+    // Story 11.8: Reinforced Hull stats (extra lives, respawn i-frames, multiplier softening).
+    playerStats,
   );
   world.addSystem(playerDeathSystem);
 
