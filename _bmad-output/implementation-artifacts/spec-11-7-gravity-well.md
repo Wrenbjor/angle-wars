@@ -4,7 +4,7 @@ type: 'feature'
 created: '2026-07-24'
 status: 'in-review'
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true
 baseline_revision: '84aaa4a4f826e6f3bff8d49641fef2d58ed2bb0a'
 final_revision: '095859a916328f85c268c7a7b518b23a1a251489'
 context:
@@ -98,6 +98,28 @@ No spec amendments.
 - addressed_findings:
   - none
 
+### 2026-07-24 — Review pass (follow-up, 4 layers)
+- intent_gap: 0
+- bad_spec: 0
+- patch: 14: (high 3, medium 7, low 4)
+- defer: 2: (medium 2)
+- reject: 7: (medium 3, low 4)
+- addressed_findings:
+  - `[high]` `[patch]` `_applyPullFromOrb` built its displacement from a `pull / d` scale factor — the exact pattern `NaniteShieldSystem._push` documents as NaN-producing (at denormal separation `pull / d` overflows to Infinity and `0 * Infinity` is NaN, uncatchable by any later clamp). Rewrote to use UNIT components (`dx/d`, `dy/d`), which are bounded by 1 for every `d > 0`. A NaN here writes permanently to pooled ENEMY coordinates, degrading collision, steering and rendering for the rest of the run.
+  - `[high]` `[patch]` The two tests covering the story's explicit "Never" clauses (never pull when unowned, never pull telegraphing enemies) were unfalsifiable: `createFakeEnemyPool` `Object.assign`ed the caller's literals into freshly `acquire()`d pool instances and the assertions read the detached literals, which the system never touches. Helper now returns the pooled instances; assertions moved onto them. Verified by mutation: removing the `telegraphMs > 0` guard and removing the `pullEnabled` gate each now fail.
+  - `[high]` `[patch]` `buildArenaWorld` wiring for `playerStats`/`enemyPools` — the only path by which Gravity Well affects real play — had no assertion, against a repo convention of 23 such identity pins. A transposed or dropped positional argument would have shipped the whole feature inert with a green suite. Added `playerStats`/`enemyPools` identity assertions plus a `maxOrbs` resolution check for the positional `undefined` placeholder.
+  - `[medium]` `[patch]` Pull ran `Math.hypot` on every orb×enemy pair before any range test (O(512 × enemies) per tick, in a file that documented squared-distance rejection as a deliberate optimization). Added a squared-distance reject before the sqrt.
+  - `[medium]` `[patch]` Pull applied raw position deltas with no arena clamp, diverging from the `NaniteShieldSystem._push` precedent it otherwise mirrors. Added the same interior clamp inset by enemy radius, with the same per-axis rule (clamp only bounds the enemy started inside, so legitimately-outside snake segments are not teleported in).
+  - `[medium]` `[patch]` Pull was summed over every in-range orb with no cap. Orbs drop at kill sites, never time out, and routinely pile up, so a heap of co-located orbs could displace an enemy faster than it can fly — turning a DEFENSE item into an enemy-delivery mechanism. Contributions now accumulate per enemy and clamp to one orb's worth of displacement.
+  - `[medium]` `[patch]` Pull ran as step (3) AFTER the spawn phase, so an orb pulled on the tick it dropped — contradicting the file's own documented ADVANCE-then-SPAWN invariant restated two lines above. Moved into the advance phase over the same pre-spawn snapshot the drift/collect pass uses.
+  - `[medium]` `[patch]` A non-finite `dt` propagated NaN into pooled enemy coordinates (pre-11.7 it could only reach recyclable orb positions). Added a finite/positive `dt` guard yielding a zero step.
+  - `[medium]` `[patch]` The corrupt-stats test fed `xpValueMult: NaN` but asserted only orb drift — never collecting an orb, so the sanitizer most able to poison run state was exercised without being checked. Now asserts `Number.isFinite(score.xp)` and the exact 1x credit, and pins that a junk pull flag moves no enemy.
+  - `[medium]` `[patch]` The diff deleted load-bearing rationale still true of surviving code: the `maxOrbs` 0/NaN/negative footgun guard, the "per-tick distance gate, not a magnet latch" no-timeout contract, and the zero-steady-state-allocation explanation. Restored and extended to cover the Lv5 pull.
+  - `[low]` `[patch]` The pull block was gated on `ship` being truthy but never read `ship`, making the null-ship test prove nothing about the pull path. Removed the decorative gate.
+  - `[low]` `[patch]` An unrelated Afterburner draw loop had its retry budget silently raised 20→30 as an unexplained band-aid for registry growth; at 30 attempts `level` reaches 31 against `LEVEL_MAX` 30, which would have failed on the level assertion rather than the intended "never offered" diagnostic. Bounded to `Math.min(30, LEVEL_MAX - 2)` with the scaling rationale documented.
+  - `[low]` `[patch]` Added `gravity-well` to the both-halves fusion pin block and extended the reciprocal-pair test to cover the now fully-registered `mine-layer` ↔ `gravity-well` pair, with a note that the pair's two `epic` values are deliberately different and must not be reconciled.
+  - `[low]` `[patch]` Stripped seven whitespace-only insertions across six files (including shared `constants.js` / `itemRegistry.js`, which manufacture merge conflicts for concurrent Epic-11 stories).
+
 ## Design Notes
 
 **Dynamic Pickup Radius & Economy:** Scaling `XP_PICKUP_RADIUS` by `xpPickupRadiusMult` allows players to gather XP from safer distances without exposing themselves to high enemy density.
@@ -132,14 +154,38 @@ Files Changed:
 - `src/systems/cardOffer.test.js`: Added `gravity-well` to test fixture banished sets.
 - `src/systems/levelUpSystem.test.js`: Added `gravity-well` to test fixture banished sets.
 - `src/scenes/buildArenaWorld.test.js`: Adjusted iteration cap for 11 items.
-Review Findings Breakdown:
+Review Findings Breakdown (initial pass):
 - Patches applied: 0
 - Deferred: 0
 - Rejected: 0
-Follow-up Review Recommended: false (Score: 0)
+
+### Follow-up review pass — 2026-07-24
+
+A second review pass ran all four layers against the same reviewed diff (`84aaa4a..ff2666a`).
+Note: the previously recorded `final_revision` `095859a` is an ORPHANED commit — history was
+rewritten and the on-branch Story 11.7 commit is `ff2666a` (identical tree apart from this
+spec's own frontmatter). `final_revision` below is corrected to the real HEAD.
+
+Files Changed (this pass):
+- `src/systems/XpOrbSystem.js`: Replaced `_applyPullFromOrb` with `_applyPull` — unit-component displacement (no NaN at denormal separation), squared-distance reject before sqrt, per-enemy accumulation clamped to one orb's worth, arena-interior clamp on the NaniteShield per-axis rule; moved the pull into the advance phase (pre-spawn); added a non-finite `dt` guard; restored the deleted `maxOrbs` / magnet-latch / zero-allocation rationale.
+- `src/systems/gravityWellSystem.test.js`: `createFakeEnemyPool` now returns the POOLED instances so the unowned and telegraph assertions are falsifiable; strengthened the corrupt-stats test (finite `score.xp`, exact 1x credit, no pull under a junk flag); added tests for the stacking cap, arena clamp, non-finite `dt`, and the one-tick spawn grace.
+- `src/scenes/buildArenaWorld.test.js`: Added `playerStats`/`enemyPools` identity assertions and a `maxOrbs` resolution check to the XpOrbSystem wiring test; bounded the Afterburner retry budget to `Math.min(30, LEVEL_MAX - 2)` with rationale.
+- `src/config/itemRegistry.test.js`: Added the `gravity-well` fusion pin and extended the reciprocal-pair test to the `mine-layer` ↔ `gravity-well` pair, documenting why its two `epic` values differ.
+- `src/config/constants.js`, `src/config/itemRegistry.js`, `src/scenes/buildArenaWorld.js`: stray blank lines stripped; `src/state/playerStats.test.js`, `src/config/itemRegistry.test.js`, `src/systems/XpOrbSystem.js`: trailing EOF blank lines trimmed. (The blanks this story left in `src/state/PlayerStats.js` and `src/systems/cardOffer.test.js` were already absorbed by Story 11.8, so those files needed no change.)
+
+Review Findings Breakdown (follow-up pass):
+- Patches applied: 14 (high 3, medium 7, low 4)
+- Deferred: 2
+- Rejected: 7
+Follow-up Review Recommended: true (Score: high count 3 > 0)
 Verification Performed:
-- `npx vitest run src/systems/gravityWellSystem.test.js src/config/itemRegistry.test.js src/state/playerStats.test.js`: 133/133 passed.
-- `npm test`: 76/76 test files passed (2039 tests passed).
+- `npx vitest run src/systems/gravityWellSystem.test.js src/config/itemRegistry.test.js src/state/playerStats.test.js src/scenes/buildArenaWorld.test.js`: 200/200 passed.
+- Mutation check on the two repaired tests: removing the `telegraphMs > 0` guard fails `never pulls telegraphing enemies`; removing the `pullEnabled` gate fails the unowned and corrupt-stats tests. Both were green under those mutations before this pass.
+- `npm test`: 77/77 test files passed (2058 tests passed).
 - `npm run build`: Production build succeeded.
-Residual Risks: None.
+
+Residual Risks:
+- The Lv5 pull's tuning is untested as gameplay: at `GRAVITY_WELL_PULL_STRENGTH = 40` with linear falloff, an enemy 50px from an orb moves ~0.33px/tick. Whether that reads as PRD §13.4's "pulls enemies slightly" or as indistinguishable from zero is a playtest question no test at any surface answers.
+- Two deferred items recorded in `deferred-work.md`: snake-segment pull granularity, and the absent assembled-world Gravity Well behavior suite.
+- Rejected as verified-incorrect: the reported `mine-layer` ↔ `gravity-well` fusion "contradiction". PRD §13.5 lines 246 and 253 define TWO distinct fusions from that pair at different level thresholds (Singularity Field / Event Horizon); the asymmetry is intentional and is now pinned by a test comment so a future reviewer does not "fix" it.
 

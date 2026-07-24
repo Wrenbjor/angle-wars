@@ -559,7 +559,6 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   world.addSystem(xpOrbSystem);
   bombSystem.xpOrbSystem = xpOrbSystem;
 
-
   // --- Leveling (Story 8.2 / Epic 8 progression) --------------------------
   // The leveling spine: derives the player's current level + in-level progress
   // purely from scoreState.xp each tick (no accumulated delta state to drift).

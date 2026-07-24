@@ -12,6 +12,7 @@ import {
   GRAVITY_WELL_PULL_STRENGTH,
   SHIP_RADIUS,
   XP_MULTIPLIER_DIVISOR,
+  ARENA_BORDER_INSET,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -55,13 +56,14 @@ function activeOrbs(system) {
   return out;
 }
 
-function createFakeEnemyPool(enemies = []) {
+// Pool.acquire() returns a FACTORY-CREATED instance, never the caller's literal, so the
+// literals passed in here are only field templates — the system mutates the pooled
+// instances. Return those instances alongside the pool: asserting on the source literals
+// would be unfalsifiable (they are never referenced by the system under test).
+function createFakeEnemyPool(defs = []) {
   const pool = new Pool(() => ({ x: 0, y: 0, telegraphMs: 0 }));
-  for (const e of enemies) {
-    const instance = pool.acquire();
-    Object.assign(instance, e);
-  }
-  return pool;
+  const enemies = defs.map((d) => Object.assign(pool.acquire(), d));
+  return { pool, enemies };
 }
 
 describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
@@ -74,8 +76,8 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
       xpValueMult: 1,
       gravityWellPullEnemies: 0,
     };
-    const enemy = { x: 50, y: 0, telegraphMs: 0 };
-    const enemyPool = createFakeEnemyPool([enemy]);
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 50, y: 0, telegraphMs: 0 }]);
+    const enemy = enemies[0];
     const system = new XpOrbSystem(
       fakeCollision(),
       fakeBlackHole(),
@@ -103,8 +105,10 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
     system.fixedUpdate(DT);
     expect(score.xp).toBeCloseTo(10 * (1 + 1 / XP_MULTIPLIER_DIVISOR), 5);
 
-    // Enemy at (50, 0) is within 100px of active orbs, but unowned → no pull nudge
+    // Enemy at (50, 0) is within 100px of active orbs, but unowned → no pull nudge.
+    // Asserted on the POOLED instance (the object the system actually walks).
     expect(enemy.x).toBe(50);
+    expect(enemy.y).toBe(0);
   });
 
   it('Lv1 owned (+40% pickup radius): orb at 160px drifts toward ship (pickup radius is 168px)', () => {
@@ -278,8 +282,10 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
       xpValueMult: 1.25,
       gravityWellPullEnemies: 1,
     };
-    const telegraphingEnemy = { x: 500, y: 550, telegraphMs: 400 };
-    const enemyPool = createFakeEnemyPool([telegraphingEnemy]);
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([
+      { x: 500, y: 550, telegraphMs: 400 },
+    ]);
+    const telegraphingEnemy = enemies[0];
     const system = new XpOrbSystem(
       fakeCollision(),
       fakeBlackHole(),
@@ -322,7 +328,7 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
     expect(() => systemNoEnemies.fixedUpdate(DT)).not.toThrow();
 
     // Null ship
-    const enemyPool = createFakeEnemyPool([{ x: 50, y: 50, telegraphMs: 0 }]);
+    const { pool: enemyPool } = createFakeEnemyPool([{ x: 50, y: 50, telegraphMs: 0 }]);
     const systemNoShip = new XpOrbSystem(
       fakeCollision(),
       fakeBlackHole(),
@@ -348,6 +354,8 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
       xpValueMult: NaN,
       gravityWellPullEnemies: null,
     };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 50, y: 0, telegraphMs: 0 }]);
+    const enemy = enemies[0];
     const system = new XpOrbSystem(
       fakeCollision(),
       fakeBlackHole(),
@@ -356,6 +364,7 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
       score,
       XP_ORB_MAX,
       corruptStats,
+      [enemyPool],
     );
 
     const orb = seedOrb(system, 100, 0, 10);
@@ -364,5 +373,140 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
     // Falls back to base pickup radius 120 and drift speed 320
     const expectedStep = XP_ORB_DRIFT_SPEED * (DT / 1000);
     expect(orb.x).toBeCloseTo(100 - expectedStep, 5);
+
+    // A junk pull flag enables nothing: the pooled enemy is untouched.
+    expect(enemy.x).toBe(50);
+    expect(enemy.y).toBe(0);
+
+    // The XP credit must survive a NaN xpValueMult — a NaN reaching scoreState.xp is
+    // permanent for the run and silently breaks every downstream level threshold.
+    seedOrb(system, 0, 0, 10);
+    system.fixedUpdate(DT);
+    expect(Number.isFinite(score.xp)).toBe(true);
+    expect(score.xp).toBeCloseTo(10 * (1 + 1 / XP_MULTIPLIER_DIVISOR), 5);
+  });
+
+  it('a non-finite dt writes no NaN into pooled enemy coordinates', () => {
+    const playerStats = {
+      xpPickupRadiusMult: 2.5,
+      gravityWellHoming: 1,
+      xpValueMult: 1.25,
+      gravityWellPullEnemies: 1,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 500, y: 550, telegraphMs: 0 }]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      fakeShip(0, 0),
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    seedOrb(system, 500, 500, 1);
+
+    system.fixedUpdate(NaN);
+    expect(Number.isFinite(enemy.x)).toBe(true);
+    expect(Number.isFinite(enemy.y)).toBe(true);
+    expect(enemy.x).toBe(500);
+    expect(enemy.y).toBe(550);
+  });
+
+  it('caps stacked pull from an orb pile at one orb worth of displacement', () => {
+    const playerStats = {
+      xpPickupRadiusMult: 2.5,
+      gravityWellHoming: 1,
+      xpValueMult: 1.25,
+      gravityWellPullEnemies: 1,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 500, y: 550, telegraphMs: 0 }]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      fakeShip(0, 0),
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    // 30 co-located orbs 50px from the enemy. Unclamped this would be 30x the nudge.
+    for (let i = 0; i < 30; i++) seedOrb(system, 500, 500, 1);
+
+    system.fixedUpdate(DT);
+
+    const dtSec = DT / 1000;
+    const maxStep = GRAVITY_WELL_PULL_STRENGTH * dtSec;
+    const moved = Math.hypot(enemy.x - 500, enemy.y - 550);
+    expect(moved).toBeLessThanOrEqual(maxStep + 1e-9);
+    expect(moved).toBeCloseTo(maxStep, 5);
+  });
+
+  it('never drags an in-bounds enemy outside the arena interior', () => {
+    const playerStats = {
+      xpPickupRadiusMult: 2.5,
+      gravityWellHoming: 1,
+      xpValueMult: 1.25,
+      gravityWellPullEnemies: 1,
+    };
+    // Enemy just inside the top border; a pile of orbs sits outside it, pulling up.
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([
+      { x: 800, y: ARENA_BORDER_INSET + 0.1, telegraphMs: 0, radius: 0 },
+    ]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      fakeShip(0, 0),
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    for (let i = 0; i < 30; i++) seedOrb(system, 800, ARENA_BORDER_INSET - 40, 1);
+
+    system.fixedUpdate(DT);
+
+    expect(enemy.y).toBeGreaterThanOrEqual(ARENA_BORDER_INSET);
+  });
+
+  it('a freshly spawned orb waits one tick before it can pull (advance-then-spawn)', () => {
+    const playerStats = {
+      xpPickupRadiusMult: 2.5,
+      gravityWellHoming: 1,
+      xpValueMult: 1.25,
+      gravityWellPullEnemies: 1,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 500, y: 550, telegraphMs: 0 }]);
+    const enemy = enemies[0];
+    // A kill report at (500, 500) makes the system SPAWN an orb during this tick.
+    const collision = fakeCollision();
+    collision.bulletKillCount = 1;
+    collision.bulletKillX = [500];
+    collision.bulletKillY = [500];
+    collision.bulletKillXp = [1];
+    const system = new XpOrbSystem(
+      collision,
+      fakeBlackHole(),
+      fakeMirror(),
+      fakeShip(0, 0),
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+
+    system.fixedUpdate(DT);
+    // The orb was spawned this tick, so it must not have pulled yet.
+    expect(enemy.y).toBe(550);
+
+    // Next tick it is part of the pre-spawn snapshot and does pull.
+    collision.bulletKillCount = 0;
+    system.fixedUpdate(DT);
+    expect(enemy.y).toBeLessThan(550);
   });
 });

@@ -161,6 +161,14 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
       partner: 'gravity-well',
       epic: 'singularity-field',
     });
+    // Story 11.7: Gravity Well Lv5 + Mine Layer Lv3 → Event Horizon (PRD §13.5 line 253).
+    // NOTE the deliberate asymmetry with mine-layer above: the SAME pair yields TWO
+    // distinct fusions at different level thresholds (Mine Layer Lv5 + Gravity Well Lv3
+    // → Singularity Field, PRD line 246). The `epic` values must NOT be made to match.
+    expect(getItem('gravity-well').fusion).toEqual({
+      partner: 'mine-layer',
+      epic: 'event-horizon',
+    });
     expect(getItem('nanite-shield').fusion).toEqual({
       partner: 'afterburner',
       epic: 'phase-armor',
@@ -177,11 +185,13 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     });
   });
 
-  it('the reciprocal Nanite ↔ Afterburner pair resolves within the registry', () => {
-    // The only fully-registered recipe today: each names the other, and both partners
+  it('the reciprocal fusion pairs resolve within the registry', () => {
+    // The fully-registered recipes today: each names the other, and both partners
     // actually exist here. (spread-cannon's partner `piercing-lance` and overcharge's
     // sentinel are deliberately forward-looking — later epics register them.)
-    for (const id of ['nanite-shield', 'afterburner']) {
+    // `epic` is deliberately NOT compared across a pair: mine-layer ↔ gravity-well is
+    // one pair carrying TWO fusions (Singularity Field / Event Horizon, PRD §13.5).
+    for (const id of ['nanite-shield', 'afterburner', 'mine-layer', 'gravity-well']) {
       const partnerId = getItem(id).fusion.partner;
       expect(getItem(partnerId)).toBeDefined();
       expect(getItem(partnerId).fusion.partner).toBe(id);
@@ -239,7 +249,6 @@ describe('getItem / getItemsByTrack', () => {
     for (const i of defense) expect(i.track).toBe('defense');
   });
 });
-
 
 describe('ITEM_REGISTRY — Overcharge per-level stats (Story 10.2, PRD §13.3)', () => {
   // The exact per-level maps. Per the state/PlayerStats.js AUTHORING CONVENTION these
@@ -1299,4 +1308,3 @@ describe('ITEM_REGISTRY — Bomb Capacitor stats (Story 11.9)', () => {
     });
   });
 });
-

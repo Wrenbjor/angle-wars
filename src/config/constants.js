@@ -1325,7 +1325,6 @@ export const GRAVITY_WELL_PULL_RADIUS = 100;
 // Enemy pull strength (px/s) for the dt-scaled position nudge toward nearby active XP orbs.
 export const GRAVITY_WELL_PULL_STRENGTH = 40;
 
-
 // --- Leveling (Story 8.2 / Epic 8 progression) ------------------------------
 // Hard level cap — a full build. Leveling stops at this level; XP earned past it
 // is inert (level never exceeds LEVEL_MAX, no further threshold consumed).

@@ -28,6 +28,8 @@ import {
   PLAYER_INVULN_MS,
   DASH_DURATION_MS,
   SPAWN_SAFE_RADIUS,
+  XP_ORB_MAX,
+  LEVEL_MAX,
 } from '../config/constants.js';
 import { xpToNextLevel } from '../systems/LevelSystem.js';
 
@@ -294,6 +296,16 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // ship; a collect credits scoreState.xp).
     expect(ctx.xpOrbSystem.ship).toBe(ctx.ship);
     expect(ctx.xpOrbSystem.scoreState).toBe(ctx.scoreState);
+    // Gravity Well (Story 11.7) reaches real play ONLY through these two positional
+    // arguments. Pin identity — transposing or dropping them would leave every Gravity
+    // Well effect inert in the shipped game while the unit suite stayed green (those
+    // tests construct XpOrbSystem directly).
+    expect(ctx.xpOrbSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.xpOrbSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(Array.isArray(ctx.xpOrbSystem.enemyPools)).toBe(true);
+    // maxOrbs is passed as a positional `undefined` placeholder — assert the guard still
+    // resolved it to the cap rather than silently suppressing every spawn.
+    expect(ctx.xpOrbSystem.maxOrbs).toBe(XP_ORB_MAX);
   });
 
   it('wires the LevelSystem (Story 8.2) with the shared scoreState, starting at level 1', () => {
@@ -1374,8 +1386,12 @@ describe('buildArenaWorld — Afterburner through the ASSEMBLED world (Story 10.
   function pickAfterburnerForReal(ctx) {
     let level = 1;
     let slot = -1;
-    for (let attempt = 0; attempt < 30 && slot < 0; attempt++) {
-
+    // The budget scales with the registry: each item added to the offer pool dilutes the
+    // weighted draw, so this must stay well above the expected draws-to-hit while
+    // remaining under LEVEL_MAX — `level` is incremented once per attempt and the
+    // assertion below pins levelSystem.level, which cannot exceed the cap.
+    const attemptBudget = Math.min(30, LEVEL_MAX - 2);
+    for (let attempt = 0; attempt < attemptBudget && slot < 0; attempt++) {
       level += 1;
       // Bank just PAST the level threshold rather than exactly on it: `xpForLevel` sums
       // the curve in the same order LevelSystem subtracts it, so the exact boundary value

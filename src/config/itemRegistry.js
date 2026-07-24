@@ -1051,7 +1051,6 @@ export const ITEM_REGISTRY = Object.freeze([
   }),
 ]);
 
-
 /**
  * Look up an item definition by its id. O(n) over the small fixed registry.
  * @param {string} id
