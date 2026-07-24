@@ -31,6 +31,7 @@ import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
 import { BlackHoleSystem } from '../systems/BlackHoleSystem.js';
 import { BombSystem } from '../systems/BombSystem.js';
 import { ExtraLifeSystem } from '../systems/ExtraLifeSystem.js';
+import { NaniteShieldSystem } from '../systems/NaniteShieldSystem.js';
 import { PlayerDeathSystem } from '../systems/PlayerDeathSystem.js';
 import { HighScoreSystem } from '../systems/HighScoreSystem.js';
 import { createHighScoreStorage } from '../persistence/highScoreStorage.js';
@@ -51,12 +52,13 @@ import { AudioDirectorSystem } from '../systems/AudioDirectorSystem.js';
 //
 // This is the verbatim extraction of the world-construction code that
 // ArenaScene.create() used to inline: the same World, the same ship + input +
-// state + pools, the SAME 25 systems registered in the SAME order (Story 6.3 added
+// state + pools, the SAME 26 systems registered in the SAME order (Story 6.3 added
 // the MirrorReflectorSystem in the enemy section; Story 8.1 added the XpOrbSystem
 // after the BombSystem late-bind; Story 8.2 added the LevelSystem right after it;
 // Story 8.3 added the LevelUpSystem right after LevelSystem; Story 9.1 added the
 // DpsTelemetrySystem right after ScoringSystem; Story 9.3 added the ArmoredSystem in
-// the enemy section, after MirrorReflectorSystem and before SpawnDirector), the same
+// the enemy section, after MirrorReflectorSystem and before SpawnDirector; Story 10.4
+// added the NaniteShieldSystem after ExtraLifeSystem and before PlayerDeathSystem), the same
 // enemyPools / deathPools composition (the reflector pool is deliberately in NEITHER;
 // the armored pool IS in both), and both load-bearing
 // late-binds
@@ -405,6 +407,21 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const extraLifeSystem = new ExtraLifeSystem(scoreState, playerState);
   world.addSystem(extraLifeSystem);
 
+  // --- Nanite Shield (Story 10.4) -----------------------------------------
+  // Owns the shield's RUNTIME state (the live charge count + the recharge timer);
+  // the shared playerStats store owns only the derived MAXIMA. Its slot is
+  // load-bearing in BOTH directions:
+  //   - AFTER LevelUpSystem, the ONLY place recomputePlayerStats runs, so a pick made
+  //     this tick is already folded when the shield syncs its max — the charge the card
+  //     just granted is live on the very tick it was picked;
+  //   - BEFORE PlayerDeathSystem, so tryAbsorb() reads a count that is current for
+  //     this tick rather than one step stale.
+  // Given `enemyPools` (NOT deathPools) — the Lv5 break pulse only ever displaces the
+  // five combat archetypes; the Black Hole and the Mirror Reflector are immune to AoE,
+  // the same scoping BombSystem.detonateAt applies.
+  const naniteShieldSystem = new NaniteShieldSystem(ship, enemyPools, playerStats);
+  world.addSystem(naniteShieldSystem);
+
   const deathPools = [...enemyPools, blackHoleSystem.holePool];
   const playerDeathSystem = new PlayerDeathSystem(
     ship,
@@ -412,6 +429,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     playerState,
     // Story 3.1: the death seam resets the run multiplier on every death.
     scoreState,
+    // Story 10.4: the shield gets first refusal on every death that reaches the
+    // shared body — both the contact path and the programmatic pendingDeath path.
+    naniteShieldSystem,
   );
   world.addSystem(playerDeathSystem);
 
@@ -511,6 +531,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     levelSystem,
     levelUpSystem,
     extraLifeSystem,
+    naniteShieldSystem,
     playerDeathSystem,
     highScoreSystem,
     gridFieldSystem,

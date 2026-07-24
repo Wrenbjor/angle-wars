@@ -149,11 +149,11 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.shieldCharges).toBe(0);
   });
 
-  it('the SHIPPED registry contributes ONLY the two OFFENSE items today (10.4–10.5 stats still empty)', () => {
+  it('the SHIPPED registry contributes every item EXCEPT Afterburner today (10.5 stats still empty)', () => {
     const ps = createPlayerStats();
-    // Own every shipped item at a spread of levels. Only Overcharge (10.2) and Spread
-    // Cannon (10.3) have authored numbers; the two DEFENSE items carry empty stats maps,
-    // so the seams they own stay exactly at base.
+    // Own every shipped item at a spread of levels. Overcharge (10.2), Spread Cannon
+    // (10.3) and Nanite Shield (10.4) have authored numbers; Afterburner still carries
+    // empty stats maps, so the movement seam it owns stays exactly at base.
     recomputePlayerStats(
       ps,
       { overcharge: 5, 'spread-cannon': 3, 'nanite-shield': 2, afterburner: 4 },
@@ -163,16 +163,19 @@ describe('recomputePlayerStats — the pure in-place fold', () => {
     expect(ps.fireRateMult).toBeCloseTo(1.7, 10); // 1 + 0.40 (OC L5) + 0.30 (Spread L3)
     expect(ps.spreadWays).toBe(5); // Spread Cannon L3 restates the L2 spread
     expect(ps.spreadArcDeg).toBe(16);
-    // The seams the two DEFENSE stories own are untouched by this build.
+    // Nanite Shield L2: one MAX charge on a 15s recharge, no Lv5 knockback yet.
+    expect(ps.shieldCharges).toBe(1);
+    expect(ps.shieldRechargeMs).toBe(15000);
+    expect(ps.shieldKnockback).toBe(0);
+    // The seam the LAST deferred story (Afterburner, 10.5) owns is untouched.
     expect(ps.moveSpeedMult).toBe(PLAYER_STATS_BASE.moveSpeedMult);
-    expect(ps.shieldCharges).toBe(PLAYER_STATS_BASE.shieldCharges);
     // And the fold introduced no key beyond the declared base fields.
     expect(Object.keys(ps).sort()).toEqual(Object.keys(PLAYER_STATS_BASE).sort());
   });
 
-  it('the SHIPPED registry with only the two DEFENSE items owned still folds to exactly base', () => {
+  it('the SHIPPED registry with only AFTERBURNER owned still folds to exactly base', () => {
     const ps = createPlayerStats();
-    recomputePlayerStats(ps, { 'nanite-shield': 5, afterburner: 5 }, ITEM_REGISTRY);
+    recomputePlayerStats(ps, { afterburner: 5 }, ITEM_REGISTRY);
     expect(ps).toEqual({ ...PLAYER_STATS_BASE });
   });
 
@@ -321,5 +324,83 @@ describe('recomputePlayerStats — Spread Cannon against the REAL registry (Stor
     expect(ps.spreadWays).toBe(9);
     expect(ps.spreadArcDeg).toBe(22);
     expect(ps.damageMult).toBeCloseTo(1.35, 10);
+  });
+});
+
+describe('recomputePlayerStats — Nanite Shield against the REAL registry (Story 10.4)', () => {
+  // The third real-content exercise of the fold, and the first for a DEFENSE item. The
+  // three fields are all ADDITIVE/COUNT (base 0), and `shieldCharges` is the MAXIMUM
+  // charge count — never the live one (that is runtime state on NaniteShieldSystem,
+  // deliberately kept OUT of this store because the fold resets it on every pick).
+  const EXPECTED_BY_LEVEL = [
+    { level: 1, shieldCharges: 1, shieldRechargeMs: 20000, shieldKnockback: 0 },
+    { level: 2, shieldCharges: 1, shieldRechargeMs: 15000, shieldKnockback: 0 },
+    { level: 3, shieldCharges: 2, shieldRechargeMs: 15000, shieldKnockback: 0 },
+    { level: 4, shieldCharges: 2, shieldRechargeMs: 10000, shieldKnockback: 0 },
+    { level: 5, shieldCharges: 3, shieldRechargeMs: 10000, shieldKnockback: 1 },
+  ];
+
+  it.each(EXPECTED_BY_LEVEL)(
+    'Nanite Shield Lv$level folds to $shieldCharges max charges / $shieldRechargeMs ms / knockback $shieldKnockback',
+    ({ level, shieldCharges, shieldRechargeMs, shieldKnockback }) => {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'nanite-shield': level }, ITEM_REGISTRY);
+      expect(ps.shieldCharges).toBe(shieldCharges);
+      expect(ps.shieldRechargeMs).toBe(shieldRechargeMs);
+      expect(ps.shieldKnockback).toBe(shieldKnockback);
+      // Nanite Shield touches nothing on the fire/volley/movement seams.
+      expect(ps.damageMult).toBe(1);
+      expect(ps.fireRateMult).toBe(1);
+      expect(ps.spreadWays).toBe(0);
+      expect(ps.spreadArcDeg).toBe(0);
+      expect(ps.moveSpeedMult).toBe(1);
+    },
+  );
+
+  it('an unowned (level 0) Nanite Shield leaves all three shield fields at their base', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { 'nanite-shield': 0 }, ITEM_REGISTRY);
+    expect(ps.shieldCharges).toBe(PLAYER_STATS_BASE.shieldCharges);
+    expect(ps.shieldRechargeMs).toBe(PLAYER_STATS_BASE.shieldRechargeMs);
+    expect(ps.shieldKnockback).toBe(PLAYER_STATS_BASE.shieldKnockback);
+    expect(ps).toEqual({ ...PLAYER_STATS_BASE });
+  });
+
+  it('re-folding at a LOWER Nanite Shield level does not accumulate (levels are totals)', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { 'nanite-shield': 5 }, ITEM_REGISTRY);
+    recomputePlayerStats(ps, { 'nanite-shield': 1 }, ITEM_REGISTRY);
+    expect(ps.shieldCharges).toBe(1); // the L1 TOTAL, not 1+1+2+2+3
+    expect(ps.shieldRechargeMs).toBe(20000); // and not 20000+15000+15000+10000+10000
+    expect(ps.shieldKnockback).toBe(0); // the Lv5 pulse flag is GONE at L1
+  });
+
+  it('an over-cap Nanite Shield level clamps to the Lv5 entry', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { 'nanite-shield': 99 }, ITEM_REGISTRY);
+    expect(ps.shieldCharges).toBe(3);
+    expect(ps.shieldRechargeMs).toBe(10000);
+    expect(ps.shieldKnockback).toBe(1);
+  });
+
+  it('an OFFENSE item owned alongside it leaves the three shield fields untouched', () => {
+    // The stacking check from the other side: Overcharge and Spread Cannon contribute
+    // nothing to any `shield*` field, so a maxed offense build cannot inflate (or
+    // shorten the recharge of) the shield. The shared-field additive stacking the fold
+    // specifies applies only where two items author the SAME key.
+    const ps = createPlayerStats();
+    recomputePlayerStats(
+      ps,
+      { 'nanite-shield': 3, overcharge: 5, 'spread-cannon': 5 },
+      ITEM_REGISTRY,
+    );
+    // Shield fields are exactly the Lv3 totals — no offense contribution leaked in.
+    expect(ps.shieldCharges).toBe(2);
+    expect(ps.shieldRechargeMs).toBe(15000);
+    expect(ps.shieldKnockback).toBe(0);
+    // …and the offense rungs still stack additively with each other, unaffected.
+    expect(ps.fireRateMult).toBeCloseTo(1.7, 10);
+    expect(ps.damageMult).toBeCloseTo(1.95, 10);
+    expect(ps.spreadWays).toBe(9);
   });
 });

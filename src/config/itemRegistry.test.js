@@ -5,6 +5,8 @@ import {
   SPREAD_CANNON_GUARANTEE_LEVEL,
   SPREAD_MAX_WAYS,
   SPREAD_MAX_ARC_DEG,
+  SHIELD_MAX_CHARGES,
+  SHIELD_RECHARGE_FLOOR_MS,
 } from './constants.js';
 
 // Story 10.1 — the data-driven item registry: the ONE definition per item that the
@@ -73,13 +75,19 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     }
   });
 
-  it('Nanite Shield + Afterburner still carry EMPTY stats (10.4–10.5 deferred)', () => {
-    // Stories 10.2 and 10.3 authored Overcharge's and Spread Cannon's numbers; this pin
-    // NARROWS to the two still-deferred DEFENSE items. It stops Nanite Shield (10.4) or
+  it('Afterburner still carries EMPTY stats (10.5 deferred)', () => {
+    // Stories 10.2, 10.3 and 10.4 authored Overcharge's, Spread Cannon's and Nanite
+    // Shield's numbers; this pin NARROWS to the ONE still-deferred item. It stops
     // Afterburner (10.5) from silently landing its effect numbers here without its own
     // story's wiring — the fold would apply them with no gameplay seam reading them.
     for (const item of ITEM_REGISTRY) {
-      if (item.id === 'overcharge' || item.id === 'spread-cannon') continue;
+      if (
+        item.id === 'overcharge' ||
+        item.id === 'spread-cannon' ||
+        item.id === 'nanite-shield'
+      ) {
+        continue;
+      }
       for (const lvl of item.levels) {
         expect(lvl.stats, `${item.id} L${lvl.level} stats should still be empty`).toEqual(
           {},
@@ -371,6 +379,125 @@ describe('ITEM_REGISTRY — Spread Cannon per-level stats (Story 10.3, PRD §13.
       // would redden a legal boundary value and imply the safety constant needs raising.
       expect(lvl.stats.spreadWays).toBeLessThanOrEqual(SPREAD_MAX_WAYS);
       expect(lvl.stats.spreadArcDeg).toBeLessThanOrEqual(SPREAD_MAX_ARC_DEG);
+    }
+  });
+});
+
+describe('ITEM_REGISTRY — Nanite Shield per-level stats (Story 10.4, PRD §13.4)', () => {
+  // The exact per-level maps. All three fields are ADDITIVE/COUNT fields (base 0):
+  // `shieldCharges` is the MAXIMUM charge count (never the live one — that is runtime
+  // state on NaniteShieldSystem), `shieldRechargeMs` is the per-charge regeneration
+  // interval, and `shieldKnockback` is the Lv5 break-pulse flag. Every map is the TOTAL
+  // at that level.
+  const EXPECTED_SHIELD_STATS = [
+    { shieldCharges: 1, shieldRechargeMs: 20000 },
+    { shieldCharges: 1, shieldRechargeMs: 15000 },
+    { shieldCharges: 2, shieldRechargeMs: 15000 },
+    { shieldCharges: 2, shieldRechargeMs: 10000 },
+    { shieldCharges: 3, shieldRechargeMs: 10000, shieldKnockback: 1 },
+  ];
+
+  it('pins all five levels exactly (frozen, totals-at-level)', () => {
+    const ns = getItem('nanite-shield');
+    expect(ns.levels).toHaveLength(EXPECTED_SHIELD_STATS.length);
+    ns.levels.forEach((lvl, i) => {
+      expect(lvl.stats, `nanite-shield L${lvl.level}`).toEqual(EXPECTED_SHIELD_STATS[i]);
+      expect(Object.isFrozen(lvl.stats)).toBe(true);
+    });
+  });
+
+  it('levels are TOTALS, not deltas — the carried-forward rungs are restated', () => {
+    // The single property a delta-authoring slip breaks, and the one this item makes
+    // WORST: the fold reads ONLY the current level's map, so a level whose desc reads as
+    // "recharge only" that failed to restate the charge count would DELETE the shield,
+    // and one that reads as "charges only" without the interval would drop the recharge
+    // to the base 0ms.
+    const [l1, l2, l3, l4, l5] = getItem('nanite-shield').levels.map((l) => l.stats);
+
+    // L2's desc is 'Recharge 15s' alone, yet it restates L1's single charge.
+    expect(l2.shieldCharges).toBe(l1.shieldCharges);
+    // L3's desc is '2 charges' alone, yet it restates the L2 recharge interval.
+    expect(l3.shieldRechargeMs).toBe(l2.shieldRechargeMs);
+    // L4's desc is 'Recharge 10s' alone, yet it restates the L3 charge count.
+    expect(l4.shieldCharges).toBe(l3.shieldCharges);
+    // L5's desc is '3 charges + knockback pulse', yet it restates the L4 interval.
+    expect(l5.shieldRechargeMs).toBe(l4.shieldRechargeMs);
+    // Every level from L1 on grants a real shield with a real recharge — never a
+    // charge-less card, never an instant/zero recharge.
+    for (const s of [l1, l2, l3, l4, l5]) {
+      expect(s.shieldCharges).toBeGreaterThanOrEqual(1);
+      expect(s.shieldRechargeMs).toBeGreaterThan(0);
+    }
+  });
+
+  it('the knockback pulse flag exists ONLY at Lv5 (PRD §13.4)', () => {
+    const levels = getItem('nanite-shield').levels;
+    for (const lvl of levels.slice(0, 4)) {
+      expect(lvl.stats.shieldKnockback, `L${lvl.level} must not knock back`).toBeUndefined();
+    }
+    expect(levels[4].stats.shieldKnockback).toBe(1);
+  });
+
+  it('charges rise monotonically and the recharge interval never gets slower', () => {
+    const levels = getItem('nanite-shield').levels;
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i].stats.shieldCharges).toBeGreaterThanOrEqual(
+        levels[i - 1].stats.shieldCharges,
+      );
+      expect(levels[i].stats.shieldRechargeMs).toBeLessThanOrEqual(
+        levels[i - 1].stats.shieldRechargeMs,
+      );
+    }
+  });
+
+  it('the shipped desc strings are UNTOUCHED (a desc rewrite would be a PRD contradiction)', () => {
+    // Nanite Shield's descs read as DELTAS while the stats are TOTALS — the same
+    // deliberate, documented mismatch Spread Cannon has. The resolution is to keep the
+    // text exactly as Story 10.1 shipped it.
+    expect(getItem('nanite-shield').levels.map((l) => l.desc)).toEqual([
+      'Absorb 1 hit / 20s recharge',
+      'Recharge 15s',
+      '2 charges',
+      'Recharge 10s',
+      '3 charges + knockback pulse',
+    ]);
+  });
+
+  it('carries no stat key outside the three shield rungs the story owns', () => {
+    // Nanite Shield is a DEFENSE item — it must not quietly acquire a fire or movement
+    // field that another story's seam would then read.
+    for (const lvl of getItem('nanite-shield').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect(['shieldCharges', 'shieldRechargeMs', 'shieldKnockback']).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item in the registry authoring any shield field (the additive-fold tripwire)', () => {
+    // The fold ADDS every non-`Mult` field, so a SECOND item authoring `shieldRechargeMs`
+    // would make the shield SLOWER, not faster (20000 + 15000 = 35000ms) — and a second
+    // `shieldCharges` author would silently inflate the cap. That hazard is documented in
+    // PLAYER_STATS_BASE, but a comment cannot fail a build; this can. An Epic 11/12 author
+    // who genuinely wants a second shield-affecting item must fold a RATE or a fractional
+    // `*Mult`, not stack another interval — and should land that decision here, not
+    // discover it in play.
+    for (const key of ['shieldCharges', 'shieldRechargeMs', 'shieldKnockback']) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual([
+        'nanite-shield',
+      ]);
+    }
+  });
+
+  it('stays inside the NaniteShieldSystem SAFETY clamps at every level (they are not levers)', () => {
+    for (const lvl of getItem('nanite-shield').levels) {
+      // STRICT, deliberately: a shipped value that merely REACHED either guard would
+      // already mean the guard had become a balance lever, which is the state this
+      // test exists to forbid. An inclusive bound would permit exactly that.
+      expect(lvl.stats.shieldCharges).toBeLessThan(SHIELD_MAX_CHARGES);
+      expect(lvl.stats.shieldRechargeMs).toBeGreaterThan(SHIELD_RECHARGE_FLOOR_MS);
     }
   });
 });

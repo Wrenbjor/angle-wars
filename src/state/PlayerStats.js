@@ -16,8 +16,11 @@
 // synthetic fixtures). Story 10.3 added Spread Cannon's, which introduce the two
 // `spreadWays`/`spreadArcDeg` count fields AND reuse Overcharge's `fireRateMult`/
 // `damageMult` rungs — so two items now stack additively on the same fields, exactly as
-// the fold specifies. The two DEFENSE items (10.4–10.5) still carry empty `stats` maps —
-// the framework is real; those item numbers are each story's job.
+// the fold specifies. Story 10.4 added Nanite Shield's three `shield*` fields, the first
+// item whose effect has RUNTIME state (a live charge count) rather than a pure stat read
+// — the fold owns only the derived MAXIMA (see the field comments below). Afterburner
+// (10.5) is the last item still carrying empty `stats` maps — the framework is real;
+// those item numbers are its story's job.
 //
 // AUTHORING CONVENTION (read this before writing any `stats` map in stories 10.2–10.5).
 // The fold ADDS onto the base, so a `*Mult` entry is the FRACTIONAL BONUS, never the
@@ -54,8 +57,25 @@ export const PLAYER_STATS_BASE = Object.freeze({
   spreadArcDeg: 0,
   // Movement (Afterburner, Story 10.5).
   moveSpeedMult: 1,
-  // Defense (Nanite Shield, Story 10.4).
+  // Defense (Nanite Shield, Story 10.4). All three are ADDITIVE/COUNT fields, so they
+  // base at 0 — no Nanite Shield owned means the pre-10.4 death path exactly.
+  //  - shieldCharges    : the MAXIMUM number of absorb charges, NOT the live count.
+  //                       The live count and the recharge timer are RUNTIME state on
+  //                       systems/NaniteShieldSystem.js, deliberately: this fold RESETS
+  //                       every field and re-derives the whole store on EVERY card pick,
+  //                       so a live count kept here would be silently restored to full by
+  //                       picking any unrelated item — a free shield reset once per level.
+  //  - shieldRechargeMs : the interval (ms) that regenerates ONE charge. ⚠ This folds
+  //                       ADDITIVELY like every other non-`Mult` field, so a hypothetical
+  //                       SECOND recharge-bearing item would make the shield SLOWER, not
+  //                       faster (20000 + 15000 = 35000ms). No such item exists — Nanite
+  //                       Shield is the only shield item — but an Epic 11/12 author adding
+  //                       one must fold a RATE (charges/sec) or a fractional `*Mult`
+  //                       instead of stacking another interval here.
+  //  - shieldKnockback  : the Lv5 break-pulse flag (>= 1 enables it).
   shieldCharges: 0,
+  shieldRechargeMs: 0,
+  shieldKnockback: 0,
 });
 
 /**

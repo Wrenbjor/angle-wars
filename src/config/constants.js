@@ -731,6 +731,58 @@ export const PLAYER_INVULN_MS = 2000;
 // derived from sim state (invulnMs) — no separate render timer.
 export const PLAYER_INVULN_BLINK_MS = 120;
 
+// --- Nanite Shield (Story 10.4 / PRD §13.4) ---------------------------------
+// The defense item that spends a CHARGE instead of a life on a lethal hit. It
+// lives in this block because it is a lives-path concern: NaniteShieldSystem owns
+// the live charge count + recharge timer, and PlayerDeathSystem._applyDeath()
+// consults it at the top of the SHARED death body (so both the ship↔enemy contact
+// path and the programmatic `pendingDeath` path are covered identically).
+// The fold (state/PlayerStats.js) owns only the derived MAXIMA.
+
+// The invulnerability window (ms) an ABSORB grants, assigned into the EXISTING
+// playerState.invulnMs. This is forced, not decorative: the lethal test runs every
+// fixed step against a still-overlapping enemy, so with no window a 3-charge shield
+// drains in 3 ticks (50ms) and the player dies anyway. HALF PLAYER_INVULN_MS
+// because a respawn ALSO teleports the ship to arena center while an absorb leaves
+// it exactly where it was — in the swarm — so this window IS the escape. The 520px
+// that SHIP_MAX_SPEED covers in a second is the BEST case (already at top speed,
+// already pointed away); an absorb usually fires at rest or moving INTO the threat,
+// so budget by the realistic figure instead: from a standstill at SHIP_ACCEL
+// (2600px/s²) the ship still covers ~470px, and a ship that must first reverse rather
+// less. What the window has to clear is SPAWN_SAFE_RADIUS (200) — the game's own
+// "clear of the player" distance — in the WORST case, not the best.
+export const SHIELD_ABSORB_INVULN_MS = 1000;
+// Absolute LOWER bound (ms) on the per-charge recharge interval — a SAFETY guard in
+// the exact shape of FIRE_INTERVAL_FLOOR_MS, never a balance lever. `shieldRechargeMs`
+// comes off the shared player-stat store, so a junk value (0, negative, 1e-9) would
+// otherwise let a corrupted store regenerate a charge every tick. What this floor
+// bounds is that RATE — at most one charge per second. It is NOT what terminates the
+// refill loop: that loop is bounded by its own `charges < max` clause plus the
+// SHIELD_MAX_CHARGES clamp below, and stops at the cap even at an interval of 0. It
+// sits 10x below the FASTEST shipped rung (10000ms at Lv4/Lv5), so no authored build
+// ever reaches it.
+export const SHIELD_RECHARGE_FLOOR_MS = 1000;
+// Absolute UPPER bound on the shield's MAX charge count. This — together with the
+// refill loop's `charges < max` clause — is the ACTUAL termination guard on that loop,
+// and it also bounds the level-up max-sync delta against a corrupted store. The shipped
+// maximum is 3 (Lv5), so it sits far above every authorable value.
+export const SHIELD_MAX_CHARGES = 10;
+// The Lv5 break pulse's reach (px): only enemies within this distance of the ship are
+// displaced when the FINAL charge breaks. Past SPAWN_SAFE_RADIUS (200) — the game's own
+// "clear of the player" distance — and below BLACKHOLE_GRAVITY_RADIUS (340): a personal-
+// space clear, not a screen effect.
+export const SHIELD_KNOCKBACK_RADIUS = 260;
+// The pulse's displacement (px) at the epicenter, falling LINEARLY to 0 at the radius
+// edge (the BlackHoleSystem gravity falloff, inverted to push). An enemy in contact at
+// 30px is pushed ~159px. How long that buys depends on the ARCHETYPE, and the pulse is
+// deliberately not sized to out-run the fastest one: a 140px/s SEEKER_SPEED takes ~1.1s
+// to re-close it (just past SHIELD_ABSORB_INVULN_MS), while a provoked square at
+// GREEN_SQUARE_CHASE_SPEED (200px/s) re-closes in ~0.8s — inside the window, so against
+// that archetype the i-frames, not the pulse, are what carry the player clear. Sizing
+// the push to beat the fastest chaser would put it past SPAWN_SAFE_RADIUS (200) and make
+// the Lv5 break the screen clear this constant exists to avoid.
+export const SHIELD_KNOCKBACK_PUSH = 180;
+
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
 // base value (carried on each Seeker instance) summed across kills each tick.

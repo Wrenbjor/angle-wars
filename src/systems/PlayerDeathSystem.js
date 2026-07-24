@@ -1,6 +1,9 @@
 import { System } from '../core/System.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
-import { PLAYER_INVULN_MS } from '../config/constants.js';
+import {
+  PLAYER_INVULN_MS,
+  SHIELD_ABSORB_INVULN_MS,
+} from '../config/constants.js';
 import { resetMultiplier } from '../state/ScoreState.js';
 
 // PlayerDeathSystem — ship↔enemy death, lives, respawn, invulnerability, and the
@@ -30,6 +33,16 @@ import { resetMultiplier } from '../state/ScoreState.js';
 //      window (lives remain) or set game-over (last life). At most ONE death per
 //      fixed step (break on first).
 //
+// Story 10.4 (Nanite Shield) inserts ONE branch at the top of that shared death
+// flow: with an optional shield system injected and a live charge available, the
+// hit is ABSORBED instead — one charge is spent, a short SHIELD_ABSORB_INVULN_MS
+// window is granted, and the body returns before any of the above. No life, no
+// respawn (the ship stays exactly where it was), no multiplier reset, no deathSeq
+// bump. Because it sits inside the SHARED body it covers BOTH the contact path and
+// the programmatic `pendingDeath` path identically, and because it sits INSIDE
+// _applyDeath — after the game-over/invuln guards its callers already passed — a
+// charge can never be spent while the player was already safe.
+//
 // Circle-circle lethal when center distance ≤ ship.radius + enemy.radius
 // (boundary counts, mirroring CollisionSystem). Enemies are never destroyed here
 // — ship contact only kills the player; bullets destroy enemies (Story 1.4).
@@ -49,13 +62,20 @@ export class PlayerDeathSystem extends System {
    *   kill-progress are reset to their start values on every death (both a
    *   respawning death and the final game-over death) — the RE1 lose-the-streak
    *   rule (FR8). Optional so callers without a score surface stay unbroken.
+   * @param {{tryAbsorb:() => boolean}|null} [shieldSystem=null]
+   *   Optional Nanite Shield runtime (Story 10.4). When provided, every death that
+   *   reaches the shared body first offers the hit to `tryAbsorb()`; a spent charge
+   *   replaces the whole life/respawn/multiplier flow. Optional (slot 5, mirroring
+   *   `scoreState` at slot 4) so every existing caller and test stub is unchanged and
+   *   a build with no shield behaves byte-for-byte as it did pre-10.4.
    */
-  constructor(ship, enemyPools, playerState, scoreState = null) {
+  constructor(ship, enemyPools, playerState, scoreState = null, shieldSystem = null) {
     super();
     this.ship = ship;
     this.enemyPools = enemyPools;
     this.playerState = playerState;
     this.scoreState = scoreState;
+    this.shieldSystem = shieldSystem;
 
     // Public read-only observability latch (Story 4.2): the player's death point.
     // On every death (both a respawning death and the final game-over death) the
@@ -153,11 +173,42 @@ export class PlayerDeathSystem extends System {
    * the SAME life/respawn/invulnerability/multiplier-reset semantics either way.
    * Callers guarantee the guards (not game-over, not invulnerable) have already
    * passed and apply at most one death per tick.
+   *
+   * Story 10.4: the Nanite Shield absorb is the FIRST thing here, before the death
+   * latch — see the block comment inside.
    * @private
    */
   _applyDeath() {
     const ship = this.ship;
     const ps = this.playerState;
+
+    // Story 10.4 — Nanite Shield absorb. Placed at the very top of the SHARED body so
+    // it covers BOTH the ship↔enemy contact path AND the programmatic `pendingDeath`
+    // path (a Black Hole detonation, Story 6.2; a Mirror Reflector weight-kill, Story
+    // 6.3). Those producers exist specifically to route the SAME death flow subject to
+    // the SAME guards, and the level-up i-frame gate already protects both uniformly —
+    // the shield is another guard on that one flow, not a second one beside it.
+    //
+    // An absorb costs a CHARGE and nothing else: `lives` is unchanged, `gameOver` is
+    // never set, the ship is NOT teleported to arena center, the multiplier is NOT
+    // reset, and `deathSeq` is NOT bumped — so the grid death ripple, the death
+    // screen-shake and the death SFX cue all stay silent. Keeping the streak and the
+    // position is the whole value of the pick.
+    //
+    // The i-frame grant is FORCED, not decorative: the lethal test runs every fixed
+    // step against a still-overlapping enemy, so with no window a 3-charge shield
+    // drains in 3 ticks and the player dies anyway. Assigned DIRECTLY (not via
+    // Math.max) because this body is only ever reached with `invulnMs === 0` — the
+    // caller returns early while any window is in flight — so there is never a larger
+    // window to shrink, and this matches the `ps.invulnMs = PLAYER_INVULN_MS` respawn
+    // assignment below. That same caller guard is also why a charge can never be spent
+    // while the player was already safe, and why the game-over / invuln checks stay
+    // where they are in fixedUpdate rather than being duplicated here.
+    if (this.shieldSystem && this.shieldSystem.tryAbsorb()) {
+      ps.invulnMs = SHIELD_ABSORB_INVULN_MS;
+      return;
+    }
+
     // Story 4.2 death latch: capture the death point BEFORE the respawn below
     // teleports the ship to arena center, so the grid's death ripple originates
     // at the exact lethal-contact position. Fires for both a respawning death

@@ -24,6 +24,7 @@ import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
+  SHIELD_ABSORB_INVULN_MS,
 } from '../config/constants.js';
 import { xpToNextLevel } from '../systems/LevelSystem.js';
 
@@ -34,13 +35,15 @@ import { xpToNextLevel } from '../systems/LevelSystem.js';
 // composition, and both late-binds — so a reorder of addSystem calls or a swapped
 // pool reference (the drift the deferred work flags) now fails a test.
 
-// The canonical 25-system registration order (spec Design Notes; Story 6.3 added
+// The canonical 26-system registration order (spec Design Notes; Story 6.3 added
 // MirrorReflectorSystem in the enemy section, after SnakeSystem and before SpawnDirector;
 // Story 8.1 added XpOrbSystem right after the BombSystem late-bind; Story 8.2 added
 // LevelSystem right after XpOrbSystem; Story 8.3 added LevelUpSystem right after
 // LevelSystem, before PlayerDeathSystem; Story 9.1 added DpsTelemetrySystem right
 // after ScoringSystem, before BlackHoleSystem; Story 9.3 added ArmoredSystem in the
-// enemy section, after MirrorReflectorSystem and before SpawnDirector).
+// enemy section, after MirrorReflectorSystem and before SpawnDirector; Story 10.4 added
+// NaniteShieldSystem between ExtraLifeSystem and PlayerDeathSystem — a slot that is
+// load-bearing in BOTH directions, see the shield's wiring test below).
 const CANONICAL_ORDER = [
   'SimClockSystem',
   'PlayerMovementSystem',
@@ -61,6 +64,7 @@ const CANONICAL_ORDER = [
   'LevelSystem',
   'LevelUpSystem',
   'ExtraLifeSystem',
+  'NaniteShieldSystem',
   'PlayerDeathSystem',
   'HighScoreSystem',
   'GridFieldSystem',
@@ -69,11 +73,16 @@ const CANONICAL_ORDER = [
   'AudioDirectorSystem',
 ];
 
-// The full set of handles ArenaScene.create() destructures off the factory return
-// and assigns onto this.* (src/scenes/ArenaScene.js). The scene cannot be unit-tested,
-// so a dropped or renamed return key would surface only as an undefined this.* handle
-// crashing the live render loop on the first frame. Pinning the contract here catches
-// that drift headlessly.
+// The full set of handles the factory RETURNS — the surface ArenaScene.create() draws
+// from (src/scenes/ArenaScene.js). The scene cannot be unit-tested, so a dropped or
+// renamed return key would surface only as an undefined this.* handle crashing the live
+// render loop on the first frame. Pinning the contract here catches that drift headlessly.
+//
+// This is the factory's OUTPUT shape, deliberately a superset of what the scene assigns
+// today: `playerStats` and `naniteShieldSystem` are published for consumers that do not
+// exist yet (Epic 4's feedback work is the intended reader of the shield handle, via the
+// absorbSeq latch). Do not "fix" the asymmetry by deleting a key — a published handle
+// with no reader is the point.
 const RETURN_HANDLES = [
   'world',
   'ship',
@@ -104,6 +113,7 @@ const RETURN_HANDLES = [
   'levelSystem',
   'levelUpSystem',
   'extraLifeSystem',
+  'naniteShieldSystem',
   'playerDeathSystem',
   'highScoreSystem',
   'gridFieldSystem',
@@ -120,7 +130,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 25 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers the 26 systems in the canonical order (no-arg build, node env)', () => {
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
@@ -466,6 +476,36 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // same enemyPools array the factory returns (the hole pool is deliberately
     // excluded so a bullet cannot one-shot the hole).
     expect(ctx.collisionSystem.enemyPools).toBe(ctx.enemyPools);
+  });
+
+  it('constructs the naniteShieldSystem over enemyPools (not deathPools), between ExtraLife and PlayerDeath', () => {
+    const ctx = buildArenaWorld();
+    // The Lv5 break pulse's reach is the five COMBAT archetype pools — the SAME array
+    // the factory returns, never deathPools. The Black Hole and the Mirror Reflector are
+    // immune to AoE (the scoping BombSystem.detonateAt already applies), so handing the
+    // shield a different or narrower list is a real regression that only an IDENTITY pin
+    // catches: every behavioral case drives the seeker/green-square pools, which any
+    // plausible wrong array still contains.
+    expect(ctx.naniteShieldSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(ctx.naniteShieldSystem.enemyPools).not.toContain(
+      ctx.blackHoleSystem.holePool,
+    );
+    expect(ctx.naniteShieldSystem.enemyPools).not.toContain(
+      ctx.mirrorReflectorSystem.enemyPool,
+    );
+    // The shared ship + player-stat store, not copies.
+    expect(ctx.naniteShieldSystem.ship).toBe(ctx.ship);
+    expect(ctx.naniteShieldSystem.playerStats).toBe(ctx.playerStats);
+    // The death seam holds THIS instance, and the slot is load-bearing in both
+    // directions: after LevelUpSystem (the fold) and before PlayerDeathSystem (the read).
+    expect(ctx.playerDeathSystem.shieldSystem).toBe(ctx.naniteShieldSystem);
+    const order = ctx.world.systems.map((s) => s.constructor.name);
+    expect(order.indexOf('NaniteShieldSystem')).toBeGreaterThan(
+      order.indexOf('LevelUpSystem'),
+    );
+    expect(order.indexOf('NaniteShieldSystem')).toBeLessThan(
+      order.indexOf('PlayerDeathSystem'),
+    );
   });
 
   it('honors an injected rng — every rng-taking system receives it', () => {
@@ -826,5 +866,201 @@ describe('buildArenaWorld — Spread Cannon through the ASSEMBLED world (Story 1
     // prewarm's +29% margin is sold as covering, so a retune that erodes it fails HERE
     // rather than at the capacity assertion once it has already overrun.
     expect(peak).toBeLessThan(BULLET_POOL_PREWARM);
+  });
+});
+
+describe('buildArenaWorld — Nanite Shield through the ASSEMBLED world (Story 10.4)', () => {
+  // The story's headline observable at the surface the intent states it at: a card pick
+  // folds the SHARED playerStats, the shield syncs its live charge count off that fold
+  // on the SAME tick, and the next lethal contact spends a charge instead of a life.
+  //
+  // The FIRST test drives the whole chain for real — XP → level crossings → the offers
+  // the REAL weighted draw produced → queueSelection → LevelUpSystem's fold →
+  // NaniteShieldSystem's max sync → PlayerDeathSystem's absorb — so a change to how a
+  // selection is applied, or a reorder of the shield's registration slot, fails here.
+  // The SECOND constructs the Lv5 owned state directly: it is about the BREAK PULSE's
+  // effect on the live enemy pools, not a claim about the pick path (already covered
+  // above), and reaching Lv5 through real draws would add a long setup pinning nothing new.
+
+  // A small deterministic PRNG (mulberry32). The offer draw is weighted-without-
+  // replacement over the shared `_rng`, so a CONSTANT rng would produce the identical
+  // trio at every level and could never surface a different item; a seeded stream gives
+  // real variety while keeping the run reproducible (no flaky "the card never showed up").
+  function seededRng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** Total XP required to have reached run level `level` (the real curve). */
+  function xpForLevel(level) {
+    let need = 0;
+    for (let l = 1; l < level; l++) need += xpToNextLevel(l);
+    return need;
+  }
+
+  it('offer → pick → fold → shield: a real lethal contact spends a CHARGE, not a life', () => {
+    const ctx = buildArenaWorld({ rng: seededRng(20104) });
+    expect(ctx.playerStats.shieldCharges).toBe(PLAYER_STATS_BASE.shieldCharges);
+    expect(ctx.naniteShieldSystem.charges).toBe(0);
+    expect(ctx.naniteShieldSystem.maxCharges).toBe(0);
+
+    // Level up (through real banked XP and the real LevelSystem curve) until the REAL
+    // weighted draw offers Nanite Shield. Nothing here reimplements the offer: when the
+    // shield is not in the trio we pick a different card and level again. Bounded, so a
+    // draw regression fails as "never offered" rather than hanging.
+    let level = 1;
+    let slot = -1;
+    for (let attempt = 0; attempt < 20 && slot < 0; attempt++) {
+      level += 1;
+      ctx.scoreState.xp = xpForLevel(level);
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+      expect(ctx.levelSystem.level).toBe(level);
+      expect(ctx.levelUpSystem.pendingSelections).toBeGreaterThanOrEqual(1);
+      slot = ctx.levelUpSystem.currentOffer.findIndex((c) => c.id === 'nanite-shield');
+      if (slot < 0) {
+        ctx.levelUpSystem.queueSelection(0); // take something else and carry on
+        ctx.world.fixedUpdate(FIXED_STEP_MS);
+      }
+    }
+    expect(slot, 'the real weighted draw never offered nanite-shield').toBeGreaterThanOrEqual(0);
+
+    // Pick it through the real latch. The pick tick runs LevelUpSystem's fold and THEN
+    // NaniteShieldSystem's max sync (that registration order is what makes the charge
+    // live immediately rather than one recharge away).
+    ctx.levelUpSystem.queueSelection(slot);
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    expect(ctx.progressionState.ownedCards['nanite-shield']).toBe(1);
+    // The SHARED store carries the MAXIMA only — no live count is readable from it.
+    expect(ctx.playerStats.shieldCharges).toBe(1);
+    expect(ctx.playerStats.shieldRechargeMs).toBe(20000);
+    expect(ctx.playerStats.shieldKnockback).toBe(0);
+    // …and the system already holds the live charge, on the very tick of the pick.
+    expect(ctx.naniteShieldSystem.maxCharges).toBe(1);
+    expect(ctx.naniteShieldSystem.charges).toBe(1);
+    // The same SHARED store instance, not a copy — no system was reconstructed.
+    expect(ctx.naniteShieldSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.playerDeathSystem.shieldSystem).toBe(ctx.naniteShieldSystem);
+
+    // Let the level-up landing i-frames lapse (bounded) so the next hit is real.
+    for (let i = 0; i < 200 && ctx.playerState.invulnMs > 0; i++) {
+      ctx.world.fixedUpdate(FIXED_STEP_MS);
+    }
+    expect(ctx.playerState.invulnMs).toBe(0);
+    expect(ctx.naniteShieldSystem.charges).toBe(1); // nothing spent while safe
+
+    // Park the ship well off arena center (so "not respawned" is observable) and put a
+    // live seeker on top of it through the REAL archetype pool.
+    ctx.ship.x = 420;
+    ctx.ship.y = 260;
+    ctx.ship.vx = 0;
+    ctx.ship.vy = 0;
+    const seeker = ctx.enemySystem.enemyPool.acquire();
+    seeker.x = ctx.ship.x + 5;
+    seeker.y = ctx.ship.y;
+    seeker.vx = 0;
+    seeker.vy = 0;
+    seeker.telegraphMs = 0;
+
+    const livesBefore = ctx.playerState.lives;
+    const deathSeqBefore = ctx.playerDeathSystem.deathSeq;
+    const multiplierBefore = ctx.scoreState.multiplier;
+    const shipXBefore = ctx.ship.x;
+    const shipYBefore = ctx.ship.y;
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    // The charge paid for the hit — the life did not.
+    expect(ctx.naniteShieldSystem.charges).toBe(0);
+    expect(ctx.naniteShieldSystem.absorbSeq).toBe(1);
+    expect(ctx.playerState.lives).toBe(livesBefore);
+    expect(ctx.playerState.gameOver).toBe(false);
+    expect(ctx.playerDeathSystem.deathSeq).toBe(deathSeqBefore); // no ripple/shake/SFX
+    expect(ctx.scoreState.multiplier).toBe(multiplierBefore); // the streak survives
+    expect(ctx.playerState.invulnMs).toBe(SHIELD_ABSORB_INVULN_MS);
+    // NOT teleported to arena center — staying put is the value of the pick. Asserted as
+    // the EXACT position it held, not merely "not the centre": a negative assertion against
+    // one point cannot fail on a partial respawn, a nudge out of contact, or a knockback
+    // that caught the ship — every regression this line exists to catch except one.
+    expect(ctx.ship.x).toBe(shipXBefore);
+    expect(ctx.ship.y).toBe(shipYBefore);
+    // THAT enemy is still alive and unmoved-by-the-shield (a Lv1 absorb neither kills
+    // nor pushes) — asserted on the instance, not on a pool count a fresh spawn could
+    // mask.
+    let seekerStillActive = false;
+    ctx.enemySystem.enemyPool.forEachActive((s) => {
+      if (s === seeker) seekerStillActive = true;
+    });
+    expect(seekerStillActive).toBe(true);
+  });
+
+  it('Lv5: the FINAL break pulses enemies away in the assembled world, killing none', () => {
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    ctx.progressionState.ownedCards['nanite-shield'] = 5;
+    recomputePlayerStats(
+      ctx.levelUpSystem.playerStats,
+      ctx.progressionState.ownedCards,
+      ITEM_REGISTRY,
+    );
+    expect(ctx.playerStats.shieldCharges).toBe(3);
+    expect(ctx.playerStats.shieldKnockback).toBe(1);
+
+    ctx.ship.x = 600;
+    ctx.ship.y = 360;
+    ctx.world.fixedUpdate(FIXED_STEP_MS); // the shield syncs its max off the fold
+    expect(ctx.naniteShieldSystem.charges).toBe(3);
+
+    // Burn two charges so the seam's absorb is the FINAL one (the only break that pulses).
+    ctx.naniteShieldSystem.tryAbsorb();
+    ctx.naniteShieldSystem.tryAbsorb();
+    expect(ctx.naniteShieldSystem.charges).toBe(1);
+
+    ctx.ship.x = 600;
+    ctx.ship.y = 360;
+    ctx.ship.vx = 0;
+    ctx.ship.vy = 0;
+    ctx.playerState.invulnMs = 0;
+    const contact = ctx.enemySystem.enemyPool.acquire();
+    contact.x = ctx.ship.x + 25;
+    contact.y = ctx.ship.y;
+    contact.telegraphMs = 0;
+    // A second enemy inside the pulse radius but not in contact — it must be shoved too.
+    const bystander = ctx.greenSquareSystem.enemyPool.acquire();
+    bystander.x = ctx.ship.x;
+    bystander.y = ctx.ship.y + 100;
+    bystander.telegraphMs = 0;
+    const livesBefore = ctx.playerState.lives;
+    const scoreBefore = ctx.scoreState.score;
+
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    expect(ctx.naniteShieldSystem.charges).toBe(0);
+    expect(ctx.playerState.lives).toBe(livesBefore);
+    // Both are now far outside contact range, on the far side from the ship — the push
+    // ran AFTER every mover integrated, so nothing overwrote it this tick.
+    expect(Math.hypot(contact.x - ctx.ship.x, contact.y - ctx.ship.y)).toBeGreaterThan(150);
+    expect(contact.x).toBeGreaterThan(ctx.ship.x + 25);
+    expect(bystander.y).toBeGreaterThan(ctx.ship.y + 100);
+    // Inside the arena border, inset by each body's own radius.
+    for (const e of [contact, bystander]) {
+      expect(e.x).toBeGreaterThanOrEqual(ARENA_BORDER_INSET + e.radius);
+      expect(e.x).toBeLessThanOrEqual(ARENA_WIDTH - ARENA_BORDER_INSET - e.radius);
+      expect(e.y).toBeGreaterThanOrEqual(ARENA_BORDER_INSET + e.radius);
+      expect(e.y).toBeLessThanOrEqual(ARENA_HEIGHT - ARENA_BORDER_INSET - e.radius);
+    }
+    // Nothing was killed, released or scored by the pulse. Asserted on the SPECIFIC
+    // instances (a pool COUNT cannot fail on a release if the spawn director happens to
+    // acquire in the same tick — the claim here is exact: the pulse releases nothing).
+    const stillActive = new Set();
+    ctx.enemySystem.enemyPool.forEachActive((s) => stillActive.add(s));
+    ctx.greenSquareSystem.enemyPool.forEachActive((s) => stillActive.add(s));
+    expect(stillActive.has(contact)).toBe(true);
+    expect(stillActive.has(bystander)).toBe(true);
+    expect(ctx.scoreState.score).toBe(scoreBefore);
   });
 });

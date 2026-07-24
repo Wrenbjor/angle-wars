@@ -27,12 +27,16 @@
 //               never re-offered (cardWeight 0).
 //   - levels  : exactly five per-level effect descriptors. `desc` is the human text
 //               (from PRD §13.3/§13.4); `stats` is the current-level TOTAL modifier
-//               map the fold applies, authored as FRACTIONAL BONUSES onto the fold's
-//               base (see the AUTHORING CONVENTION in state/PlayerStats.js). Each
+//               map the fold applies. HOW a value is authored follows the FIELD, not a
+//               single rule (see the AUTHORING CONVENTION in state/PlayerStats.js):
+//               a `*Mult` field is a FRACTIONAL BONUS onto a base of 1 (fireRateMult
+//               0.3 = +30%), while a COUNT or an INTERVAL field is the ABSOLUTE value
+//               onto a base of 0 (shieldCharges 2 = two charges; shieldRechargeMs
+//               15000 = a 15s interval). Do not author an interval as a fraction. Each
 //               item's real per-level effect NUMBERS and gameplay-seam wiring land in
-//               its OWN story: Overcharge 10.2 and Spread Cannon 10.3 (both AUTHORED
-//               below), Nanite Shield 10.4, Afterburner 10.5 — those last two still
-//               carry EMPTY `stats: {}` and contribute nothing to the fold until their
+//               its OWN story: Overcharge 10.2, Spread Cannon 10.3 and Nanite Shield
+//               10.4 (all AUTHORED below); Afterburner 10.5 is the last one still
+//               carrying EMPTY `stats: {}`, contributing nothing to the fold until its
 //               story lands.
 //
 //               ⚠ TOTALS-vs-DELTA-DESC TRAP. `stats` is the TOTAL at that level; `desc`
@@ -60,8 +64,8 @@ import { ITEM_MAX_LEVEL, SPREAD_CANNON_GUARANTEE_LEVEL } from './constants.js';
  * The four Epic-10 items (PRD §13.3 offense / §13.4 defense) as data-driven
  * definitions. Frozen (the array and every entry + nested level/fusion object) so no
  * consumer can mutate the shared registry. Effect NUMBERS are deferred to each item's
- * own story — Overcharge's (Story 10.2) and Spread Cannon's (Story 10.3) are authored;
- * the two defense `stats` maps are still empty.
+ * own story — Overcharge's (Story 10.2), Spread Cannon's (Story 10.3) and Nanite
+ * Shield's (Story 10.4) are authored; only Afterburner's `stats` maps are still empty.
  * @type {ReadonlyArray<{ id: string, name: string, title: string,
  *   track: 'offense'|'defense', rarity: number, maxLevel: number,
  *   levels: ReadonlyArray<{ level: number, desc: string, stats: Object<string,number> }>,
@@ -188,12 +192,54 @@ export const ITEM_REGISTRY = Object.freeze([
     track: 'defense',
     rarity: 5,
     maxLevel: ITEM_MAX_LEVEL,
+    // Story 10.4 — the real per-level NUMBERS (PRD §13.4). Three fold fields, all
+    // ADDITIVE/COUNT fields (base 0 — an unowned shield changes nothing):
+    //   - shieldCharges    : the MAXIMUM number of charges, NOT the live count. The
+    //                        live count and the recharge timer are RUNTIME state on
+    //                        NaniteShieldSystem, because the fold resets and re-derives
+    //                        the whole store on EVERY card pick — a live count kept here
+    //                        would be silently refilled by picking any unrelated item.
+    //   - shieldRechargeMs : the interval that regenerates ONE charge, in milliseconds.
+    //   - shieldKnockback  : the Lv5 break-pulse FLAG (>= 1 enables it). The pulse fires
+    //                        only when the FINAL charge breaks — see NaniteShieldSystem.
+    //
+    // ⚠ Every map is the TOTAL at that level (see the entry-shape header), and this item
+    // is where that trap bites hardest: L2 ('Recharge 15s') and L4 ('Recharge 10s') read
+    // as recharge-ONLY but must RESTATE the charge count, or picking them would delete
+    // the shield entirely; L3 ('2 charges') and L5 ('3 charges + knockback pulse') read
+    // as charge-ONLY but must RESTATE the recharge interval, or picking them would drop
+    // the shield to the base 0ms interval. The `desc` strings stay exactly as Story 10.1
+    // shipped them — they are player-facing prose, never rewritten to match the totals.
     levels: Object.freeze([
-      Object.freeze({ level: 1, desc: 'Absorb 1 hit / 20s recharge', stats: Object.freeze({}) }),
-      Object.freeze({ level: 2, desc: 'Recharge 15s', stats: Object.freeze({}) }),
-      Object.freeze({ level: 3, desc: '2 charges', stats: Object.freeze({}) }),
-      Object.freeze({ level: 4, desc: 'Recharge 10s', stats: Object.freeze({}) }),
-      Object.freeze({ level: 5, desc: '3 charges + knockback pulse', stats: Object.freeze({}) }),
+      Object.freeze({
+        level: 1,
+        desc: 'Absorb 1 hit / 20s recharge',
+        stats: Object.freeze({ shieldCharges: 1, shieldRechargeMs: 20000 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: 'Recharge 15s',
+        stats: Object.freeze({ shieldCharges: 1, shieldRechargeMs: 15000 }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '2 charges',
+        stats: Object.freeze({ shieldCharges: 2, shieldRechargeMs: 15000 }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: 'Recharge 10s',
+        stats: Object.freeze({ shieldCharges: 2, shieldRechargeMs: 10000 }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '3 charges + knockback pulse',
+        stats: Object.freeze({
+          shieldCharges: 3,
+          shieldRechargeMs: 10000,
+          shieldKnockback: 1,
+        }),
+      }),
     ]),
     // No offer guarantee — Nanite Shield is drawn purely on its weight.
     guaranteeFromLevel: null,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PlayerDeathSystem } from './PlayerDeathSystem.js';
+import { NaniteShieldSystem } from './NaniteShieldSystem.js';
 import { EnemySystem } from './EnemySystem.js';
 import { Pool } from '../core/Pool.js';
 import { createSeeker } from '../entities/Seeker.js';
@@ -11,11 +12,17 @@ import {
   createProgressionState,
   applyCard,
 } from '../state/ProgressionState.js';
+import { createPlayerStats, recomputePlayerStats } from '../state/PlayerStats.js';
+import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 import {
   FIXED_STEP_MS,
   PLAYER_INVULN_MS,
+  SHIELD_ABSORB_INVULN_MS,
   PLAYER_START_LIVES,
   SHIP_RADIUS,
+  SHIP_MAX_SPEED,
+  SHIP_ACCEL,
+  SPAWN_SAFE_RADIUS,
   SEEKER_RADIUS,
   GREEN_SQUARE_RADIUS,
   ARENA_WIDTH,
@@ -841,5 +848,282 @@ describe('PlayerDeathSystem — multiple archetype pools', () => {
     // Neither enemy released by contact.
     expect(seekerPool.activeCount).toBe(1);
     expect(greenPool.activeCount).toBe(1);
+  });
+});
+
+describe('PlayerDeathSystem — Nanite Shield absorb (Story 10.4)', () => {
+  // The absorb is wired through the REAL NaniteShieldSystem (not a hand-rolled stub),
+  // over the REAL fold of the SHIPPED registry — so these cases fail if the registry
+  // numbers, the fold, the system's charge accounting, or the death-seam branch drift
+  // apart. The shield is an OPTIONAL 5th constructor arg, mirroring `scoreState` at
+  // slot 4, so every pre-10.4 construction in this file is untouched.
+
+  function makeShieldedSystem(level = 1) {
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const playerState = createPlayerState();
+    const scoreState = createScoreState();
+    const playerStats = createPlayerStats();
+    recomputePlayerStats(playerStats, { 'nanite-shield': level }, ITEM_REGISTRY);
+    const shieldSystem = new NaniteShieldSystem(ship, [enemyPool], playerStats);
+    // The shield syncs its max off the fold on its own tick (it is registered BEFORE
+    // PlayerDeathSystem in the assembled world), so charge it the same way here.
+    shieldSystem.fixedUpdate(DT);
+    const system = new PlayerDeathSystem(
+      ship,
+      [enemyPool],
+      playerState,
+      scoreState,
+      shieldSystem,
+    );
+    return { ship, enemyPool, playerState, scoreState, shieldSystem, system };
+  }
+
+  it('a CONTACT hit is absorbed: a charge spent, no life, no respawn, streak + position kept', () => {
+    const { ship, enemyPool, playerState, scoreState, shieldSystem, system } =
+      makeShieldedSystem(1);
+    ship.x = 100;
+    ship.y = 100;
+    ship.vx = 50;
+    ship.vy = -30;
+    scoreState.multiplier = 7;
+    scoreState.multiplierKills = 3;
+    expect(shieldSystem.charges).toBe(1);
+    addSeeker(enemyPool, 100, 100); // fully overlapping → lethal contact
+
+    system.fixedUpdate(DT);
+
+    // The charge paid for it — and nothing else did.
+    expect(shieldSystem.charges).toBe(0);
+    expect(shieldSystem.absorbSeq).toBe(1);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.gameOver).toBe(false);
+    // NOT teleported to arena center, velocity untouched — staying put is the point.
+    expect(ship.x).toBe(100);
+    expect(ship.y).toBe(100);
+    expect(ship.vx).toBe(50);
+    expect(ship.vy).toBe(-30);
+    // The streak survives (an absorb never reaches resetMultiplier).
+    expect(scoreState.multiplier).toBe(7);
+    expect(scoreState.multiplierKills).toBe(3);
+    // No death latch → no grid ripple, no death shake, no death SFX cue.
+    expect(system.deathSeq).toBe(0);
+    // The short escape window, assigned directly (never the full respawn window).
+    expect(playerState.invulnMs).toBe(SHIELD_ABSORB_INVULN_MS);
+    expect(SHIELD_ABSORB_INVULN_MS).toBeLessThan(PLAYER_INVULN_MS);
+    // The enemy is untouched by the absorb itself (Lv1 has no knockback pulse).
+    expect(enemyPool.activeCount).toBe(1);
+  });
+
+  it('a PROGRAMMATIC (pendingDeath) hit is absorbed identically, and the flag is still consumed', () => {
+    // The Black Hole detonation / Mirror Reflector weight-kill path. It funnels through
+    // the SAME shared body, so the shield covers it — a shield that lapsed here would be
+    // the first guard in this system to discriminate between the two death paths.
+    const { ship, playerState, scoreState, shieldSystem, system } =
+      makeShieldedSystem(1);
+    ship.x = 250;
+    ship.y = 175;
+    scoreState.multiplier = 4;
+    playerState.pendingDeath = true;
+
+    system.fixedUpdate(DT);
+
+    expect(shieldSystem.charges).toBe(0);
+    expect(shieldSystem.absorbSeq).toBe(1);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.gameOver).toBe(false);
+    expect(ship.x).toBe(250); // not respawned to center
+    expect(ship.y).toBe(175);
+    expect(scoreState.multiplier).toBe(4);
+    expect(system.deathSeq).toBe(0);
+    expect(playerState.invulnMs).toBe(SHIELD_ABSORB_INVULN_MS);
+    // The one-tick request is still consumed (read-and-clear), never deferred.
+    expect(playerState.pendingDeath).toBe(false);
+  });
+
+  it('an absorbed hit on the LAST life continues the run (gameOver stays false)', () => {
+    const { ship, enemyPool, playerState, shieldSystem, system } = makeShieldedSystem(1);
+    playerState.lives = 1;
+    ship.x = 400;
+    ship.y = 400;
+    addSeeker(enemyPool, 400, 400);
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(1);
+    expect(playerState.gameOver).toBe(false);
+    expect(shieldSystem.charges).toBe(0);
+    expect(system.deathSeq).toBe(0);
+  });
+
+  it('an EMPTY shield falls through to the full v1 death flow, unchanged', () => {
+    const { ship, enemyPool, playerState, scoreState, shieldSystem, system } =
+      makeShieldedSystem(1);
+    // Spend the charge, then take a hit with nothing left.
+    expect(shieldSystem.tryAbsorb()).toBe(true);
+    expect(shieldSystem.charges).toBe(0);
+    ship.x = 100;
+    ship.y = 100;
+    scoreState.multiplier = 6;
+    scoreState.multiplierKills = 2;
+    addSeeker(enemyPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    // Exactly the pre-10.4 behavior: life lost, respawn to center, full invuln window,
+    // multiplier wiped, deathSeq bumped at the lethal-contact position.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(ship.x).toBe(CENTER_X);
+    expect(ship.y).toBe(CENTER_Y);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.multiplierKills).toBe(0);
+    expect(system.deathSeq).toBe(1);
+    expect(system.deathX).toBe(100);
+    expect(system.deathY).toBe(100);
+  });
+
+  it('spends NO charge while the player is already INVULNERABLE', () => {
+    // The guards live in fixedUpdate ABOVE the _applyDeath call sites and stay there —
+    // the shield check sits INSIDE the shared body, after they have already passed, so
+    // a charge can never be spent on a hit that was never going to land.
+    const { ship, enemyPool, playerState, shieldSystem, system } = makeShieldedSystem(1);
+    playerState.invulnMs = 500;
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+    playerState.pendingDeath = true; // and a forced death too, for good measure
+
+    system.fixedUpdate(DT);
+
+    expect(shieldSystem.charges).toBe(1); // untouched
+    expect(shieldSystem.absorbSeq).toBe(0);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+    expect(playerState.invulnMs).toBeCloseTo(500 - DT, 9); // the window just counts down
+    expect(playerState.pendingDeath).toBe(false);
+  });
+
+  it('spends NO charge after GAME-OVER', () => {
+    const { ship, enemyPool, playerState, shieldSystem, system } = makeShieldedSystem(1);
+    playerState.lives = 0;
+    playerState.gameOver = true;
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(shieldSystem.charges).toBe(1);
+    expect(shieldSystem.absorbSeq).toBe(0);
+    expect(playerState.lives).toBe(0);
+  });
+
+  it('spends AT MOST ONE charge per tick with two overlapping enemies', () => {
+    // The contact loop breaks after _applyDeath returns, so an absorb ends the scan
+    // exactly as a death does — two enemies on the ship cost one charge, not two.
+    const { ship, enemyPool, playerState, shieldSystem, system } = makeShieldedSystem(5);
+    // Lv5: max 3 charges. Two overlapping enemies must still cost exactly one.
+    expect(shieldSystem.charges).toBe(3);
+    ship.x = 300;
+    ship.y = 300;
+    addSeeker(enemyPool, 300, 300);
+    addSeeker(enemyPool, 300, 300);
+
+    system.fixedUpdate(DT);
+
+    expect(shieldSystem.charges).toBe(2);
+    expect(shieldSystem.absorbSeq).toBe(1);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+  });
+
+  it('the absorb i-frames stop consecutive-tick charge drain (the reason they are granted)', () => {
+    // Without a window the lethal test would re-fire against the still-overlapping enemy
+    // on the very next fixed step and drain a 3-charge shield in 3 ticks (50ms).
+    const { ship, enemyPool, shieldSystem, system } = makeShieldedSystem(5);
+    ship.x = 300;
+    ship.y = 300;
+    addSeeker(enemyPool, 300, 300); // parked on the ship, never moving
+
+    // MEASURE the gap between consecutive absorbs rather than stepping a token few
+    // ticks: at 3 ticks (50ms) this test passes for any window above ~34ms, which
+    // leaves SHIELD_ABSORB_INVULN_MS — the constant the whole item rests on — unpinned
+    // downward. The measured gap IS the window, so a retune has to move this number.
+    system.fixedUpdate(DT); // the first contact: one absorb
+    expect(shieldSystem.absorbSeq).toBe(1);
+    expect(shieldSystem.charges).toBe(2);
+
+    let ticks = 0;
+    while (shieldSystem.absorbSeq === 1 && ticks < 600) {
+      system.fixedUpdate(DT);
+      ticks++;
+    }
+    expect(shieldSystem.absorbSeq).toBe(2); // it did eventually re-fire (not a hang)
+    // The gap is the window itself, plus the tick that drains its last fraction and the
+    // distinct VULNERABLE tick it ends on. Bounded rather than exact: where the
+    // countdown crosses zero depends on float residue in 1000 / FIXED_STEP_MS, which is
+    // not a property worth pinning — the DURATION is.
+    expect(ticks * DT).toBeGreaterThanOrEqual(SHIELD_ABSORB_INVULN_MS);
+    expect(ticks * DT).toBeLessThan(SHIELD_ABSORB_INVULN_MS + 3 * DT);
+  });
+
+  it('the absorb window is long enough to BE the escape it is documented as', () => {
+    // The absorb deliberately leaves the ship in the swarm (no respawn teleport), so the
+    // window is the only thing that gets the player clear. Its own comment justifies the
+    // value by the distance it covers — pinned here against the game's own "clear of the
+    // player" distance, so a retune that silently breaks the promise fails.
+    //
+    // Budgeted from a STANDSTILL, not from SHIP_MAX_SPEED. The constant's comment
+    // explicitly disowns the top-speed figure as "the BEST case (already at top speed,
+    // already pointed away)" and commits to the realistic one instead — an absorb usually
+    // fires at rest or moving INTO the threat. Asserting the best case would pass at a
+    // window far below what the comment promises, which is the whole failure this test
+    // exists to catch.
+    const seconds = SHIELD_ABSORB_INVULN_MS / 1000;
+    const accelSeconds = Math.min(SHIP_MAX_SPEED / SHIP_ACCEL, seconds); // time to reach top speed
+    const escapeDistance =
+      0.5 * SHIP_ACCEL * accelSeconds * accelSeconds + SHIP_MAX_SPEED * (seconds - accelSeconds);
+    expect(escapeDistance).toBeGreaterThan(SPAWN_SAFE_RADIUS);
+    // …and it is genuinely the worst-case budget, strictly under the top-speed figure.
+    expect(escapeDistance).toBeLessThan((SHIP_MAX_SPEED * SHIELD_ABSORB_INVULN_MS) / 1000);
+    // Still strictly shorter than a respawn's window — an absorb is the cheaper event.
+    expect(SHIELD_ABSORB_INVULN_MS).toBeLessThan(PLAYER_INVULN_MS);
+  });
+
+  it('a system built with NO shield argument is byte-identical to pre-10.4', () => {
+    // The optional slot-5 injection: every existing caller and test stub constructs
+    // without it, and must get the untouched v1 death flow.
+    const { ship, enemyPool, playerState, system } = makeSystem();
+    expect(system.shieldSystem).toBeNull();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(ship.x).toBe(CENTER_X);
+    expect(ship.y).toBe(CENTER_Y);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(system.deathSeq).toBe(1);
+  });
+
+  it('the Lv5 FINAL break pulses through the death seam (enemies shoved, none killed)', () => {
+    const { ship, enemyPool, playerState, shieldSystem, system } = makeShieldedSystem(5);
+    ship.x = 600;
+    ship.y = 360;
+    const e = addSeeker(enemyPool, 600 + 20, 360);
+    // Burn the first two charges outside the seam, so the next contact is the FINAL one.
+    shieldSystem.tryAbsorb();
+    shieldSystem.tryAbsorb();
+    expect(shieldSystem.charges).toBe(1);
+    expect(e.x).toBe(620); // no pulse on the non-final breaks
+
+    system.fixedUpdate(DT);
+
+    expect(shieldSystem.charges).toBe(0);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES); // still no life cost
+    expect(e.x).toBeGreaterThan(620); // shoved outward by the break pulse
+    expect(enemyPool.activeCount).toBe(1); // moved, never killed or released
   });
 });
