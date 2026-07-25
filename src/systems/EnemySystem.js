@@ -76,6 +76,15 @@ export class EnemySystem extends System {
         if (s.telegraphMs > 0) return; // still telegraphing → frozen
         s.telegraphMs = 0; // just activated → fall through to normal homing
       }
+      if (s.stunMs > 0) {
+        s.stunMs -= dt;
+        if (s.stunMs > 0) {
+          s.vx = 0;
+          s.vy = 0;
+          return; // stunned → frozen position/velocity
+        }
+        s.stunMs = 0;
+      }
       const dx = ship.x - s.x;
       const dy = ship.y - s.y;
       const mag = Math.hypot(dx, dy);
@@ -122,5 +131,6 @@ export class EnemySystem extends System {
     s.vy = 0;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    s.stunMs = 0;
   }
 }

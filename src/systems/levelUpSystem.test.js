@@ -358,6 +358,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'flak-burst',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -387,6 +388,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'flak-burst',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -399,7 +401,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
     expect(sys.selectionActive).toBe(true);
   });
 
-  // An EMPTY offer: all 10 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
+  // An EMPTY offer: all 13 registry items banished → 0 eligible. The owed pick AUTO-DRAINS
   // with no card applied, the overlay closes, and the landing invuln is granted.
   it('empty offer (0 eligible): the owed pick auto-drains, no card applied, landing invuln granted', () => {
     const { sys, levelStub, prog, playerStub } = build({ invulnMs: 0 });
@@ -416,6 +418,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'afterburner',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -445,6 +448,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'afterburner',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -468,6 +472,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'afterburner',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
     levelStub.levelsGainedThisTick = 3; // owes 3
     sys.fixedUpdate();
@@ -490,6 +495,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'afterburner',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
 
     levelStub.levelsGainedThisTick = 1;

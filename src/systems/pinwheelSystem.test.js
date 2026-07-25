@@ -543,3 +543,19 @@ describe('PinwheelSystem — AC2: ship contact through the real PlayerDeathSyste
     expect(playerState.gameOver).toBe(true);
   });
 });
+
+describe('PinwheelSystem — stun freeze (Story 11.9)', () => {
+  it('freezes a stunned pinwheel: no drift, velocity zeroed, counts down stunMs by dt', () => {
+    const system = makeSystem();
+    const pw = placePinwheel(system, 200, 200, PINWHEEL_DRIFT_SPEED, 0, 0);
+    pw.stunMs = 2000;
+
+    system.fixedUpdate(DT);
+
+    expect(pw.x).toBe(200);
+    expect(pw.y).toBe(200);
+    expect(pw.vx).toBe(0);
+    expect(pw.vy).toBe(0);
+    expect(pw.stunMs).toBeCloseTo(2000 - DT, 6);
+  });
+});

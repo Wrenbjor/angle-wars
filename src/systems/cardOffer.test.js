@@ -349,6 +349,7 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
       'flak-burst',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
 
 

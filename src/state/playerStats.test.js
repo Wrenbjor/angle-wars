@@ -728,6 +728,74 @@ describe('recomputePlayerStats — Nanite Shield against the REAL registry (Stor
     expect(ps.respawnIFramesMs).toBe(0);
     expect(ps.softenMultiplierReset).toBe(0);
   });
+
+  // --- Bomb Capacitor (Story 11.9) -----------------------------------------
+  it('folds the SHIPPED Bomb Capacitor rungs 1..5 to the exact fields', () => {
+    const expected = [
+      {
+        extraBombs: 1,
+        bombRadiusMult: 1.3,
+        bombAwardInterval: 0,
+        bombStunMs: 0,
+        bombXpOrbs: 0,
+        bombDamageFieldMs: 0,
+      },
+      {
+        extraBombs: 1,
+        bombRadiusMult: 1.3,
+        bombAwardInterval: 75000,
+        bombStunMs: 0,
+        bombXpOrbs: 0,
+        bombDamageFieldMs: 0,
+      },
+      {
+        extraBombs: 2,
+        bombRadiusMult: 1.3,
+        bombAwardInterval: 75000,
+        bombStunMs: 2000,
+        bombXpOrbs: 0,
+        bombDamageFieldMs: 0,
+      },
+      {
+        extraBombs: 2,
+        bombRadiusMult: 1.3,
+        bombAwardInterval: 50000,
+        bombStunMs: 2000,
+        bombXpOrbs: 5,
+        bombDamageFieldMs: 0,
+      },
+      {
+        extraBombs: 4,
+        bombRadiusMult: 1.3,
+        bombAwardInterval: 50000,
+        bombStunMs: 2000,
+        bombXpOrbs: 5,
+        bombDamageFieldMs: 3000,
+      },
+    ];
+    for (let level = 1; level <= 5; level++) {
+      const ps = createPlayerStats();
+      recomputePlayerStats(ps, { 'bomb-capacitor': level }, ITEM_REGISTRY);
+      const e = expected[level - 1];
+      expect(ps.extraBombs, `L${level} extraBombs`).toBe(e.extraBombs);
+      expect(ps.bombRadiusMult, `L${level} bombRadiusMult`).toBeCloseTo(e.bombRadiusMult);
+      expect(ps.bombAwardInterval, `L${level} bombAwardInterval`).toBe(e.bombAwardInterval);
+      expect(ps.bombStunMs, `L${level} bombStunMs`).toBe(e.bombStunMs);
+      expect(ps.bombXpOrbs, `L${level} bombXpOrbs`).toBe(e.bombXpOrbs);
+      expect(ps.bombDamageFieldMs, `L${level} bombDamageFieldMs`).toBe(e.bombDamageFieldMs);
+    }
+  });
+
+  it('leaves the six Bomb Capacitor fields at base when it is UNOWNED', () => {
+    const ps = createPlayerStats();
+    recomputePlayerStats(ps, { overcharge: 5 }, ITEM_REGISTRY);
+    expect(ps.extraBombs).toBe(0);
+    expect(ps.bombRadiusMult).toBe(1);
+    expect(ps.bombAwardInterval).toBe(0);
+    expect(ps.bombStunMs).toBe(0);
+    expect(ps.bombXpOrbs).toBe(0);
+    expect(ps.bombDamageFieldMs).toBe(0);
+  });
 });
 
 

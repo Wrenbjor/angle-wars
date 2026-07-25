@@ -116,6 +116,15 @@ export class ArmoredSystem extends System {
       if (s.telegraphMs > 0) return; // still telegraphing → frozen
       s.telegraphMs = 0; // just activated → fall through to normal homing
     }
+    if (s.stunMs > 0) {
+      s.stunMs -= dt;
+      if (s.stunMs > 0) {
+        s.vx = 0;
+        s.vy = 0;
+        return; // stunned → frozen position/velocity
+      }
+      s.stunMs = 0;
+    }
     const dtSec = dt / 1000;
     const ship = this.ship;
     const dx = ship.x - s.x;
@@ -181,5 +190,6 @@ export class ArmoredSystem extends System {
     s.hp = ARMORED_HP;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    s.stunMs = 0;
   }
 }

@@ -252,6 +252,12 @@ export class SnakeSystem extends System {
         if (head.telegraphMs > 0) continue; // still telegraphing → frozen chain
       }
 
+      if (head.stunMs > 0) {
+        head.stunMs -= dt;
+        if (head.stunMs > 0) continue; // still stunned → frozen chain
+        head.stunMs = 0;
+      }
+
       // Slither: use the CURRENT phase for the effective heading (so a phase of 0
       // means pure base-heading motion), THEN advance the phase by dt. The phase
       // accumulates ANG_VEL·dtSec/step, so its value over elapsed sim time is
@@ -361,6 +367,7 @@ export class SnakeSystem extends System {
       seg.xp = i === 0 ? SNAKE_HEAD_XP : SNAKE_SEGMENT_XP;
       // Telegraph every segment identically: the chain freezes + activates as one.
       seg.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+      seg.stunMs = 0;
       segments.push(seg);
     }
 

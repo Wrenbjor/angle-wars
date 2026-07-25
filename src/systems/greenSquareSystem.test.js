@@ -461,3 +461,19 @@ describe('createGreenSquare factory', () => {
     expect(s.telegraphMs).toBe(0); // spawned-and-active default (Story 2.6)
   });
 });
+
+describe('GreenSquareSystem — stun freeze (Story 11.9)', () => {
+  it('freezes a stunned square: no move, velocity zeroed, counts down stunMs by dt', () => {
+    const { system } = makeSystem(makeShip(400, 100));
+    const s = placeSquare(system, 100, 100);
+    s.stunMs = 2000;
+
+    system.fixedUpdate(DT);
+
+    expect(s.x).toBe(100);
+    expect(s.y).toBe(100);
+    expect(s.vx).toBe(0);
+    expect(s.vy).toBe(0);
+    expect(s.stunMs).toBeCloseTo(2000 - DT, 6);
+  });
+});

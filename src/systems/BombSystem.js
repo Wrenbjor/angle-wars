@@ -2,49 +2,18 @@ import { System } from '../core/System.js';
 import {
   BOMB_AWARD_SCORE_INTERVAL,
   BOMB_SHOCKWAVE_MS,
+  BOMB_SHOCKWAVE_MAX_RADIUS,
 } from '../config/constants.js';
 
 // BombSystem — smart-bomb detonation + score-threshold award (Phaser-free).
 //
-// The RE1 emergency screen-clear (FR9). Runs inside world.fixedUpdate(dt) at the
-// constant fixed step, ordered LATE in the tick — AFTER ScoringSystem and
-// BlackHoleSystem, and BEFORE PlayerDeathSystem. That ordering is load-bearing:
-//   - After ScoringSystem: enemies this system appends to
-//     collisionSystem.killedEnemies are REMOVED (reconciled by owner systems like
-//     SnakeSystem on their next tick) but NOT scored and do not advance the
-//     multiplier — a bomb is a defensive cost, not a reward. This is the exact
-//     unscored-clear pattern BlackHoleSystem's absorb already uses.
-//   - After BlackHoleSystem: the score read for the +1-bomb award is fully
-//     settled this tick (no one-tick lag; the black-hole detonation payout counts
-//     toward the 100k thresholds too).
-//   - Before PlayerDeathSystem: the clear removes enemies before the death check,
-//     so a bomb genuinely rescues the player from an otherwise-lethal contact
-//     this same tick.
-//
-// Each fixed step, in order:
-//   (1) Award +1 bomb per BOMB_AWARD_SCORE_INTERVAL boundary the running score
-//       has crossed since the last-seen cursor (floor(score/INTERVAL) −
-//       floor(cursor/INTERVAL)); the score only ever increases, so each boundary
-//       fires exactly once even when a single kill jumps past several intervals.
-//       Then advance the cursor to the current score. No bomb cap (FR9).
-//   (2) Consume the latched bomb request (reads-and-clears). If one was pending
-//       AND bombs > 0: release EVERY active enemy across the four archetype pools
-//       to its OWNING pool AND append it to collisionSystem.killedEnemies (the
-//       reconciliation seam, identical to a bullet kill / black-hole absorb), then
-//       decrement bombs by one and arm the placeholder shockwave at the ship. The
-//       clear ignores telegraph state — a decisive player-triggered detonation
-//       clears every on-screen enemy regardless of spawn-in state (unlike the
-//       passive Black Hole, which leaves telegraphing enemies inert).
-//   (3) Decay the shockwave countdown by dt (clamped at 0).
-//
-// The bomb clears ONLY the four combat-archetype enemyPools — never the Black Hole
-// or any hazard (a separate multi-hit lifecycle that stays lethal through a
-// detonation). It never touches the multiplier, lives, or the death lifecycle.
-//
-// Zero steady-state allocation: reusable scratch materializes the active sets and
-// their owners (iterating a Set can't be indexed, and releasing mutates it
-// mid-iteration — both unsafe), then a second pass releases + reports; mirrors
-// CollisionSystem / BlackHoleSystem.
+// Extended in Story 11.9 (Bomb Capacitor) to read playerStats:
+//   - extraBombs: syncs extra bombs on level pick.
+//   - bombAwardInterval: dynamic score threshold for +1 bomb (75k at Lv2+, 50k at Lv4+).
+//   - bombRadiusMult: scales shockwave effective radius (1.3x at Lv1+).
+//   - bombStunMs: stuns surviving combat enemies (2s at Lv3+).
+//   - bombXpOrbs: drops XP orbs at detonation origin (5 orbs at Lv4+).
+//   - bombDamageFieldMs: sustains a lingering damage field (3s at Lv5).
 export class BombSystem extends System {
   /**
    * @param {import('../input/InputState.js').InputState} inputState Shared input
@@ -58,31 +27,33 @@ export class BombSystem extends System {
    *   decremented on a detonation and incremented on each 100k crossing; score is
    *   read (never written) for the award.
    * @param {{x:number,y:number}} ship The player ship — the shockwave origin.
+   * @param {Object<string, number>|null} [playerStats=null] Shared player stats store.
+   * @param {Object|null} [xpOrbSystem=null] Shared XP orb system for orb drops.
    */
-  constructor(inputState, enemyPools, collisionSystem, scoreState, ship) {
+  constructor(inputState, enemyPools, collisionSystem, scoreState, ship, playerStats = null, xpOrbSystem = null) {
     super();
     this.inputState = inputState;
     this.enemyPools = enemyPools;
     this.collisionSystem = collisionSystem;
     this.scoreState = scoreState;
     this.ship = ship;
+    this.playerStats = playerStats;
+    this.xpOrbSystem = xpOrbSystem;
 
-    // Monotonic previous-score cursor for the threshold award. Seeded from the
-    // current score (0 on a fresh run) so the first bomb is awarded at the first
-    // BOMB_AWARD_SCORE_INTERVAL boundary, never retroactively for a pre-seeded score.
+    this._syncedExtraBombs = 0;
     this._scoreCursor = scoreState.score;
 
-    // Placeholder expanding-shockwave state the render loop reads: a sim-side
-    // countdown (mirrors telegraphMs / invulnMs) and the ship position captured at
-    // detonation so the ring stays put as the ship keeps moving. Epic 4 replaces
-    // the placeholder ring with the real shockwave + screen-shake juice.
     this.shockwaveMs = 0;
     this.shockwaveX = 0;
     this.shockwaveY = 0;
+    this.effectiveRadius = BOMB_SHOCKWAVE_MAX_RADIUS;
 
-    // Reusable scratch so the detonation path allocates nothing: the materialized
-    // active enemies and a parallel array of each one's owning pool (so a release
-    // routes to the correct pool). Collected in pass 1, drained in pass 2.
+    this.stunRemainingMs = 0;
+    this.damageFieldMs = 0;
+    this.damageFieldX = 0;
+    this.damageFieldY = 0;
+    this.damageFieldRadius = 0;
+
     this._enemies = [];
     this._owners = [];
     this._currentPool = null;
@@ -94,58 +65,114 @@ export class BombSystem extends System {
 
   /**
    * Advance one fixed step: award threshold bombs, then (if requested and armed)
-   * detonate, then decay the shockwave countdown.
+   * detonate, then decay shockwave, stun, and damage field countdowns.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
     const ss = this.scoreState;
 
-    // (1) Threshold award: +1 bomb per interval boundary crossed since the cursor.
-    //     floor difference fires each boundary exactly once even across a multi-
-    //     interval jump; the score is monotonic so the cursor only advances.
+    // (0) Extra bombs sync from playerStats delta
+    if (this.playerStats) {
+      const rawExtra = this.playerStats.extraBombs;
+      const extraBombs = Number.isFinite(rawExtra) && rawExtra >= 0 ? Math.floor(rawExtra) : 0;
+      if (extraBombs > this._syncedExtraBombs) {
+        this.scoreState.bombs += (extraBombs - this._syncedExtraBombs);
+        this._syncedExtraBombs = extraBombs;
+      } else if (extraBombs < this._syncedExtraBombs) {
+        this._syncedExtraBombs = extraBombs;
+      }
+    }
+
+    // (1) Threshold award: +1 bomb per interval boundary crossed since cursor.
+    const rawInterval = this.playerStats?.bombAwardInterval;
+    const interval = Number.isFinite(rawInterval) && rawInterval > 0 ? rawInterval : BOMB_AWARD_SCORE_INTERVAL;
     const score = ss.score;
+    if (this._currentInterval === undefined) {
+      this._currentInterval = interval;
+    } else if (this._currentInterval !== interval) {
+      if (score > 0) {
+        const oldEarned = Math.floor(score / this._currentInterval);
+        const newEarned = Math.floor(score / interval);
+        if (newEarned > oldEarned) {
+          ss.bombs += (newEarned - oldEarned);
+        }
+      }
+      this._currentInterval = interval;
+    }
     if (score > this._scoreCursor) {
       const crossed =
-        Math.floor(score / BOMB_AWARD_SCORE_INTERVAL) -
-        Math.floor(this._scoreCursor / BOMB_AWARD_SCORE_INTERVAL);
+        Math.floor(score / interval) -
+        Math.floor(this._scoreCursor / interval);
       if (crossed > 0) ss.bombs += crossed;
       this._scoreCursor = score;
     }
 
-    // (2) Detonation: consume the latch (reads-and-clears) so the press fires at
-    //     most one detonation. Only detonate with a bomb in hand. The player path
-    //     runs the shared screen-clear at the SHIP, then spends one bomb.
+    // (2) Detonation: consume latch
     const requested = this.inputState.consumeBomb();
     if (requested && ss.bombs > 0) {
       this.detonateAt(this.ship.x, this.ship.y);
       ss.bombs -= 1;
     }
 
-    // (3) Decay the shockwave countdown (clamped at 0), whether or not a
-    //     detonation happened this tick.
+    // (3) Decay shockwave countdown
     if (this.shockwaveMs > 0) {
       this.shockwaveMs -= dt;
       if (this.shockwaveMs < 0) this.shockwaveMs = 0;
     }
+
+    // (4) Stun countdown & active enemy stun refresh
+    if (this.stunRemainingMs > 0) {
+      this.stunRemainingMs -= dt;
+      if (this.stunRemainingMs < 0) this.stunRemainingMs = 0;
+      const rem = this.stunRemainingMs;
+      for (let p = 0; p < this.enemyPools.length; p++) {
+        this.enemyPools[p].forEachActive((e) => {
+          e.stunMs = Math.max(e.stunMs || 0, rem);
+        });
+      }
+    }
+
+    // (5) Lingering damage field decay & enemy clearing
+    if (this.damageFieldMs > 0) {
+      this.damageFieldMs -= dt;
+      if (this.damageFieldMs < 0) this.damageFieldMs = 0;
+      const radiusSq = this.damageFieldRadius * this.damageFieldRadius;
+      const dfX = this.damageFieldX;
+      const dfY = this.damageFieldY;
+      const enemies = this._enemies;
+      const owners = this._owners;
+      enemies.length = 0;
+      owners.length = 0;
+      for (let p = 0; p < this.enemyPools.length; p++) {
+        const pool = this.enemyPools[p];
+        pool.forEachActive((e) => {
+          const dx = e.x - dfX;
+          const dy = e.y - dfY;
+          if (dx * dx + dy * dy <= radiusSq) {
+            enemies.push(e);
+            owners.push(pool);
+          }
+        });
+      }
+      const killed = this.collisionSystem.killedEnemies;
+      for (let i = 0; i < enemies.length; i++) {
+        owners[i].release(enemies[i]);
+        killed.push(enemies[i]);
+      }
+    }
   }
 
   /**
-   * The reusable smart-bomb screen clear, originated at (x, y): release EVERY
-   * active enemy across the four archetype pools to its OWNING pool AND append it
-   * to collisionSystem.killedEnemies (the reconciliation seam, identical to a
-   * bullet kill / black-hole absorb), then arm the placeholder shockwave at (x, y).
-   * The clear ignores telegraph state — a decisive detonation clears every
-   * on-screen enemy regardless of spawn-in state.
-   *
-   * This is the exact clear+arm the player-triggered bomb runs, extracted so a
-   * Black Hole detonation (Story 6.2) can trigger the identical screen clear at the
-   * hole's position WITHOUT decrementing `bombs` and WITHOUT consuming the input
-   * latch — those belong to the player path only. Zero allocation (reuses the same
-   * scratch as the player path); mirrors the CollisionSystem two-pass discipline.
+   * The reusable smart-bomb screen clear, originated at (x, y).
    * @param {number} x Shockwave origin x (px).
    * @param {number} y Shockwave origin y (px).
    */
   detonateAt(x, y) {
+    const rawMult = this.playerStats?.bombRadiusMult;
+    const mult = Number.isFinite(rawMult) && rawMult >= 1 ? rawMult : 1;
+    const effectiveRadius = BOMB_SHOCKWAVE_MAX_RADIUS * mult;
+    this.effectiveRadius = effectiveRadius;
+
     const enemies = this._enemies;
     const owners = this._owners;
     enemies.length = 0;
@@ -156,20 +183,40 @@ export class BombSystem extends System {
       pools[p].forEachActive(this._collectEnemy);
     }
 
-    // Second pass — safe to mutate the pools now: release each active enemy to
-    // its OWNING pool and append it to the kill report so owner systems (e.g.
-    // SnakeSystem) reconcile through the same seam a bullet kill uses. UNSCORED
-    // by construction — this runs after ScoringSystem, which already ran this
-    // tick over its own (bullet-kill) report.
     const killed = this.collisionSystem.killedEnemies;
     for (let i = 0; i < enemies.length; i++) {
       owners[i].release(enemies[i]);
       killed.push(enemies[i]);
     }
 
-    // Arm the placeholder shockwave at the given origin.
     this.shockwaveMs = BOMB_SHOCKWAVE_MS;
     this.shockwaveX = x;
     this.shockwaveY = y;
+
+    // Lv3+ Stun
+    const rawStun = this.playerStats?.bombStunMs;
+    const stunMs = Number.isFinite(rawStun) && rawStun >= 0 ? rawStun : 0;
+    if (stunMs > 0) {
+      this.stunRemainingMs = stunMs;
+    }
+
+    // Lv4+ XP Orbs
+    const rawOrbs = this.playerStats?.bombXpOrbs;
+    const orbCount = Number.isFinite(rawOrbs) && rawOrbs >= 0 ? Math.floor(rawOrbs) : 0;
+    if (orbCount > 0 && this.xpOrbSystem && typeof this.xpOrbSystem.spawnOrb === 'function') {
+      for (let i = 0; i < orbCount; i++) {
+        this.xpOrbSystem.spawnOrb(x, y, 1);
+      }
+    }
+
+    // Lv5+ Lingering Damage Field
+    const rawFieldMs = this.playerStats?.bombDamageFieldMs;
+    const fieldMs = Number.isFinite(rawFieldMs) && rawFieldMs >= 0 ? rawFieldMs : 0;
+    if (fieldMs > 0) {
+      this.damageFieldMs = fieldMs;
+      this.damageFieldX = x;
+      this.damageFieldY = y;
+      this.damageFieldRadius = effectiveRadius;
+    }
   }
 }

@@ -282,6 +282,18 @@ export class XpOrbSystem extends System {
   }
 
   /**
+   * Public entry point to spawn a single XP orb (e.g. from Bomb Capacitor detonation).
+   * Honors maxOrbs cap.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} value
+   */
+  spawnOrb(x, y, value = 1) {
+    if (this.pool.activeCount >= this.maxOrbs) return null;
+    return this._spawn(x, y, value);
+  }
+
+  /**
    * Acquire an orb from the pool (reusing a freed slot before the factory grows) and
    * overwrite every field. Allocates nothing on the reuse path.
    * @private

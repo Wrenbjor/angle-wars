@@ -303,3 +303,19 @@ describe('ArmoredSystem — pool prewarm + zero allocation (NFR2)', () => {
     expect(system._stepHome).toBe(ref);
   });
 });
+
+describe('ArmoredSystem — stun freeze (Story 11.9)', () => {
+  it('freezes a stunned armored enemy: no move, velocity zeroed, counts down stunMs by dt', () => {
+    const system = new ArmoredSystem(makeShip(400, 100), seqRng([0.1, 0.5]));
+    const s = placeArmored(system, 100, 100);
+    s.stunMs = 2000;
+
+    system.fixedUpdate(DT);
+
+    expect(s.x).toBe(100);
+    expect(s.y).toBe(100);
+    expect(s.vx).toBe(0);
+    expect(s.vy).toBe(0);
+    expect(s.stunMs).toBeCloseTo(2000 - DT, 6);
+  });
+});

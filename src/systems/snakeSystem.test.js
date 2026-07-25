@@ -822,3 +822,18 @@ describe('SnakeSystem — AC2: ship contact through the real PlayerDeathSystem',
     expect(playerState.gameOver).toBe(true);
   });
 });
+
+describe('SnakeSystem — stun freeze (Story 11.9)', () => {
+  it('freezes a stunned snake chain: no slither move, counts down head stunMs by dt', () => {
+    const system = makeSystem();
+    const snake = placeSnake(system, 400, 360, 0, 3, 0);
+    const head = snake.segments[0];
+    head.stunMs = 2000;
+
+    system.fixedUpdate(DT);
+
+    expect(head.x).toBe(400);
+    expect(head.y).toBe(360);
+    expect(head.stunMs).toBeCloseTo(2000 - DT, 6);
+  });
+});

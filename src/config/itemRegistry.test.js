@@ -32,6 +32,7 @@ const EXPECTED_IDS = [
   'afterburner',
   'gravity-well',
   'reinforced-hull',
+  'bomb-capacitor',
 ];
 
 
@@ -231,6 +232,7 @@ describe('getItem / getItemsByTrack', () => {
       'afterburner',
       'gravity-well',
       'reinforced-hull',
+      'bomb-capacitor',
     ]);
     // Every returned entry actually belongs to the requested track.
     for (const i of offense) expect(i.track).toBe('offense');
@@ -1201,6 +1203,100 @@ describe('ITEM_REGISTRY — Reinforced Hull stats (Story 11.8)', () => {
       'death drops multiplier to 50%',
       '+1 max life',
     ]);
+  });
+});
+
+// --- Bomb Capacitor (Story 11.9) -------------------------------------------
+describe('ITEM_REGISTRY — Bomb Capacitor stats (Story 11.9)', () => {
+  const BOMB_CAPACITOR_FIELDS = [
+    'extraBombs',
+    'bombRadiusMult',
+    'bombAwardInterval',
+    'bombStunMs',
+    'bombXpOrbs',
+    'bombDamageFieldMs',
+  ];
+
+  it('authors the exact five per-level stats maps, frozen', () => {
+    const levels = getItem('bomb-capacitor').levels;
+    expect(levels.map((l) => l.stats)).toEqual([
+      { extraBombs: 1, bombRadiusMult: 0.3 },
+      { extraBombs: 1, bombRadiusMult: 0.3, bombAwardInterval: 75000 },
+      {
+        extraBombs: 2,
+        bombRadiusMult: 0.3,
+        bombAwardInterval: 75000,
+        bombStunMs: 2000,
+      },
+      {
+        extraBombs: 2,
+        bombRadiusMult: 0.3,
+        bombAwardInterval: 50000,
+        bombStunMs: 2000,
+        bombXpOrbs: 5,
+      },
+      {
+        extraBombs: 4,
+        bombRadiusMult: 0.3,
+        bombAwardInterval: 50000,
+        bombStunMs: 2000,
+        bombXpOrbs: 5,
+        bombDamageFieldMs: 3000,
+      },
+    ]);
+    for (const lvl of levels) {
+      expect(Object.isFrozen(lvl.stats), `L${lvl.level} stats not frozen`).toBe(true);
+    }
+  });
+
+  it('authors LEVELS as TOTALS, not deltas', () => {
+    const [l1, l2, l3, l4, l5] = getItem('bomb-capacitor').levels.map((l) => l.stats);
+    expect(l2.extraBombs).toBe(l1.extraBombs);
+    expect(l2.bombRadiusMult).toBe(l1.bombRadiusMult);
+    expect(l3.bombRadiusMult).toBe(l2.bombRadiusMult);
+    expect(l3.bombAwardInterval).toBe(l2.bombAwardInterval);
+    expect(l4.bombRadiusMult).toBe(l3.bombRadiusMult);
+    expect(l4.bombStunMs).toBe(l3.bombStunMs);
+    expect(l5.bombRadiusMult).toBe(l4.bombRadiusMult);
+    expect(l5.bombAwardInterval).toBe(l4.bombAwardInterval);
+    expect(l5.bombStunMs).toBe(l4.bombStunMs);
+    expect(l5.bombXpOrbs).toBe(l4.bombXpOrbs);
+  });
+
+  it('carries no stat key outside the six rungs the story owns', () => {
+    for (const lvl of getItem('bomb-capacitor').levels) {
+      for (const k of Object.keys(lvl.stats)) {
+        expect(BOMB_CAPACITOR_FIELDS).toContain(k);
+      }
+    }
+  });
+
+  it('is the ONLY item authoring any Bomb Capacitor field (the additive-fold tripwire)', () => {
+    for (const key of BOMB_CAPACITOR_FIELDS) {
+      const authors = ITEM_REGISTRY.filter((item) =>
+        item.levels.some((lvl) => Object.prototype.hasOwnProperty.call(lvl.stats, key)),
+      ).map((item) => item.id);
+      expect(authors, `${key} must be authored by exactly one item`).toEqual([
+        'bomb-capacitor',
+      ]);
+    }
+  });
+
+  it('keeps the PRD §13.4 desc strings verbatim', () => {
+    expect(getItem('bomb-capacitor').levels.map((l) => l.desc)).toEqual([
+      '+1 bomb / +30% shockwave radius',
+      '+1 bomb every 75k score',
+      '+1 bomb / surviving enemies stunned for 2s',
+      '+1 bomb every 50k score / detonation drops 5 XP orbs',
+      '+2 bombs / 3s lingering damage field',
+    ]);
+  });
+
+  it('carries fusion metadata ({partner: "flak-burst", epic: "chain-reaction"})', () => {
+    expect(getItem('bomb-capacitor').fusion).toEqual({
+      partner: 'flak-burst',
+      epic: 'chain-reaction',
+    });
   });
 });
 

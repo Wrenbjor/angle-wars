@@ -159,6 +159,8 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(
       CANONICAL_ORDER,
     );
+    expect(ctx.bombSystem.playerStats).toBe(ctx.playerStats);
+    expect(ctx.bombSystem.xpOrbSystem).toBe(ctx.xpOrbSystem);
   });
 
   it('does not throw with no args and defaults the high-score port', () => {

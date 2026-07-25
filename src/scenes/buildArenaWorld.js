@@ -528,6 +528,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     collisionSystem,
     scoreState,
     ship,
+    playerStats,
   );
   world.addSystem(bombSystem);
   // Late-bind the bomb system into the BlackHoleSystem (constructed earlier, so it
@@ -556,6 +557,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     enemyPools,
   );
   world.addSystem(xpOrbSystem);
+  bombSystem.xpOrbSystem = xpOrbSystem;
 
 
   // --- Leveling (Story 8.2 / Epic 8 progression) --------------------------

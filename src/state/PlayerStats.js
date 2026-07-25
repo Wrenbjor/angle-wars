@@ -301,6 +301,19 @@ export const PLAYER_STATS_BASE = Object.freeze({
   extraLives: 0,
   respawnIFramesMs: 0,
   softenMultiplierReset: 0,
+  // Bomb Capacitor (Story 11.9 / PRD §13.4). Defense item: smart bomb progression.
+  //  - extraBombs         : count of extra smart bombs granted (+1 at Lv1, +1 at Lv3, +2 at Lv5).
+  //  - bombRadiusMult     : multiplier bonus for shockwave radius (1.3x at Lv1+).
+  //  - bombAwardInterval  : score threshold interval for +1 bomb award (75k at Lv2+, 50k at Lv4+).
+  //  - bombStunMs         : stun duration (ms) for surviving enemies at Lv3+ (2000ms).
+  //  - bombXpOrbs         : count of XP orbs dropped on detonation at Lv4+ (5 orbs).
+  //  - bombDamageFieldMs  : duration (ms) of lingering damage field at Lv5 (3000ms).
+  extraBombs: 0,
+  bombRadiusMult: 1,
+  bombAwardInterval: 0,
+  bombStunMs: 0,
+  bombXpOrbs: 0,
+  bombDamageFieldMs: 0,
 });
 
 

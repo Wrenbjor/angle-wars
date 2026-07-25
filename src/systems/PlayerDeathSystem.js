@@ -218,7 +218,7 @@ export class PlayerDeathSystem extends System {
       // non-lethal — skip it. The uniform telegraphMs field defaults to 0
       // (active/lethal) in every factory, so this one line makes every archetype
       // safe while telegraphing through this single shared seam.
-      if (s.telegraphMs > 0) continue;
+      if (s.telegraphMs > 0 || s.stunMs > 0) continue;
       const dx = ship.x - s.x;
       const dy = ship.y - s.y;
       const r = ship.radius + s.radius;

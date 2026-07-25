@@ -94,6 +94,15 @@ export class PinwheelSystem extends System {
         if (pw.telegraphMs > 0) return; // still telegraphing → frozen
         pw.telegraphMs = 0; // just activated → fall through to normal behavior
       }
+      if (pw.stunMs > 0) {
+        pw.stunMs -= dt;
+        if (pw.stunMs > 0) {
+          pw.vx = 0;
+          pw.vy = 0;
+          return; // stunned → frozen position/velocity
+        }
+        pw.stunMs = 0;
+      }
       // 1. Wander: re-roll the heading each time the per-instance accumulator
       //    crosses the interval. Rotating the velocity vector preserves |v|, so
       //    the drift speed stays constant (never recomputed from an angle).
@@ -171,5 +180,6 @@ export class PinwheelSystem extends System {
     pw.wanderMs = 0;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     pw.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    pw.stunMs = 0;
   }
 }

@@ -108,6 +108,15 @@ export class GreenSquareSystem extends System {
         if (s.telegraphMs > 0) return; // still telegraphing → frozen
         s.telegraphMs = 0; // just activated → fall through to normal behavior
       }
+      if (s.stunMs > 0) {
+        s.stunMs -= dt;
+        if (s.stunMs > 0) {
+          s.vx = 0;
+          s.vy = 0;
+          return; // stunned → frozen position/velocity
+        }
+        s.stunMs = 0;
+      }
       // 1. Threat detection (only while still fleeing — the latch is one-way).
       if (!s.aggro) {
         for (let i = 0; i < bullets.length; i++) {
@@ -179,5 +188,6 @@ export class GreenSquareSystem extends System {
     s.aggro = false;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+    s.stunMs = 0;
   }
 }

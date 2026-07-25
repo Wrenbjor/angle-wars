@@ -978,6 +978,77 @@ export const ITEM_REGISTRY = Object.freeze([
     // Reinforced Hull Lv5 + Bomb Capacitor Lv3 → Revenant (PRD §13.5).
     fusion: Object.freeze({ partner: 'bomb-capacitor', epic: 'revenant' }),
   }),
+  Object.freeze({
+    id: 'bomb-capacitor',
+    name: 'Bomb Capacitor',
+    title: 'Bomb Capacitor',
+    track: 'defense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.9 — the fifth Epic-11 EXOTIC defense item (PRD §13.4): smart bomb progression.
+    // Six fold fields:
+    //   - extraBombs        : extra smart bombs granted (+1 at Lv1, +1 at Lv3, +2 at Lv5);
+    //   - bombRadiusMult    : multiplier bonus for shockwave radius (+30% at Lv1+);
+    //   - bombAwardInterval : score threshold interval for +1 bomb award (75k at Lv2+, 50k at Lv4+);
+    //   - bombStunMs        : stun duration (ms) for surviving combat enemies at Lv3+ (2000ms);
+    //   - bombXpOrbs        : count of XP orbs dropped on detonation at Lv4+ (5 orbs);
+    //   - bombDamageFieldMs : duration (ms) of lingering damage field at Lv5 (3000ms).
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '+1 bomb / +30% shockwave radius',
+        stats: Object.freeze({
+          extraBombs: 1,
+          bombRadiusMult: 0.3,
+        }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '+1 bomb every 75k score',
+        stats: Object.freeze({
+          extraBombs: 1,
+          bombRadiusMult: 0.3,
+          bombAwardInterval: 75000,
+        }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '+1 bomb / surviving enemies stunned for 2s',
+        stats: Object.freeze({
+          extraBombs: 2,
+          bombRadiusMult: 0.3,
+          bombAwardInterval: 75000,
+          bombStunMs: 2000,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '+1 bomb every 50k score / detonation drops 5 XP orbs',
+        stats: Object.freeze({
+          extraBombs: 2,
+          bombRadiusMult: 0.3,
+          bombAwardInterval: 50000,
+          bombStunMs: 2000,
+          bombXpOrbs: 5,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '+2 bombs / 3s lingering damage field',
+        stats: Object.freeze({
+          extraBombs: 4,
+          bombRadiusMult: 0.3,
+          bombAwardInterval: 50000,
+          bombStunMs: 2000,
+          bombXpOrbs: 5,
+          bombDamageFieldMs: 3000,
+        }),
+      }),
+    ]),
+    guaranteeFromLevel: null,
+    // Bomb Capacitor Lv5 + Flak Burst Lv3 → Chain Reaction (PRD §13.5).
+    fusion: Object.freeze({ partner: 'flak-burst', epic: 'chain-reaction' }),
+  }),
 ]);
 
 
