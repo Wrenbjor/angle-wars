@@ -107,7 +107,8 @@ export class PlayerDeathSystem extends System {
     this.dashSystem = dashSystem;
     this.playerStats = playerStats;
 
-    this._syncedExtraLives = 0;
+    const rawInit = playerStats?.extraLives;
+    this._syncedExtraLives = Number.isFinite(rawInit) ? Math.max(0, Math.min(3, Math.floor(rawInit))) : 0;
 
     // Public read-only observability latch (Story 4.2): the player's death point.
     // On every death (both a respawning death and the final game-over death) the
@@ -136,7 +137,7 @@ export class PlayerDeathSystem extends System {
     const ps = this.playerState;
 
     // Story 11.8 (Reinforced Hull) — sync extra lives delta when playerStats.extraLives increases.
-    if (this.playerStats) {
+    if (this.playerStats && !ps.gameOver) {
       const rawExtra = this.playerStats.extraLives;
       const extra = Number.isFinite(rawExtra) ? Math.max(0, Math.min(3, Math.floor(rawExtra))) : 0;
       if (extra > this._syncedExtraLives) {

@@ -57,7 +57,7 @@
 //               (PRD §13.5); or null when it has no fusion. Tracked + exposed here;
 //               Epic 12 owns the actual fusion consumption.
 
-import { ITEM_MAX_LEVEL, SPREAD_CANNON_GUARANTEE_LEVEL } from './constants.js';
+import { ITEM_MAX_LEVEL, SPREAD_CANNON_GUARANTEE_LEVEL, REINFORCED_HULL_IFRAMES_BONUS_MS } from './constants.js';
 
 /**
  * The four Epic-10 items (PRD §13.3 offense / §13.4 defense) as data-driven
@@ -944,7 +944,7 @@ export const ITEM_REGISTRY = Object.freeze([
         desc: '3.5s respawn i-frames',
         stats: Object.freeze({
           extraLives: 1,
-          respawnIFramesMs: 1500,
+          respawnIFramesMs: REINFORCED_HULL_IFRAMES_BONUS_MS,
         }),
       }),
       Object.freeze({
@@ -952,7 +952,7 @@ export const ITEM_REGISTRY = Object.freeze([
         desc: '+1 max life',
         stats: Object.freeze({
           extraLives: 2,
-          respawnIFramesMs: 1500,
+          respawnIFramesMs: REINFORCED_HULL_IFRAMES_BONUS_MS,
         }),
       }),
       Object.freeze({
@@ -960,7 +960,7 @@ export const ITEM_REGISTRY = Object.freeze([
         desc: 'death drops multiplier to 50%',
         stats: Object.freeze({
           extraLives: 2,
-          respawnIFramesMs: 1500,
+          respawnIFramesMs: REINFORCED_HULL_IFRAMES_BONUS_MS,
           softenMultiplierReset: 1,
         }),
       }),
@@ -969,7 +969,7 @@ export const ITEM_REGISTRY = Object.freeze([
         desc: '+1 max life',
         stats: Object.freeze({
           extraLives: 3,
-          respawnIFramesMs: 1500,
+          respawnIFramesMs: REINFORCED_HULL_IFRAMES_BONUS_MS,
           softenMultiplierReset: 1,
         }),
       }),

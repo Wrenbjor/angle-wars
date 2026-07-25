@@ -2,10 +2,10 @@
 title: 'Story 11.8 — Reinforced Hull'
 type: 'feature'
 created: '2026-07-24'
-status: 'in-progress'
+status: 'in-review'
 baseline_revision: 'c7cf001c7d0f979e9c0148055e4e34c919098bc9'
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings: []
@@ -89,7 +89,18 @@ No spec amendments.
 
 ## Review Triage Log
 
-No review passes performed yet.
+### 2026-07-25 — Review pass
+- intent_gap: 0
+- bad_spec: 0
+- patch: 5: (high 0, medium 2, low 3)
+- defer: 0
+- reject: 5: (high 0, medium 0, low 5)
+- addressed_findings:
+  - `[low]` `[patch]` Imported `REINFORCED_HULL_IFRAMES_BONUS_MS` in `src/config/itemRegistry.js` and replaced hardcoded 1500 literals.
+  - `[medium]` `[patch]` Initialized `_syncedExtraLives` in `PlayerDeathSystem` constructor from `playerStats` to prevent duplicate extra lives grants on system re-instantiation.
+  - `[medium]` `[patch]` Guarded extra lives delta sync in `PlayerDeathSystem.fixedUpdate` with `!ps.gameOver`.
+  - `[low]` `[patch]` Validated `scoreState.multiplier` and `softenMultiplierReset` with `Number.isFinite` in `ScoreState.js` `resetMultiplier`.
+  - `[low]` `[patch]` Added `expect(ctx.playerDeathSystem.playerStats).toBe(ctx.playerStats)` identity assertion in `src/scenes/buildArenaWorld.test.js`.
 
 ## Design Notes
 

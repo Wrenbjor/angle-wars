@@ -54,10 +54,15 @@ export function createScoreState() {
  */
 export function resetMultiplier(scoreState, playerStats = null) {
   if (scoreState) {
-    if (playerStats && playerStats.softenMultiplierReset >= 1) {
+    const rawSoften = playerStats?.softenMultiplierReset;
+    const soften = Number.isFinite(rawSoften) && rawSoften >= 1;
+    const currentMult = Number.isFinite(scoreState.multiplier)
+      ? scoreState.multiplier
+      : SCORE_MULTIPLIER_START;
+    if (soften) {
       scoreState.multiplier = Math.max(
         SCORE_MULTIPLIER_START,
-        Math.floor(scoreState.multiplier * 0.5),
+        Math.floor(currentMult * 0.5),
       );
     } else {
       scoreState.multiplier = SCORE_MULTIPLIER_START;

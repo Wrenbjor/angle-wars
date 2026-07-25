@@ -87,10 +87,6 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
     const scoreState = createScoreState();
     const playerStats = createPlayerStats();
 
-    recomputePlayerStats(playerStats, { 'reinforced-hull': 2 }, ITEM_REGISTRY);
-    expect(playerStats.extraLives).toBe(1);
-    expect(playerStats.respawnIFramesMs).toBe(1500);
-
     const deathSystem = new PlayerDeathSystem(
       ship,
       [],
@@ -100,6 +96,10 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
       null,
       playerStats,
     );
+
+    recomputePlayerStats(playerStats, { 'reinforced-hull': 2 }, ITEM_REGISTRY);
+    expect(playerStats.extraLives).toBe(1);
+    expect(playerStats.respawnIFramesMs).toBe(1500);
 
     // First tick syncs extra lives (+1 live)
     deathSystem.fixedUpdate(16.6);
@@ -148,9 +148,6 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
     scoreState.multiplierKills = 4;
     const playerStats = createPlayerStats();
 
-    recomputePlayerStats(playerStats, { 'reinforced-hull': 4 }, ITEM_REGISTRY);
-    expect(playerStats.softenMultiplierReset).toBe(1);
-
     const deathSystem = new PlayerDeathSystem(
       ship,
       [],
@@ -160,6 +157,9 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
       null,
       playerStats,
     );
+
+    recomputePlayerStats(playerStats, { 'reinforced-hull': 4 }, ITEM_REGISTRY);
+    expect(playerStats.softenMultiplierReset).toBe(1);
 
     deathSystem.fixedUpdate(16.6); // sync extra lives
 
@@ -202,11 +202,6 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
     scoreState.multiplier = 10;
     const playerStats = createPlayerStats();
 
-    recomputePlayerStats(playerStats, { 'reinforced-hull': 5 }, ITEM_REGISTRY);
-    expect(playerStats.extraLives).toBe(3);
-    expect(playerStats.respawnIFramesMs).toBe(1500);
-    expect(playerStats.softenMultiplierReset).toBe(1);
-
     const deathSystem = new PlayerDeathSystem(
       ship,
       [],
@@ -216,6 +211,11 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
       null,
       playerStats,
     );
+
+    recomputePlayerStats(playerStats, { 'reinforced-hull': 5 }, ITEM_REGISTRY);
+    expect(playerStats.extraLives).toBe(3);
+    expect(playerStats.respawnIFramesMs).toBe(1500);
+    expect(playerStats.softenMultiplierReset).toBe(1);
 
     deathSystem.fixedUpdate(16.6);
     expect(playerState.lives).toBe(4); // 1 + 3 = 4 total max lives
@@ -233,11 +233,7 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
     const playerState = createPlayerState();
     const scoreState = createScoreState();
     scoreState.multiplier = 6;
-    const playerStats = {
-      extraLives: 99, // out of range, should clamp to 3
-      respawnIFramesMs: -500, // negative, should clamp to 0
-      softenMultiplierReset: NaN, // non-finite, should evaluate as disabled
-    };
+    const playerStats = createPlayerStats();
 
     const deathSystem = new PlayerDeathSystem(
       ship,
@@ -248,6 +244,10 @@ describe('Reinforced Hull — System & State Integration (Story 11.8)', () => {
       null,
       playerStats,
     );
+
+    playerStats.extraLives = 99; // out of range, should clamp to 3
+    playerStats.respawnIFramesMs = -500; // negative, should clamp to 0
+    playerStats.softenMultiplierReset = NaN; // non-finite, should evaluate as disabled
 
     deathSystem.fixedUpdate(16.6);
     expect(playerState.lives).toBe(6); // 3 + 3 clamped

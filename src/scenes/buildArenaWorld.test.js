@@ -564,6 +564,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     // The three consumers hold THIS instance.
     expect(ctx.playerMovementSystem.dashSystem).toBe(ctx.dashSystem);
     expect(ctx.playerDeathSystem.dashSystem).toBe(ctx.dashSystem);
+    expect(ctx.playerDeathSystem.playerStats).toBe(ctx.playerStats);
     expect(ctx.particleSystem.dashSystem).toBe(ctx.dashSystem);
     // …and the movement system reads the SAME store the fold mutates.
     expect(ctx.playerMovementSystem.playerStats).toBe(ctx.playerStats);
