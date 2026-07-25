@@ -2,7 +2,7 @@
 title: 'Story 11.7 — Gravity Well'
 type: 'feature'
 created: '2026-07-24'
-status: 'done'
+status: 'in-review'
 review_loop_iteration: 0
 followup_review_recommended: false
 baseline_revision: '84aaa4a4f826e6f3bff8d49641fef2d58ed2bb0a'
