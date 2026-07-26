@@ -9,6 +9,35 @@ import { applyCard } from '../state/ProgressionState.js';
 import { recomputePlayerStats } from '../state/PlayerStats.js';
 import { drawCardOffer } from './cardOffer.js';
 
+/**
+ * True when `v` is a PLAIN object — an object literal or a null-prototype object, and
+ * NOT an array, Map, Set, Date, typed array or class instance. Deliberately a check on
+ * the CONTAINER only, never on the field values: the I/O contract requires a
+ * degenerate `fireRateMult`/`damageMult` (missing, 0, negative, NaN, a string) to be
+ * SANITIZED to the base at read time, not to throw, so field-level validation belongs
+ * elsewhere. Construction-time only.
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+function isPlainObject(v) {
+  if (typeof v !== 'object' || v === null) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * A short human label for a rejected `playerStats` argument, so the thrown message
+ * names what actually arrived rather than the useless "object".
+ * @param {unknown} v
+ * @returns {string}
+ */
+function describeBadStore(v) {
+  if (Array.isArray(v)) return 'array';
+  if (typeof v !== 'object') return typeof v;
+  const name = v.constructor && v.constructor.name;
+  return name && name !== 'Object' ? `${name} instance` : 'a non-plain object';
+}
+
 // LevelUpSystem — the sim-side state machine of the Epic 8 level-up moment (Story 8.3,
 // Phaser-free).
 //
@@ -108,13 +137,14 @@ export class LevelUpSystem extends System {
     }
     // Same trap one slot over: a caller that threaded `rng` at arg 5 would pass the
     // check above (registry is fine) and bind its rng to `playerStats`, leaving `rng`
-    // defaulted to Math.random — the offer silently leaves the SEEDABLE stream and the
-    // fold writes stat fields onto the rng function, with nothing thrown. `playerStats`
-    // is a plain object or absent; a function is never valid here.
-    if (playerStats != null && typeof playerStats !== 'object') {
+    // defaulted to Math.random. `playerStats` is a plain object or absent — any
+    // non-plain container is never valid here. Mirrors FiringSystem's arg-3 guard.
+    if (playerStats != null && !isPlainObject(playerStats)) {
       throw new TypeError(
-        'LevelUpSystem: `playerStats` (arg 5) must be a PlayerStats object or omitted — ' +
-          'note that `rng` moved to arg 6 in Story 10.1.',
+        'LevelUpSystem: `playerStats` (arg 5) must be a PlayerStats object ' +
+          '(a plain object) or omitted — ' +
+          `received ${describeBadStore(playerStats)}. ` +
+          'Did you pass a positional argument in the wrong slot?',
       );
     }
     this.levelSystem = levelSystem;

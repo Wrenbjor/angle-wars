@@ -68,12 +68,37 @@ describe('LevelUpSystem — constructor argument guards (Story 10.1 signature sh
     );
   });
 
-  it('throws when `playerStats` (arg 5) is not an object — the stale rng-at-slot-5 call', () => {
+  it.each([
+    ['a number', 42],
+    ['a string', 'stats'],
+    ['a boolean', true],
+    ['a function', () => {}],
+    ['an array', []],
+    // Everything below is `typeof === 'object'`, so a bare type test would let it
+    // through as an empty stat store — base calcs and a silent fold onto the wrong
+    // object for the whole run with no diagnostic. These are the shapes actually in
+    // scope at the buildArenaWorld call site, i.e. the wrong-slot mistake the guard
+    // names.
+    ['a Map', new Map([['fireRateMult', 1.4]])],
+    ['a Set', new Set()],
+    ['a Date', new Date(0)],
+    ['a typed array', new Int32Array(2)],
+  ])(
+    'throws when `playerStats` (arg 5) is present but is %s',
+    (_label, bad) => {
+      const rng = seqRng();
+      expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, bad)).toThrow(TypeError);
+      expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, bad)).toThrow(
+        /`playerStats` \(arg 5\)/,
+      );
+    },
+  );
+
+  it('names what actually arrived, not just "object"', () => {
     const rng = seqRng();
-    expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, rng)).toThrow(TypeError);
-    expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, rng)).toThrow(
-      /`playerStats` \(arg 5\)/,
-    );
+    expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, new Map())).toThrow(/Map instance/);
+    expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, [])).toThrow(/array/);
+    expect(() => new LevelUpSystem(...args(), ITEM_REGISTRY, 42)).toThrow(/number/);
   });
 
   it('accepts the correct 6-arg call, and an omitted `playerStats` (pre-10.1 stubs)', () => {
