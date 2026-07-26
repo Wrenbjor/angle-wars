@@ -193,17 +193,20 @@ describe('PinwheelSystem — wall bounce (reflection)', () => {
   it('bounces off the +x wall: clamps to maxX, negates vx, keeps vy + magnitude', () => {
     const system = makeSystem();
     // Just inside maxX, drifting +x fast enough to cross this tick.
+    // y=360 is arena center on y, so centerward nudge is purely horizontal
+    // (same direction as reflected vx) — no angle change, just magnitude recovery.
     const pw = placePinwheel(system, MAX_X - 1, 360, PINWHEEL_DRIFT_SPEED, 0, 0);
     system.fixedUpdate(DT);
 
     expect(pw.x).toBe(MAX_X); // clamped to the bound
-    expect(pw.vx).toBe(-PINWHEEL_DRIFT_SPEED); // reflected
+    expect(pw.vx).toBe(-PINWHEEL_DRIFT_SPEED); // reflected, centered back to drift speed
     expect(pw.vy).toBe(0); // untouched
     expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
   });
 
   it('bounces off the −x wall: clamps to minX, negates vx', () => {
     const system = makeSystem();
+    // y=360 is arena center — centerward nudge is purely horizontal.
     const pw = placePinwheel(system, MIN_X + 1, 360, -PINWHEEL_DRIFT_SPEED, 0, 0);
     system.fixedUpdate(DT);
 
@@ -212,25 +215,28 @@ describe('PinwheelSystem — wall bounce (reflection)', () => {
     expect(pw.vy).toBe(0);
   });
 
-  it('bounces off the +y wall: clamps to maxY, negates vy, keeps vx + magnitude', () => {
+  it('bounces off the +y wall: clamps to maxY, negates vy, keeps vx + magnitude + centerward nudge', () => {
+    // x=ArenaCenter=780 so centerward nudge is purely +y (same dir as reflected vy).
     const system = makeSystem();
-    const pw = placePinwheel(system, 640, MAX_Y - 1, 0, PINWHEEL_DRIFT_SPEED, 0);
+    const pw = placePinwheel(system, ARENA_WIDTH / 2, MAX_Y - 1, 0, PINWHEEL_DRIFT_SPEED, 0);
     system.fixedUpdate(DT);
 
     expect(pw.y).toBe(MAX_Y);
-    expect(pw.vy).toBe(-PINWHEEL_DRIFT_SPEED);
-    expect(pw.vx).toBe(0);
+    expect(pw.vy).toBeCloseTo(-PINWHEEL_DRIFT_SPEED, 9);
+    expect(pw.vx).toBeCloseTo(0, 9); // purely vertical
     expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
   });
 
-  it('bounces off the −y wall: clamps to minY, negates vy', () => {
+  it('bounces off the −y wall: clamps to minY, negates vy + centerward nudge', () => {
+    // x=ArenaCenter=780 so centerward nudge is purely −y (same dir as reflected vy).
     const system = makeSystem();
-    const pw = placePinwheel(system, 640, MIN_Y + 1, 0, -PINWHEEL_DRIFT_SPEED, 0);
+    const pw = placePinwheel(system, ARENA_WIDTH / 2, MIN_Y + 1, 0, -PINWHEEL_DRIFT_SPEED, 0);
     system.fixedUpdate(DT);
 
     expect(pw.y).toBe(MIN_Y);
-    expect(pw.vy).toBe(PINWHEEL_DRIFT_SPEED);
-    expect(pw.vx).toBe(0);
+    expect(pw.vy).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
+    expect(pw.vx).toBeCloseTo(0, 9); // purely vertical
+    expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
   });
 
   it('corner bounce: both axes reflect independently and clamp into the corner', () => {
@@ -241,9 +247,50 @@ describe('PinwheelSystem — wall bounce (reflection)', () => {
 
     expect(pw.x).toBe(MAX_X);
     expect(pw.y).toBe(MAX_Y);
-    expect(pw.vx).toBeCloseTo(-v, 9);
-    expect(pw.vy).toBeCloseTo(-v, 9);
+    // Centerward nudge: center is at (780, 360), pinwheel at (MAX_X, MAX_Y).
+    // Both reflected components point inward; nudge adds more inward bias.
+    expect(pw.vx).toBeLessThan(0);
+    expect(pw.vy).toBeLessThan(0);
     expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
+  });
+
+  it('centerward nudge: grazing pinwheel at wall peels toward arena center', () => {
+    // Pinwheel at top wall, heading right and UP (negative vy to hit wall).
+    // Centerward nudge angles heading more downward (toward arena center).
+    const system = makeSystem();
+    // Start near left edge, very close to top wall, heading right at ~-45 deg.
+    // vy = -92 ensures y crosses below MIN_Y after 0.2s integration.
+    const pw = placePinwheel(
+      system,
+      MIN_X + 10,
+      MIN_Y + 0.1, // very close to wall
+      PINWHEEL_DRIFT_SPEED * 0.707,  // rightward
+      -PINWHEEL_DRIFT_SPEED * 0.707, // upward (negative = toward wall)
+      0,
+    );
+    system.fixedUpdate(DT);
+
+    // After integration: y = MIN_Y + 0.1 + (-92 * 0.2) = MIN_Y - 18.3 < MIN_Y.
+    // Triggered: clamped to boundary.
+    expect(pw.y).toBe(MIN_Y);
+    // vy after reflection = +92 (was -92), + centerward nudge.
+    expect(pw.vy).toBeGreaterThan(0); // heading down (away from top wall)
+    // Tangential vx preserved and redirected by nudge.
+    expect(pw.vx).toBeGreaterThan(0); // still moving right
+    // Speed preserved at drift speed.
+    expect(Math.hypot(pw.vx, pw.vy)).toBeCloseTo(PINWHEEL_DRIFT_SPEED, 9);
+  });
+
+  it('head-on bounce: heading already inward after reflection, nudge reinforces it', () => {
+    // Pinwheel heads straight +x at +x wall → reflects to −x (already inward).
+    // Centerward nudge is purely −x (same direction), so result is −drift_speed.
+    const system = makeSystem();
+    const pw = placePinwheel(system, MAX_X - 1, 360, PINWHEEL_DRIFT_SPEED, 0, 0);
+    system.fixedUpdate(DT);
+
+    expect(pw.x).toBe(MAX_X);
+    expect(pw.vx).toBeCloseTo(-PINWHEEL_DRIFT_SPEED, 9); // fully inward
+    expect(pw.vy).toBe(0);
   });
 });
 

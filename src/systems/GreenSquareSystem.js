@@ -147,13 +147,36 @@ export class GreenSquareSystem extends System {
         s.vy = 0;
       }
 
-      // 3. Integrate, then clamp into the arena on each axis.
+      // 3. Integrate, then wall-aware clamp-with-reflection on each axis.
+      //    Position-clamped squares now reflect the normal velocity component
+      //    (not a hard park) so they bounce off walls rather than sliding
+      //    along the border.  Tangential (vy / vx) is preserved; magnitude
+      //    is re-normalized to flee/chase speed so the direction changes
+      //    naturally but speed stays constant.
       s.x += s.vx * dtSec;
       s.y += s.vy * dtSec;
-      if (s.x < minX) s.x = minX;
-      else if (s.x > maxX) s.x = maxX;
-      if (s.y < minY) s.y = minY;
-      else if (s.y > maxY) s.y = maxY;
+      const spd = s.aggro ? GREEN_SQUARE_CHASE_SPEED : GREEN_SQUARE_FLEE_SPEED;
+      if (s.x < minX) {
+        s.x = minX;
+        s.vx = -s.vx;
+      } else if (s.x > maxX) {
+        s.x = maxX;
+        s.vx = -s.vx;
+      }
+      if (s.y < minY) {
+        s.y = minY;
+        s.vy = -s.vy;
+      } else if (s.y > maxY) {
+        s.y = maxY;
+        s.vy = -s.vy;
+      }
+      // Re-normalize speed after wall reflection (the reflected vector's
+      // magnitude may differ from the original flee/chase speed).
+      const bounceSpeed = Math.hypot(s.vx, s.vy);
+      if (bounceSpeed > 0) {
+        s.vx = (s.vx / bounceSpeed) * spd;
+        s.vy = (s.vy / bounceSpeed) * spd;
+      }
     });
   }
 

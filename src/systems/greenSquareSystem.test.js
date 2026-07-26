@@ -228,6 +228,83 @@ describe('GreenSquareSystem — wall clamp', () => {
     expect(s.x).toBe(MAX_X);
     expect(s.y).toBe(MAX_Y);
   });
+
+  it('bounces off the −y wall: clamps position, reflects vy', () => {
+    // dtSec = FIXED_STEP_MS / 1000 ≈ 0.0167 → displacement = 120 * 0.0167 ≈ 2px/frame.
+    // Ship at bottom → square flees UP (−y). Start y=40, y = 40−2 = 38 < MIN_Y(39).
+    const ship = makeShip(780, 720);
+    let sys = new GreenSquareSystem(ship, new Pool(createBullet), seqRng([0.1, 0.5]));
+    let s = placeSquare(sys, 780, 40);
+    sys.fixedUpdate(DT);
+
+    expect(s.y).toBe(MIN_Y);
+    expect(s.vx).toBeCloseTo(0, 6);
+    expect(s.vy).toBeCloseTo(GREEN_SQUARE_FLEE_SPEED, 6);
+    expect(Math.hypot(s.vx, s.vy)).toBeCloseTo(GREEN_SQUARE_FLEE_SPEED, 6);
+  });
+
+  it('bounces off the +x wall: clamps position, reflects vx', () => {
+    // Start x=MAX_X(1521)−1=1520, +2px → 1522 > 1521 → clamped.
+    const ship = makeShip(640, 360);
+    let sys = new GreenSquareSystem(ship, new Pool(createBullet), seqRng([0.1, 0.5]));
+    let s = placeSquare(sys, 1520, 360);
+    sys.fixedUpdate(DT);
+
+    expect(s.x).toBe(MAX_X);
+    expect(s.vx).toBeCloseTo(-GREEN_SQUARE_FLEE_SPEED, 6);
+    expect(s.vy).toBeCloseTo(0, 6);
+    expect(Math.hypot(s.vx, s.vy)).toBeCloseTo(GREEN_SQUARE_FLEE_SPEED, 6);
+  });
+
+  it('bounces off the +y wall: reflects vy inward', () => {
+    // Ship at y=38 above square. Square near top wall flees +y, reflects inward.
+    const ship = makeShip(780, 38);
+    let sys = new GreenSquareSystem(ship, new Pool(createBullet), seqRng([0.1, 0.5]));
+    let s = placeSquare(sys, 780, MAX_Y - 0.5);
+    sys.fixedUpdate(DT);
+
+    expect(s.y).toBe(MAX_Y);
+    expect(s.vy).toBeCloseTo(-GREEN_SQUARE_FLEE_SPEED, 6); // reflected inward
+    expect(Math.hypot(s.vx, s.vy)).toBeCloseTo(GREEN_SQUARE_FLEE_SPEED, 6);
+  });
+
+  it('bounces off the −x wall: reflects vx inward', () => {
+    // Ship far right → square flees −x, hits left wall, vx reflected inward.
+    const ship = makeShip(1550, 360);
+    let sys = new GreenSquareSystem(ship, new Pool(createBullet), seqRng([0.1, 0.5]));
+    let s = placeSquare(sys, MIN_X + 0.5, 360);
+    sys.fixedUpdate(DT);
+
+    expect(s.x).toBe(MIN_X);
+    expect(s.vx).toBeCloseTo(GREEN_SQUARE_FLEE_SPEED, 6); // reflected inward (+x)
+    expect(Math.hypot(s.vx, s.vy)).toBeCloseTo(GREEN_SQUARE_FLEE_SPEED, 6);
+  });
+
+  it('corner bounce: both axes reflect independently', () => {
+    // Ship in bottom-left → flee heads +x, +y from top-right corner area.
+    const ship = makeShip(MIN_X, MIN_Y);
+    let sys = new GreenSquareSystem(ship, new Pool(createBullet), seqRng([0.1, 0.5]));
+    // Start near top-right, fleeing +x, +y.
+    let sq = placeSquare(sys, MAX_X - 0.5, MAX_Y - 0.5);
+    sys.fixedUpdate(DT);
+
+    expect(sq.x).toBe(MAX_X);
+    expect(sq.y).toBe(MAX_Y);
+    // Both components reflected (flee was +x, +y; now −x, −y pointing inward).
+    expect(sq.vx).toBeLessThan(0);
+    expect(sq.vy).toBeLessThan(0);
+  });
+
+  it('aggressive chase: reflects off wall instead of parking against it', () => {
+    // Ship at right → chase +x. When square reaches right wall, it bounces back.
+    const { system } = makeSystem(makeShip(ARENA_WIDTH - 10, ARENA_HEIGHT / 2));
+    const s = placeSquare(system, MAX_X - 0.5, ARENA_HEIGHT / 2, true);
+    // Chase velocity is toward ship (+x, 0 from center).
+    system.fixedUpdate(DT);
+
+    expect(s.x).toBe(MAX_X);
+    expect(s.vx).toBeLessThan(0); // bounced back (was positive, now negative)
+  });
 });
 
 describe('GreenSquareSystem — frame-rate independence', () => {

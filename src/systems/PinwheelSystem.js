@@ -124,19 +124,46 @@ export class PinwheelSystem extends System {
 
       // 3. Wall bounce: clamp to the crossed bound and reflect that component
       //    (negating preserves |v|). Corners reflect both axes independently.
+      //    After reflection, nudge heading toward arena center (DW-12) so a
+      //    grazing pinwheel peels off the border promptly instead of sliding.
+      let bounced = false;
       if (pw.x < minX) {
         pw.x = minX;
         pw.vx = -pw.vx;
+        bounced = true;
       } else if (pw.x > maxX) {
         pw.x = maxX;
         pw.vx = -pw.vx;
+        bounced = true;
       }
       if (pw.y < minY) {
         pw.y = minY;
         pw.vy = -pw.vy;
+        bounced = true;
       } else if (pw.y > maxY) {
         pw.y = maxY;
         pw.vy = -pw.vy;
+        bounced = true;
+      }
+      // DW-12: 25% centerward drift blend on wall bounce to prevent wall-hug.
+      // The nudge is purely geometric (arena center), not player-tracking.
+      if (bounced) {
+        const cx = ARENA_WIDTH / 2 - pw.x;
+        const cy = ARENA_HEIGHT / 2 - pw.y;
+        const dist = Math.hypot(cx, cy);
+        if (dist > 0) {
+          const ndx = (cx / dist) * PINWHEEL_DRIFT_SPEED * 0.25;
+          const ndy = (cy / dist) * PINWHEEL_DRIFT_SPEED * 0.25;
+          pw.vx = pw.vx * 0.75 + ndx;
+          pw.vy = pw.vy * 0.75 + ndy;
+          // Normalize back to exact drift speed.
+          const speed = Math.hypot(pw.vx, pw.vy);
+          if (speed > 0) {
+            const scale = PINWHEEL_DRIFT_SPEED / speed;
+            pw.vx *= scale;
+            pw.vy *= scale;
+          }
+        }
       }
     });
   }
