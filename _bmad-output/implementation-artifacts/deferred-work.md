@@ -428,7 +428,8 @@ origin: review-budget-followup
 source_spec: `spec-10-1-item-and-upgrade-framework.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260723-101850-abdc; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-26
+resolution: already resolved: Story 10-1 finished (verify=green). The follow-up review was created when max_followup_reviews=1 damping cap was spent. Substantive concerns are preserved as open bundle entries below. No separate review pass needed.
 
 ### DW-370: Fractional per-hit damage is deliberately NOT credited to the DPS/governor signal — the ring still counts hits, so damage-only build power is invisible to the spawn director
 origin: spec-authored deferral (intent-contract `Never` clause)
@@ -478,7 +479,8 @@ origin: review-budget-followup
 source_spec: `spec-10-2-overcharge.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260723-101850-abdc; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-26
+resolution: already resolved: Story 10-2 finished (verify=green). Substantive findings are captured as open bundles in this result. The follow-up review bookkeeping entry is superseded.
 
 - source_spec: `spec-10-3-spread-cannon.md`
   summary: A 9-way volley saturates the Epic 9 adaptive spawn governor — `SpawnDirector.pressure` pins at its `SPAWN_DIRECTOR_MAX_PRESSURE = 2` hard cap for any run carrying a maxed Spread Cannon, so the "damped lever that tracks build power smoothly" becomes a constant.
@@ -509,7 +511,8 @@ origin: review-budget-followup
 source_spec: `spec-10-3-spread-cannon.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260723-101850-abdc; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-26
+resolution: already resolved: Story 10-3 finished (verify=green). Substantive findings captured as bundles in this result.
 
 - source_spec: `spec-10-4-nanite-shield.md`
   summary: The Nanite Shield absorbs a Black Hole DETONATION, converting Epic 6's deliberate life-for-screen-clear trade into a screen clear paid for with a charge that regenerates in 10–20s.
@@ -528,7 +531,8 @@ origin: review-budget-followup
 source_spec: `spec-10-4-nanite-shield.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260723-101850-abdc; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-26
+resolution: already resolved: Story 10-4 finished (verify=green). Substantive findings captured as bundles in this result.
 
 - source_spec: `spec-10-5-afterburner.md`
   summary: `bombQueued` has the identical pause-edge buffering gap that Story 10.5 fixed for `dashQueued` — a bomb latched into `InputState` before a pause fires the instant the run resumes.
@@ -567,7 +571,8 @@ origin: review-budget-followup
 source_spec: `spec-11-2-seeker-drones.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260723-101850-abdc; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-07-26
+resolution: already resolved: Story 11-2 finished (verify=green). Substantive findings captured as bundles in this result.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-11-3-mine-layer.md`
   summary: MineLayerSystem never releases live mines when the Mine Layer goes owned→unowned, so orphaned armed mines keep aging/pulling/detonating (free damage) after the item is gone.
