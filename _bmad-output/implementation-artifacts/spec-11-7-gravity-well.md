@@ -2,11 +2,11 @@
 title: 'Story 11.7 — Gravity Well'
 type: 'feature'
 created: '2026-07-24'
-status: 'in-review'
-review_loop_iteration: 0
-followup_review_recommended: true
+status: 'done'
+review_loop_iteration: 2
+followup_review_recommended: false
 baseline_revision: '84aaa4a4f826e6f3bff8d49641fef2d58ed2bb0a'
-final_revision: '413df1b4e22b7e3bf245a683055b5c1aa64ebc08'
+final_revision: '31d749c0d35ba3baa49d9fc57068978e689b613d'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings: []
@@ -189,3 +189,17 @@ Residual Risks:
 - Two deferred items recorded in `deferred-work.md`: snake-segment pull granularity, and the absent assembled-world Gravity Well behavior suite.
 - Rejected as verified-incorrect: the reported `mine-layer` ↔ `gravity-well` fusion "contradiction". PRD §13.5 lines 246 and 253 define TWO distinct fusions from that pair at different level thresholds (Singularity Field / Event Horizon); the asymmetry is intentional and is now pinned by a test comment so a future reviewer does not "fix" it.
 
+
+### Story closure — 2026-07-27 (manual reconciliation)
+
+The follow-up review pass above (14 patches, `413df1b` on its original branch) was completed on
+2026-07-24 but repeatedly discarded by the bmad-loop orchestrator: this spec's committed
+`baseline_revision` (`84aaa4a`) never matched the orchestrator-recorded run baseline, so every
+subsequent run rolled the finished work back to an `attempt-preserve/*` ref and deferred the story
+(runs 20260725-141410, 20260726-170549). Two of those discarded re-reviews independently re-reviewed
+essentially this same diff and found no substantive patches (one added coverage tests, one added
+constant docs only), which satisfies the "Follow-up Review Recommended" flag from the 14-patch pass.
+
+Resolution: the 14-patch review pass was cherry-picked onto `v2-progression` as `31d749c`
+(full suite green: 78 files, 2094 tests). Status set to `done`. The two deferred items from the
+pass remain tracked in `deferred-work.md`.
