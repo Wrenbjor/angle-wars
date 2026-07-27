@@ -2,10 +2,11 @@
 title: 'Story 11.8 — Reinforced Hull'
 type: 'feature'
 created: '2026-07-24'
-status: 'in-review'
+status: 'done'
 baseline_revision: 'c7cf001c7d0f979e9c0148055e4e34c919098bc9'
-review_loop_iteration: 0
-followup_review_recommended: true
+review_loop_iteration: 2
+followup_review_recommended: false
+final_revision: '5a76716118b6049a085ddc013c2714cc98eb487e'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-11-context.md'
 warnings: []
@@ -117,3 +118,16 @@ No spec amendments.
 - `npx vitest run src/config/itemRegistry.test.js src/state/playerStats.test.js` -- expected: registry and playerStats test suites pass.
 - `npm test` -- expected: entire test suite passes without regressions.
 - `npm run build` -- expected: production build succeeds.
+
+### Story closure — 2026-07-27 (manual reconciliation)
+
+The 5-patch review pass above was completed on 2026-07-25 (run 20260725-132316) but discarded by
+the bmad-loop orchestrator: this spec's committed `baseline_revision` (`c7cf001`) never matched the
+orchestrator-recorded run baseline, so the finished work was rolled back to an `attempt-preserve/*`
+ref and the story deferred (again in runs 20260725-141410 and 20260726-170549). A later discarded
+re-review of the same diff found only one candidate patch — removing `REINFORCED_HULL_IFRAMES_BONUS_MS`
+as unused — which is superseded by this pass's constants-import fix that makes `itemRegistry.js` use
+that constant; the removal was deliberately NOT landed.
+
+Resolution: the review pass was cherry-picked onto `v2-progression` as `5a76716`
+(full suite green: 78 files, 2094 tests). Status set to `done`.
