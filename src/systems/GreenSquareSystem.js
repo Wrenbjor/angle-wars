@@ -14,6 +14,7 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // GreenSquareSystem — Green Square flee/aggro behavior (Phaser-free).
@@ -44,18 +45,29 @@ import {
 // possible and re-closing over forEachActive per square would allocate).
 export class GreenSquareSystem extends System {
   /**
-   * @param {{x:number,y:number}} ship The flee/home reference (read-only here —
-   *   the ship is never a collider in this system, only a reference point).
-   * @param {import('../core/Pool.js').Pool} bulletPool Active bullets, read only
-   *   for threat detection (never mutated here).
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for spawn
-   *   edge and placement; injectable so cadence/placement are unit-testable.
-   */
-  constructor(ship, bulletPool, rng = Math.random) {
+     * @param {{x:number,y:number}} ship The flee/home reference (read-only here —
+     *   the ship is never a collider in this system, only a reference point).
+     * @param {import('../core/Pool.js').Pool} bulletPool Active bullets, read only
+     *   for threat detection (never mutated here).
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared
+     *   runtime modifier store (Story 11.10: chronoSlowPercent), OR a legacy
+     *   `rng` function for backward compatibility with existing callers.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for spawn edge and
+     *   placement; injectable so cadence/placement are unit-testable.
+     */
+  constructor(ship, bulletPool, playerStatsOrRng, rng = Math.random) {
     super();
     this.ship = ship;
     this.bulletPool = bulletPool;
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (ship, bulletPool, rng) without
+      // playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
 
     /** Pool of green squares — the single source of active/free truth (public
      *  for the collision/death systems and the renderer). */
@@ -83,6 +95,7 @@ export class GreenSquareSystem extends System {
   fixedUpdate(dt) {
     const dtSec = dt / 1000;
     const ship = this.ship;
+    const slowFactor = this._slowPercent();
 
     // Materialize active bullets once into reusable scratch (no per-square alloc).
     const bullets = this._bullets;
@@ -153,8 +166,8 @@ export class GreenSquareSystem extends System {
       //    along the border.  Tangential (vy / vx) is preserved; magnitude
       //    is re-normalized to flee/chase speed so the direction changes
       //    naturally but speed stays constant.
-      s.x += s.vx * dtSec;
-      s.y += s.vy * dtSec;
+      s.x += s.vx * dtSec * (1 - slowFactor);
+      s.y += s.vy * dtSec * (1 - slowFactor);
       const spd = s.aggro ? GREEN_SQUARE_CHASE_SPEED : GREEN_SQUARE_FLEE_SPEED;
       if (s.x < minX) {
         s.x = minX;
@@ -181,7 +194,21 @@ export class GreenSquareSystem extends System {
   }
 
   /**
-   * Spawn one green square on a random arena edge, fully inside the drawn border
+    * Sanitize the chrono slow percent from the shared player-stats store.
+    * Returns 0 when no playerStats; clamps to [0, CHRONO_SLOW_FACTOR_MAX].
+    * @returns {number}
+    * @private
+    */
+  _slowPercent() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
+  }
+
+  /**
+    * Spawn one green square on a random arena edge, fully inside the drawn border
    * (the fixed axis pinned just inside the inset by the radius, the free axis
    * uniform along the edge). Story 2.6: the placement re-rolls (bounded) to keep
    * the point ≥ SPAWN_SAFE_RADIUS from the ship, and the fresh square starts

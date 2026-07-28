@@ -151,7 +151,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // ship's post-move position this tick (firing does not move the ship);
   // CollisionSystem must run after both FiringSystem and EnemySystem so it sees
   // post-move bullet and seeker positions.
-  const enemySystem = new EnemySystem(ship, _rng);
+  const enemySystem = new EnemySystem(ship, playerStats, _rng);
   world.addSystem(enemySystem);
   // GreenSquareSystem owns its own pool-per-archetype (never merged into the
   // Seeker pool). It runs after EnemySystem and BEFORE CollisionSystem so a
@@ -160,6 +160,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const greenSquareSystem = new GreenSquareSystem(
     ship,
     firingSystem.bulletPool,
+    playerStats,
     _rng,
   );
   world.addSystem(greenSquareSystem);
@@ -167,14 +168,14 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // enemy pool). It runs after GreenSquareSystem and BEFORE CollisionSystem, and
   // is INDIFFERENT to the player — its constructor takes only an rng (no ship,
   // no bullet pool).
-  const pinwheelSystem = new PinwheelSystem(_rng);
+  const pinwheelSystem = new PinwheelSystem(playerStats, _rng);
   world.addSystem(pinwheelSystem);
   // SnakeSystem owns its own shared segment pool-per-archetype (never merged
   // into another enemy pool). It runs after PinwheelSystem and BEFORE
   // CollisionSystem, and is INDIFFERENT to the player. It reads
   // collisionSystem.killedEnemies (late-bound below) only to split the chain
   // where a segment was destroyed the prior tick.
-  const snakeSystem = new SnakeSystem(_rng);
+  const snakeSystem = new SnakeSystem(playerStats, _rng);
   world.addSystem(snakeSystem);
   // The shared run-economy and player-lifecycle states are created HERE (Story 6.3),
   // before the enemy-section systems that need them. Both are plain-data objects with
@@ -207,6 +208,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     firingSystem.bulletPool,
     playerState,
     scoreState,
+    playerStats,
     _rng,
   );
   world.addSystem(mirrorReflectorSystem);
@@ -219,7 +221,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // spawnable) and BEFORE CollisionSystem (so a fresh armored exists for this tick's
   // collision/death). Its spawn is gated by a late-bound canSpawn() reading the
   // director's elapsed/pressure (wired after the director is constructed).
-  const armoredSystem = new ArmoredSystem(ship, _rng);
+  const armoredSystem = new ArmoredSystem(ship, playerStats, _rng);
   world.addSystem(armoredSystem);
   // SpawnDirector is the SOLE spawn authority for the four combat archetypes
   // (each no longer self-spawns). It is added AFTER SnakeSystem and BEFORE
@@ -509,6 +511,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     enemyPools,
     scoreState,
     playerState,
+    playerStats,
     _rng,
   );
   world.addSystem(blackHoleSystem);

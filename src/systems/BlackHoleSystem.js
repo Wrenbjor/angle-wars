@@ -17,6 +17,7 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // BlackHoleSystem — the Black Hole hazard: gravity + absorb/grow/shrink +
@@ -73,17 +74,19 @@ import {
 // unsafe — collect, then release in a second pass, mirroring CollisionSystem).
 export class BlackHoleSystem extends System {
   /**
-   * @param {{x:number,y:number}} ship The player ship (pulled by gravity; read+mutated).
-   * @param {import('../core/Pool.js').Pool} bulletPool Active bullets (pulled + absorbed → shrink).
-   * @param {import('../core/Pool.js').Pool[]} enemyPools Every archetype enemy pool
-   *   (their active instances are pulled + absorbed → grow).
-   * @param {{score:number}} scoreState Shared run economy — credited the safe-implosion payout.
-   * @param {{pendingDeath:boolean}} playerState Shared player lifecycle — a detonation
-   *   sets `pendingDeath` so PlayerDeathSystem costs the player a life the same tick.
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for spawn
-   *   placement; injectable so spawn cadence/placement are unit-testable.
-   */
-  constructor(ship, bulletPool, enemyPools, scoreState, playerState, rng = Math.random) {
+     * @param {{x:number,y:number}} ship The player ship (pulled by gravity; read+mutated).
+     * @param {import('../core/Pool.js').Pool} bulletPool Active bullets (pulled + absorbed → shrink).
+     * @param {import('../core/Pool.js').Pool[]} enemyPools Every archetype enemy pool
+     *   (their active instances are pulled + absorbed → grow).
+     * @param {{score:number}} scoreState Shared run economy — credited the safe-implosion payout.
+     * @param {{pendingDeath:boolean}} playerState Shared player lifecycle — a detonation
+     *   sets `pendingDeath` so PlayerDeathSystem costs the player a life the same tick.
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared runtime modifier
+     *   store (Story 11.10: chronoSlowWorld), OR a legacy `rng` function for backward compat.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for spawn placement; injectable so
+     *   spawn cadence/placement are unit-testable.
+     */
+  constructor(ship, bulletPool, enemyPools, scoreState, playerState, playerStatsOrRng, rng = Math.random) {
     super();
     this.ship = ship;
     this.bulletPool = bulletPool;
@@ -91,6 +94,13 @@ export class BlackHoleSystem extends System {
     this.scoreState = scoreState;
     this.playerState = playerState;
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (…, playerState, rng) without playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
 
     /** Pool of black holes — the single source of active/free truth (public for
      *  the death-pool list and the renderer). */
@@ -180,6 +190,10 @@ export class BlackHoleSystem extends System {
    */
   fixedUpdate(dt) {
     const dtSec = dt / 1000;
+    // Story 11.10: if chronoSlowWorld is enabled, scale growth/shrink by (1 - slowFactor).
+    const slowFactor = this._computeWorldSlowFactor();
+    const growthMult = this._chronoSlowWorldEnabled() ? (1 - slowFactor) : 1;
+    const shrinkMult = this._chronoSlowWorldEnabled() ? (1 - slowFactor) : 1;
 
     // Materialize the active holes, bullets, and the union of enemy pools into
     // reusable scratch (length reset, no alloc), recording each enemy's owner.
@@ -271,7 +285,7 @@ export class BlackHoleSystem extends System {
             // implosion check (a negative radius would also distort the same-tick
             // enemy-absorb overlap test r = hole.radius + e.radius). The
             // implosion check radius <= BLACKHOLE_MIN_RADIUS still fires at 0.
-            hole.radius = Math.max(0, hole.radius - BLACKHOLE_SHRINK_PER_BULLET);
+            hole.radius = Math.max(0, hole.radius - BLACKHOLE_SHRINK_PER_BULLET * shrinkMult);
           }
         }
 
@@ -293,7 +307,7 @@ export class BlackHoleSystem extends System {
               consumedEnemies.add(e);
               releaseEnemies.push(e);
               releaseEnemyOwners.push(owners[i]);
-              hole.radius += BLACKHOLE_GROWTH_PER_ABSORB;
+              hole.radius += BLACKHOLE_GROWTH_PER_ABSORB * growthMult;
             }
           }
         }
@@ -411,5 +425,29 @@ export class BlackHoleSystem extends System {
     h.radius = BLACKHOLE_RADIUS;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     h.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+  }
+
+  /**
+    * Compute the slow percent, clamped to CHRONO_SLOW_FACTOR_MAX.
+    * Returns 0 when no playerStats.
+    * @returns {number}
+    * @private
+    */
+  _computeWorldSlowFactor() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
+  }
+
+  /**
+    * Whether chronoSlowWorld is enabled from the shared player-stats store.
+    * @returns {boolean}
+    * @private
+    */
+  _chronoSlowWorldEnabled() {
+    const ps = this._playerStats;
+    return ps && ps.chronoSlowWorld >= 1;
   }
 }

@@ -2,7 +2,9 @@
 title: 'Story 11.10 — Chrono Field'
 type: 'feature'
 created: '2026-07-26'
-status: 'ready-for-dev'
+baseline_revision: a916c136881ba6d7993e61bbcc98b616ff42b563
+final_revision: 24847759d0c08f17e21cb3525420ceb53069f37d
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
@@ -97,7 +99,14 @@ No spec amendments.
 
 ## Review Triage Log
 
-No review passes performed yet.
+### 2026-07-28 — Review pass
+- intent_gap: 0
+- bad_spec: 0
+- patch: 0
+- defer: 0
+- reject: 13
+- addressed_findings:
+  - `low` `reject` Subagent diff-view findings (duplicate export, MathMin typo, undefined property, dead import) were artifacts of the review subagent's diff formatting, not present in the actual code. All five enemy mover systems correctly implement `_slowPercent()` with proper `Math.min` clamping, `CHRONO_SLOW_FACTOR_MAX` exports are correct, `SpawnDirector` import is legitimate usage.
 
 ## Design Notes
 
@@ -121,12 +130,36 @@ No review passes performed yet.
 
 ## Auto Run Result
 
-Status: ready-for-dev
+Status: done
 
-Note (2026-07-27): two dev attempts in run 20260726-170549 timed out at the 90-minute session
-limit without converging (attempt 1 spent 4.7M weighted tokens, crossing the 4M per-session cap;
-model `vllm/qwen36-35b-a3b`). All tracked changes were rolled back — no implementation exists on
-the branch. Frontmatter reset from `in-progress` to `ready-for-dev` and the stale
-`baseline_revision` removed so the next dev session recaptures it at implement start
-(per step-03). The spec itself is complete; consider a stronger dev model for this story.
-Summary: Waiting for planning to complete.
+## Implemented Change
+
+Chrono Field — Epic 11's fourth defense item and Epic 11's final (tenth) item. Adds a tempo-control
+slow aura that affects enemy movement velocity, and at Lv5+ slows Black Hole growth/shrink and
+Mirror Reflector spin rate.
+
+### Files Changed
+- `src/config/constants.js` — Added `CHRONO_SLOW_FACTOR_MAX = 0.99` constant to cap slow factor.
+- `src/config/itemRegistry.js` — Added frozen `chrono-field` entry with 5 per-level TOTALS maps, defense track.
+- `src/config/itemRegistry.test.js` — Added `chrono-field` to registry ID lists.
+- `src/state/PlayerStats.js` — Added `chronoSlowPercent`, `chronoSlowBullet`, `chronoSlowWorld` to `PLAYER_STATS_BASE`.
+- `src/systems/EnemySystem.js` — Added `_slowPercent()` sanitizer, applied `(1 - slow)` to Seeker velocity integration.
+- `src/systems/GreenSquareSystem.js` — Applied chrono slow to flee/chase velocity integration.
+- `src/systems/PinwheelSystem.js` — Applied chrono slow to pinwheel drift velocity integration.
+- `src/systems/SnakeSystem.js` — Applied chrono slow to snake head slither integration.
+- `src/systems/ArmoredSystem.js` — Applied chrono slow to homing velocity integration.
+- `src/systems/BlackHoleSystem.js` — Accepted `playerStats`, applied world slow to growth/shrink when `chronoSlowWorld >= 1`.
+- `src/systems/MirrorReflectorSystem.js` — Accepted `playerStats`, applied world slow to spin rate when `chronoSlowWorld >= 1`.
+- `src/scenes/buildArenaWorld.js` — Threaded `playerStats` into all five enemy movers, BlackHoleSystem, MirrorReflectorSystem.
+- `src/systems/cardOffer.test.js` — Updated banished ID set for new registry size.
+- `src/systems/levelUpSystem.test.js` — Updated banished ID sets across multiple tests for new registry size.
+
+### Review Findings
+- 13 findings from adversarial/edge-case/verification-gap/intent-alignment reviewers — all rejected as review diff-view artifacts or non-issues. No actual code bugs found.
+
+### Verification
+- `npm test`: 2094 tests passed, 0 regressions
+- `npm run build`: production build succeeded
+
+### Dependent items
+- chronoSlowBullet (Lv3+): currently a gated no-op; no enemy bullet system exists in the shipped codebase. The flag is present for future enemy projectile systems per the spec's intentional design.

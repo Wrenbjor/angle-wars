@@ -9,6 +9,7 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // EnemySystem — Blue Seeker homing (Phaser-free).
@@ -29,15 +30,25 @@ import {
 // the prewarm builds the free list up front.
 export class EnemySystem extends System {
   /**
-   * @param {{x:number,y:number}} ship The homing target (read-only here — the
-   *   ship is never a collider in this story, only a target).
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for spawn
-   *   edge and placement; injectable so cadence/placement are unit-testable.
-   */
-  constructor(ship, rng = Math.random) {
+     * @param {{x:number,y:number}} ship The homing target (read-only here — the
+     *   ship is never a collider in this story, only a target).
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared
+     *   runtime modifier store (Story 11.10: chronoSlowPercent), OR an
+     *   `rng` function for backward compatibility with existing callers.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for spawn edge and
+     *   placement (required when `playerStats` is omitted in new-style calls).
+     */
+  constructor(ship, playerStatsOrRng, rng = Math.random) {
     super();
-    this.ship = ship;
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (ship, rng) without playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
+    this.ship = ship;
 
     /** Pool of seekers — the single source of active/free truth (public for
      *  the collision system and the renderer). */
@@ -61,6 +72,7 @@ export class EnemySystem extends System {
   fixedUpdate(dt) {
     const dtSec = dt / 1000;
     const ship = this.ship;
+    const slowFactor = this._slowPercent();
 
     // 1. Home + integrate each active seeker toward the ship's CURRENT position.
     //    Velocity is recomputed every tick so it continuously tracks a moving
@@ -97,9 +109,23 @@ export class EnemySystem extends System {
         s.vx = 0;
         s.vy = 0;
       }
-      s.x += s.vx * dtSec;
-      s.y += s.vy * dtSec;
+      s.x += s.vx * dtSec * (1 - slowFactor);
+      s.y += s.vy * dtSec * (1 - slowFactor);
     });
+  }
+
+  /**
+    * Sanitize the chrono slow percent from the shared player-stats store.
+    * Returns 0 when no playerStats; clamps to [0, CHRONO_SLOW_FACTOR_MAX].
+    * @returns {number}
+    * @private
+    */
+  _slowPercent() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
   }
 
   /**

@@ -33,6 +33,7 @@ const EXPECTED_IDS = [
   'gravity-well',
   'reinforced-hull',
   'bomb-capacitor',
+  'chrono-field',
 ];
 
 
@@ -243,6 +244,7 @@ describe('getItem / getItemsByTrack', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
     // Every returned entry actually belongs to the requested track.
     for (const i of offense) expect(i.track).toBe('offense');

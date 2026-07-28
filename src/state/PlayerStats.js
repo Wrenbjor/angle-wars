@@ -314,6 +314,18 @@ export const PLAYER_STATS_BASE = Object.freeze({
   bombStunMs: 0,
   bombXpOrbs: 0,
   bombDamageFieldMs: 0,
+  // Chrono Field (Story 11.10 / Epic 11). Defense item: time-dilation slow aura.
+  //  - chronoSlowPercent  : additive/count field, base 0. Fractional slow percent (0.2 = 20% slow).
+  //                         Effective velocity = baseSpeed × (1 - chronoSlowPercent). Clamped
+  //                         to [0, CHRONO_SLOW_FACTOR_MAX] (0.99) so enemies never reach zero
+  //                         velocity. Multiple slow sources stack additively.
+  //  - chronoSlowBullet   : FLAG (>= 1 enables slow for enemy bullets). Currently a gated
+  //                         no-op since no enemy bullet system exists in the shipped codebase.
+  //  - chronoSlowWorld    : FLAG (>= 1 enables slow for world systems — Black Hole growth/shrink
+  //                         and Mirror Reflector spin rate). Off at base; enabled at Lv5.
+  chronoSlowPercent: 0,
+  chronoSlowBullet: 0,
+  chronoSlowWorld: 0,
 });
 
 

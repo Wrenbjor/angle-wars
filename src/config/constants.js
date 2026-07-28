@@ -1867,6 +1867,16 @@ export const AUDIO_SFX_FIRE_MAX_PER_FRAME = 2;
 export const AUDIO_SFX_KILL_MAX_PER_FRAME = 4;
 export const AUDIO_SFX_SPAWN_MAX_PER_FRAME = 3;
 
+// --- Chrono Field (Story 11.10 / Epic 11) -----------------------------------
+// The slow-aura defense item that reduces enemy movement velocity and, at higher
+// levels, slows world-hazard growth and reflector spin. All timing is scaled
+// by `(1 - slowFactor)` so the simulation stays frame-rate-independent.
+// CHRONO_SLOW_FACTOR_MAX is a SAFETY clamp: chronoSlowPercent is capped here
+// so enemies always retain residual velocity (never negative, never zero).
+// 0.99 = 99% slow is the absolute ceiling; a corrupted fold never removes
+// all movement. Not a balance lever.
+export const CHRONO_SLOW_FACTOR_MAX = 0.99;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';

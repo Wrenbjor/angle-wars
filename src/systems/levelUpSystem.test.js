@@ -384,6 +384,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -414,6 +415,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -444,6 +446,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -474,6 +477,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
     levelStub.levelsGainedThisTick = 1;
     sys.fixedUpdate();
@@ -498,6 +502,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
     levelStub.levelsGainedThisTick = 3; // owes 3
     sys.fixedUpdate();
@@ -521,6 +526,7 @@ describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',
+      'chrono-field',
     ]);
 
     levelStub.levelsGainedThisTick = 1;

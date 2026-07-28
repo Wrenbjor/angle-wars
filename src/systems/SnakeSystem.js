@@ -18,6 +18,7 @@ import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // SnakeSystem — the Snake archetype: split-on-kill + slither/follow (Phaser-free).
@@ -61,13 +62,25 @@ import {
 // allocation happens ONLY on spawn and split events, never per frame.
 export class SnakeSystem extends System {
   /**
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the spawn
-   *   edge and placement; injectable so spawn cadence/placement are unit-testable.
-   *   NO ship or bullet pool — the snake is indifferent to the player.
-   */
-  constructor(rng = Math.random) {
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared
+     *   runtime modifier store (Story 11.10: chronoSlowPercent), OR an
+     *   `rng` function for backward compatibility with existing callers.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for the spawn
+     *   edge and placement (required when `playerStats` is omitted in new-style
+     *   calls).
+     *   NO ship or bullet pool — the snake is indifferent to the player.
+     */
+  constructor(playerStatsOrRng, rng = Math.random) {
     super();
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (rng) without playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
+    // Intentionally no ship or bullet pool — the snake is indifferent to the player.
 
     /** Shared pool of snake segments — the single source of active/free truth
      *  (public for the collision/death systems and the renderer). */
@@ -218,11 +231,12 @@ export class SnakeSystem extends System {
   }
 
   /**
-   * Slither + integrate + wall-reflect each head, then follow-the-leader each body.
-   * @private
-   */
+    * Slither + integrate + wall-reflect each head, then follow-the-leader each body.
+    * @private
+    */
   _move(dt) {
     const dtSec = dt / 1000;
+    const slowFactor = this._slowPercent();
 
     // Arena bounce bounds (inset by the radius so a segment stays fully inside).
     const minX = ARENA_BORDER_INSET + SNAKE_SEGMENT_RADIUS;
@@ -268,8 +282,8 @@ export class SnakeSystem extends System {
       snake.slitherPhaseRad += SNAKE_SLITHER_ANG_VEL_RAD_PER_SEC * dtSec;
 
       // Integrate the head along the slither-modulated heading at a constant speed.
-      head.x += Math.cos(eff) * SNAKE_HEAD_SPEED * dtSec;
-      head.y += Math.sin(eff) * SNAKE_HEAD_SPEED * dtSec;
+      head.x += Math.cos(eff) * SNAKE_HEAD_SPEED * dtSec * (1 - slowFactor);
+      head.y += Math.sin(eff) * SNAKE_HEAD_SPEED * dtSec * (1 - slowFactor);
 
       // Wall bounce: clamp the head to the crossed bound AND reflect the BASE
       // heading (the slither continues on top of it). Corners reflect both axes.
@@ -306,6 +320,20 @@ export class SnakeSystem extends System {
         }
       }
     }
+  }
+
+  /**
+    * Sanitize the chrono slow percent from the shared player-stats store.
+    * Returns 0 when no playerStats; clamps to [0, CHRONO_SLOW_FACTOR_MAX].
+    * @returns {number}
+    * @private
+    */
+  _slowPercent() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
   }
 
   /**

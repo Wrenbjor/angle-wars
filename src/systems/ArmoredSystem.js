@@ -12,6 +12,7 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // ArmoredSystem — the Armored enemy: slow homing chaser with projectile-only HP
@@ -52,15 +53,25 @@ import {
 // closure.
 export class ArmoredSystem extends System {
   /**
-   * @param {{x:number,y:number}} ship The homing target (read-only here — the
-   *   ship is never a collider in this system, only a target).
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for spawn
-   *   edge and placement; injectable so placement is unit-testable.
-   */
-  constructor(ship, rng = Math.random) {
+     * @param {{x:number,y:number}} ship The homing target (read-only here — the
+     *   ship is never a collider in this system, only a target).
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared
+     *   runtime modifier store (Story 11.10: chronoSlowPercent), OR an
+     *   `rng` function for backward compatibility with existing callers.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for spawn edge and
+     *   placement; injectable so placement is unit-testable.
+     */
+  constructor(ship, playerStatsOrRng, rng = Math.random) {
     super();
     this.ship = ship;
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (ship, rng) without playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
 
     /** Pool of armored — the single source of active/free truth (public for the
      *  collision system, both AoE paths, the death seam, and the renderer). */
@@ -90,11 +101,12 @@ export class ArmoredSystem extends System {
   }
 
   /**
-   * Advance one fixed step: home + integrate every active armored toward the ship.
-   * @param {number} dt Constant fixed-step delta, in milliseconds.
-   */
+    * Advance one fixed step: home + integrate every active armored toward the ship.
+    * @param {number} dt Constant fixed-step delta, in milliseconds.
+    */
   fixedUpdate(dt) {
     this._dt = dt;
+    this._slowFactor = this._slowPercent();
     this.enemyPool.forEachActive(this._stepHome);
   }
 
@@ -107,6 +119,7 @@ export class ArmoredSystem extends System {
    */
   _advance(s) {
     const dt = this._dt;
+    const slowFactor = this._slowFactor;
     // Story 2.6 telegraph gate: a spawning-in armored is frozen (no homing) and
     // non-lethal until its countdown reaches 0. Decrement by the fixed-step dt
     // (frame-rate-independent), clamp at 0, and skip the homing while still
@@ -139,8 +152,22 @@ export class ArmoredSystem extends System {
       s.vx = 0;
       s.vy = 0;
     }
-    s.x += s.vx * dtSec;
-    s.y += s.vy * dtSec;
+    s.x += s.vx * dtSec * (1 - slowFactor);
+    s.y += s.vy * dtSec * (1 - slowFactor);
+  }
+
+  /**
+    * Sanitize the chrono slow percent from the shared player-stats store.
+    * Returns 0 when no playerStats; clamps to [0, CHRONO_SLOW_FACTOR_MAX].
+    * @returns {number}
+    * @private
+    */
+  _slowPercent() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
   }
 
   /**

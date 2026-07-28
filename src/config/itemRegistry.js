@@ -1049,6 +1049,74 @@ export const ITEM_REGISTRY = Object.freeze([
     // Bomb Capacitor Lv5 + Flak Burst Lv3 → Chain Reaction (PRD §13.5).
     fusion: Object.freeze({ partner: 'flak-burst', epic: 'chain-reaction' }),
   }),
+  Object.freeze({
+    id: 'chrono-field',
+    name: 'Chrono Field',
+    title: 'Chrono Field',
+    track: 'defense',
+    rarity: 4,
+    maxLevel: ITEM_MAX_LEVEL,
+    // Story 11.10 — the fifth Epic-11 defense item (Epic 11): a slow-aura item that
+    // reduces enemy movement velocity by a fractional percent, with flags for enemy
+    // bullets and world-system slowing at higher levels.
+    // Three fold fields, all read by enemy mover systems + world systems:
+    //   - chronoSlowPercent  : fractional slow percent (0.2 = 20% slow at Lv1, 0.3 at Lv2,
+    //                          0.4 at Lv3–Lv5). Applied as: velocity *= (1 - slowFactor)
+    //                          where slowFactor = min(chronoSlowPercent, CHRONO_SLOW_FACTOR_MAX).
+    //                          Clamped to [0, 0.99] against corrupted folds.
+    //   - chronoSlowBullet   : Lv3+ FLAG (>= 1 enables slow for enemy bullets). Currently
+    //                          gated/no-op since no enemy bullet system exists in the
+    //                          shipped codebase.
+    //   - chronoSlowWorld    : Lv5 FLAG (>= 1 enables slow for world systems). Scales
+    //                          Black Hole absorption growth/shrink and Mirror Reflector
+    //                          spin rate by (1 - chronoSlowPercent).
+    //
+    // ⚠ Every map is the TOTAL at that level (see entry-shape header): L2 restates the
+    // Lv1 slow percent; L3 sets slow to 0.4 AND adds bullet flag; L4 sustains the Lv3
+    // values; L5 sustains Lv4 values AND adds world flag. The `desc` strings are
+    // player-facing prose, never rewritten to match the totals.
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '20% enemy slow',
+        stats: Object.freeze({ chronoSlowPercent: 0.2 }),
+      }),
+      Object.freeze({
+        level: 2,
+        desc: '30% enemy slow',
+        stats: Object.freeze({ chronoSlowPercent: 0.3 }),
+      }),
+      Object.freeze({
+        level: 3,
+        desc: '40% slow / bullet flag',
+        stats: Object.freeze({
+          chronoSlowPercent: 0.4,
+          chronoSlowBullet: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 4,
+        desc: '40% slow sustained',
+        stats: Object.freeze({
+          chronoSlowPercent: 0.4,
+          chronoSlowBullet: 1,
+        }),
+      }),
+      Object.freeze({
+        level: 5,
+        desc: '40% slow / world flag',
+        stats: Object.freeze({
+          chronoSlowPercent: 0.4,
+          chronoSlowBullet: 1,
+          chronoSlowWorld: 1,
+        }),
+      }),
+    ]),
+    // No offer guarantee — Chrono Field is drawn purely on its weight.
+    guaranteeFromLevel: null,
+    // Chrono Field Lv5 + any defense Lv3 → Stasis Lock (Epic 12 resolves it).
+    fusion: Object.freeze({ partner: 'any-defense', epic: 'stasis-lock' }),
+  }),
 ]);
 
 /**

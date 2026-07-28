@@ -23,6 +23,7 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // MirrorReflectorSystem — the Mirror Reflector (dumbbell) hazard: drift + spin +
@@ -71,26 +72,35 @@ import {
 // bullets, and a reusable scratch object receives each closest-point result.
 export class MirrorReflectorSystem extends System {
   /**
-   * @param {{x:number,y:number,radius:number}} ship The player ship (read for the
-   *   center-destroy / weight-kill tests; never mutated here).
-   * @param {import('../core/Pool.js').Pool} bulletPool Active player bullets (their
-   *   velocity is mirrored in place on a bar reflect; never consumed here).
-   * @param {{pendingDeath:boolean}} playerState Shared player lifecycle — a weight
-   *   contact sets `pendingDeath` so PlayerDeathSystem costs a life the same tick.
-   * @param {{score:number}} scoreState Shared run economy — a center-destroy credits
-   *   the flat REFLECTOR_SCORE directly (never through the multiplier seam).
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the spawn
-   *   edge/placement, drift heading, and initial angle; injectable so spawn is
-   *   unit-testable. NOTE: the reflector stores no ship for its MOTION — the avoid
-   *   point flows only as a spawn() argument (player-indifferent drift).
-   */
-  constructor(ship, bulletPool, playerState, scoreState, rng = Math.random) {
+     * @param {{x:number,y:number,radius:number}} ship The player ship (read for the
+     *   center-destroy / weight-kill tests; never mutated here).
+     * @param {import('../core/Pool.js').Pool} bulletPool Active player bullets (their
+     *   velocity is mirrored in place on a bar reflect; never consumed here).
+     * @param {{pendingDeath:boolean}} playerState Shared player lifecycle — a weight
+     *   contact sets `pendingDeath` so PlayerDeathSystem costs a life the same tick.
+     * @param {{score:number}} scoreState Shared run economy — a center-destroy credits
+     *   the flat REFLECTOR_SCORE directly (never through the multiplier seam).
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared runtime modifier
+     *   store (Story 11.10: chronoSlowWorld), OR a legacy `rng` function for backward compat.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for the spawn edge/placement,
+     *   drift heading, and initial angle; injectable so spawn is unit-testable.
+     *   NOTE: the reflector stores no ship for its MOTION — the avoid point flows only as a
+     *   spawn() argument (player-indifferent drift).
+     */
+  constructor(ship, bulletPool, playerState, scoreState, playerStatsOrRng, rng = Math.random) {
     super();
     this.ship = ship;
     this.bulletPool = bulletPool;
     this.playerState = playerState;
     this.scoreState = scoreState;
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (…, scoreState, rng) without playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
 
     /** Pool of reflectors — the single source of active/free truth (public for the
      *  renderer; deliberately NOT shared into any circle-collision seam). */
@@ -146,6 +156,10 @@ export class MirrorReflectorSystem extends System {
    */
   fixedUpdate(dt) {
     this._dt = dt;
+    // Story 11.10: if chronoSlowWorld is enabled, scale spin rate by (1 - slowFactor).
+    const slowFactor = this._computeWorldSlowFactor();
+    const spinMult = this._chronoSlowWorldEnabled() ? (1 - slowFactor) : 1;
+    this._spinMult = spinMult;
 
     // Wall-bounce bounds inset by the dumbbell's full reach (bar half-length + weight
     // radius) so the whole spinning body stays inside the drawn border at any angle.
@@ -199,7 +213,7 @@ export class MirrorReflectorSystem extends System {
     // Spin: advance the angle (rotation preserved regardless of drift). dt-driven.
     // Wrapped modulo 2π so the accumulated angle never grows unbounded over a long
     // run (cos/sin are unaffected — this is purely a magnitude bound).
-    r.angle = (r.angle + REFLECTOR_SPIN_RATE * dtSec) % (Math.PI * 2);
+    r.angle = (r.angle + REFLECTOR_SPIN_RATE * dtSec * this._spinMult) % (Math.PI * 2);
 
     // Drift: integrate straight-line by the fixed-step dt (frame-rate-independent).
     r.x += r.vx * dtSec;
@@ -357,5 +371,29 @@ export class MirrorReflectorSystem extends System {
 
     // Telegraph: frozen + inert until the countdown reaches 0.
     r.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
+  }
+
+  /**
+    * Compute the slow percent, clamped to CHRONO_SLOW_FACTOR_MAX.
+    * Returns 0 when no playerStats.
+    * @returns {number}
+    * @private
+    */
+  _computeWorldSlowFactor() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
+  }
+
+  /**
+    * Whether chronoSlowWorld is enabled from the shared player-stats store.
+    * @returns {boolean}
+    * @private
+    */
+  _chronoSlowWorldEnabled() {
+    const ps = this._playerStats;
+    return ps && ps.chronoSlowWorld >= 1;
   }
 }

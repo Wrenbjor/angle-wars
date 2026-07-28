@@ -14,6 +14,7 @@ import {
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
+  CHRONO_SLOW_FACTOR_MAX,
 } from '../config/constants.js';
 
 // PinwheelSystem — Pinwheel/Wanderer wander + drift + wall-bounce (Phaser-free).
@@ -45,14 +46,25 @@ import {
 // the prewarm builds the free list up front.
 export class PinwheelSystem extends System {
   /**
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the
-   *   wander turn, spawn edge/placement, and spawn heading; injectable so the
-   *   wander/cadence/placement are unit-testable. NO ship or bullet pool — the
-   *   pinwheel is indifferent to the player.
-   */
-  constructor(rng = Math.random) {
+     * @param {Object<string, number>|() => number} [playerStatsOrRng] Shared
+     *   runtime modifier store (Story 11.10: chronoSlowPercent), OR an
+     *   `rng` function for backward compatibility with existing callers.
+     * @param {() => number} [rng] Injectable RNG in [0,1) for the wander turn,
+     *   spawn edge/placement, and spawn heading; injectable so the wander/cadence/
+     *   placement are unit-testable.
+     *   NO ship or bullet pool — the pinwheel is indifferent to the player.
+     */
+  constructor(playerStatsOrRng, rng = Math.random) {
     super();
     this._rng = rng;
+    if (typeof playerStatsOrRng === 'function') {
+      // Backward-compat: existing callers pass (rng) without playerStats.
+      this._rng = playerStatsOrRng;
+      this._playerStats = undefined;
+    } else {
+      this._playerStats = playerStatsOrRng;
+    }
+    // Intentionally no ship or bullet pool — the pinwheel is indifferent to the player.
 
     /** Pool of pinwheels — the single source of active/free truth (public for
      *  the collision/death systems and the renderer). */
@@ -76,6 +88,7 @@ export class PinwheelSystem extends System {
    */
   fixedUpdate(dt) {
     const dtSec = dt / 1000;
+    const slowFactor = this._slowPercent();
 
     // Arena bounce bounds (inset by the radius so the pinwheel stays fully inside).
     const minX = ARENA_BORDER_INSET + PINWHEEL_RADIUS;
@@ -119,8 +132,8 @@ export class PinwheelSystem extends System {
       }
 
       // 2. Integrate straight-line by the fixed-step dt (frame-rate-independent).
-      pw.x += pw.vx * dtSec;
-      pw.y += pw.vy * dtSec;
+      pw.x += pw.vx * dtSec * (1 - slowFactor);
+      pw.y += pw.vy * dtSec * (1 - slowFactor);
 
       // 3. Wall bounce: clamp to the crossed bound and reflect that component
       //    (negating preserves |v|). Corners reflect both axes independently.
@@ -166,6 +179,20 @@ export class PinwheelSystem extends System {
         }
       }
     });
+  }
+
+  /**
+    * Sanitize the chrono slow percent from the shared player-stats store.
+    * Returns 0 when no playerStats; clamps to [0, CHRONO_SLOW_FACTOR_MAX].
+    * @returns {number}
+    * @private
+    */
+  _slowPercent() {
+    const ps = this._playerStats;
+    if (!ps) return 0;
+    const raw = ps.chronoSlowPercent;
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.min(raw, CHRONO_SLOW_FACTOR_MAX);
   }
 
   /**
