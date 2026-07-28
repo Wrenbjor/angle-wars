@@ -1303,17 +1303,21 @@ So that I get breathing room and control the tempo.
 
 **Goal:** Build the fusion system and all fourteen run-defining **Epic** upgrades — the actual tech tree that makes each run a different two or three points on the map. Deliver the fusion **mechanic + UX** and three **proof Epics** first (Tesla Circuit, Railgun, Phase Armor — one chain-damage, one grid-deform, one defense-transform) to prove the pattern across behavior classes, then complete the remaining eleven. Scarcity is the design: the tree is shaped so no run can fuse more than ~2–3 Epics. Kaleidoscope ships with a **hard live-split cap** (NFR11).
 
-### Story 12.1: Fusion System & UX
+> **Story sizing note (2026-07-27):** Epic 12 was re-sliced from 4 bundled stories into 16 single-session stories after loop run 20260726-170549-ab23 timed out on every bundled story. The fusion framework is split into a sim-only core (12.1) and its UX (12.2); every Epic is its own story. Content is unchanged from the original 12.1–12.4 — only the slicing moved.
+
+### Story 12.1: Fusion Core
 
 As a player,
 I want maxing an item plus its partner to unlock a run-defining Epic,
 So that my build pays off in a dramatic upgrade I chose toward.
 
+Scope: the sim-side fusion framework only — recipe registry, condition detection, offer guarantee hook, and fusion resolution. No rendering/audio (Story 12.2).
+
 **Acceptance Criteria:**
 
 **Given** a Lv5 item and its specific partner at Lv3+
 **When** the condition is satisfied
-**Then** a **⚡ FUSION READY** badge appears on the HUD immediately, and the *next* level-up guarantees the Epic card in slot 1, rendered as a gold card with particle aura, the fusion recipe beneath it, and a distinct audio sting (FR31)
+**Then** the fusion system exposes a fusion-ready state immediately, and the *next* level-up guarantees the Epic card in slot 1 of the offer (FR31)
 
 **Given** the Epic card is chosen
 **When** the fusion resolves
@@ -1323,11 +1327,31 @@ So that my build pays off in a dramatic upgrade I chose toward.
 **When** evaluated
 **Then** the generic partner rule is satisfied by any qualifying items, consuming the chosen partner(s) per the recipe (FR31)
 
-### Story 12.2: Proof Epics — Tesla Circuit, Railgun, Phase Armor
+**Given** the full fourteen-recipe registry from PRD §13.5
+**When** it is authored
+**Then** every recipe's condition, partner rule, and remnant behavior is data-driven and covered by tests, with the Epic effects themselves stubbed until their own stories land (FR31)
+
+### Story 12.2: Fusion UX
 
 As a player,
-I want the first three Epics to feel unmistakably run-defining,
-So that the fusion payoff is proven across an offense-chain, a grid-deform, and a defense-transform.
+I want the fusion payoff to look and sound like the event of the run,
+So that I chase fusions on purpose.
+
+**Acceptance Criteria:**
+
+**Given** a fusion condition is satisfied
+**When** the HUD renders
+**Then** a **⚡ FUSION READY** badge appears immediately (FR31)
+
+**Given** the guaranteed Epic card in a level-up offer
+**When** the offer renders
+**Then** the Epic card is a gold card with particle aura, the fusion recipe beneath it, and a distinct audio sting (FR31)
+
+### Story 12.3: Tesla Circuit (Proof Epic — chain damage)
+
+As a player,
+I want Orbit Blade Lv5 + Overcharge Lv3 to fuse into Tesla Circuit,
+So that the fusion payoff is proven for the offense-chain class.
 
 **Acceptance Criteria:**
 
@@ -1335,49 +1359,221 @@ So that the fusion payoff is proven across an offense-chain, a grid-deform, and 
 **When** fused
 **Then** **Tesla Circuit**: blades chain lightning between each other, enemies inside the ring take continuous arc damage, and kills spawn a 2-jump chain (FR31, NFR11)
 
+**Given** Tesla Circuit is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling — run-defining, not run-ending — and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.4: Railgun (Proof Epic — grid deform)
+
+As a player,
+I want Piercing Lance Lv5 + Overcharge Lv3 to fuse into Railgun,
+So that the fusion payoff is proven for the grid-deform class.
+
+**Acceptance Criteria:**
+
 **Given** Piercing Lance Lv5 + Overcharge Lv3
 **When** fused
 **Then** **Railgun**: a 1.2s charge fires an arena-width, infinite-pierce beam that deforms the grid in a shockwave line for +200% dmg, reusing the existing grid shader (FR31, NFR5)
+
+**Given** Railgun is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.5: Phase Armor (Proof Epic — defense transform)
+
+As a player,
+I want Nanite Shield Lv5 + Afterburner Lv3 to fuse into Phase Armor,
+So that the fusion payoff is proven for the defense-transform class.
+
+**Acceptance Criteria:**
 
 **Given** Nanite Shield Lv5 + Afterburner Lv3
 **When** fused
 **Then** **Phase Armor**: a shield break makes the ship intangible for 2s, passing through and damaging enemies (FR31)
 
-**Given** any Epic
-**When** it is active
-**Then** its power sits near the ~4× Lv5-item ceiling — run-defining, not run-ending — and the Epic 9 director scales to it (FR31, FR32)
+**Given** Phase Armor is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
 
-### Story 12.3: Offense Epics — Sunburst, Swarm Protocol, Singularity Field, Kaleidoscope, Fragmentation Cascade, Critical Resonance
+### Story 12.6: Sunburst (Offense Epic)
 
 As a player,
-I want the rest of the offense Epics,
-So that every offense archetype has a payoff.
+I want Spread Cannon Lv5 + Piercing Lance Lv3 to fuse into Sunburst,
+So that the spread archetype has its payoff.
 
 **Acceptance Criteria:**
 
-**Given** the offense fusion recipes
-**When** each is fused
-**Then** **Sunburst** (Spread Lv5 + Piercing Lv3): 360° ring every 4th volley, ring bullets pierce twice; **Swarm Protocol** (Drones Lv5 + Nanite Lv3): drones ram-kill + respawn 3s, each drone kill spawns a 5s mini-drone; **Singularity Field** (Mine Lv5 + Gravity Well Lv3): mines become mini black holes (pull 1.5s → implode 3× dmg + grid warp, reusing the gravity shader); **Fragmentation Cascade** (Flak Lv5 + Overcharge Lv3): fragment-kills airburst on death; **Critical Resonance** (Overcharge Lv5 + any 2 offense Lv5): 20% crit for 3× dmg, crits emit a shockwave and refund 1 XP (FR31, NFR5, NFR11)
+**Given** Spread Cannon Lv5 + Piercing Lance Lv3
+**When** fused
+**Then** **Sunburst**: a 360° ring fires every 4th volley and ring bullets pierce twice (FR31, NFR11)
 
-**Given** Ricochet Lv5 + Spread Lv3 → **Kaleidoscope** (every wall bounce splits the bullet in two)
-**When** it is active
+**Given** Sunburst is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.7: Swarm Protocol (Offense Epic)
+
+As a player,
+I want Seeker Drones Lv5 + Nanite Shield Lv3 to fuse into Swarm Protocol,
+So that the drone archetype has its payoff.
+
+**Acceptance Criteria:**
+
+**Given** Seeker Drones Lv5 + Nanite Shield Lv3
+**When** fused
+**Then** **Swarm Protocol**: drones ram-kill and respawn after 3s, and each drone kill spawns a 5s mini-drone (FR31, NFR11)
+
+**Given** Swarm Protocol is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.8: Singularity Field (Offense Epic)
+
+As a player,
+I want Mine Layer Lv5 + Gravity Well Lv3 to fuse into Singularity Field,
+So that the mine archetype has its payoff.
+
+**Acceptance Criteria:**
+
+**Given** Mine Layer Lv5 + Gravity Well Lv3
+**When** fused
+**Then** **Singularity Field**: mines become mini black holes — pull for 1.5s, then implode for 3× dmg with a grid warp, reusing the gravity shader (FR31, NFR5, NFR11)
+
+**Given** Singularity Field is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.9: Kaleidoscope (Offense Epic — hard split cap)
+
+As a player,
+I want Ricochet Rounds Lv5 + Spread Cannon Lv3 to fuse into Kaleidoscope,
+So that the ricochet archetype has its payoff without melting the framerate.
+
+**Acceptance Criteria:**
+
+**Given** Ricochet Rounds Lv5 + Spread Cannon Lv3
+**When** fused
+**Then** **Kaleidoscope**: every wall bounce splits the bullet in two (FR31)
+
+**Given** Kaleidoscope is active
+**When** split-bullets multiply
 **Then** a **hard cap on live split-bullets** bounds the exponential growth so peak density stays within the framerate budget (FR31, NFR11)
 
-### Story 12.4: Defense Epics — Slipstream, Event Horizon, Revenant, Chain Reaction, Stasis Lock
+**Given** Kaleidoscope is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.10: Fragmentation Cascade (Offense Epic)
 
 As a player,
-I want the defense Epics,
-So that defense-first builds are as run-defining as offense.
+I want Flak Burst Lv5 + Overcharge Lv3 to fuse into Fragmentation Cascade,
+So that the flak archetype has its payoff.
 
 **Acceptance Criteria:**
 
-**Given** the defense fusion recipes
-**When** each is fused
-**Then** **Slipstream** (Afterburner Lv5 + Nanite Lv3): dash spawns a taunting decoy (3s) that explodes; **Event Horizon** (Gravity Well Lv5 + Mine Lv3): a permanent weak gravity field draws enemies in and curves bullets into them; **Chain Reaction** (Bomb Capacitor Lv5 + Flak Lv3): bomb-kills each detonate a mini-bomb in a screen-wide cascade (bounded by NFR11); **Stasis Lock** (Chrono Field Lv5 + any defense Lv5): every 12s freeze all enemies 1.5s, frozen enemies take 2× dmg and shatter into extra XP (FR31, NFR11)
+**Given** Flak Burst Lv5 + Overcharge Lv3
+**When** fused
+**Then** **Fragmentation Cascade**: fragment-kills airburst on death (FR31, NFR11)
 
-**Given** Reinforced Lv5 + Bomb Capacitor Lv3 → **Revenant**
+**Given** Fragmentation Cascade is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.11: Critical Resonance (Offense Epic — generic partner)
+
+As a player,
+I want Overcharge Lv5 + any 2 offense Lv5 to fuse into Critical Resonance,
+So that an all-in offense build has a capstone.
+
+**Acceptance Criteria:**
+
+**Given** Overcharge Lv5 + any 2 offense items at Lv5
+**When** fused via the Story 12.1 generic partner rule
+**Then** **Critical Resonance**: 20% crit chance for 3× dmg; crits emit a shockwave and refund 1 XP (FR31, NFR11)
+
+**Given** Critical Resonance is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.12: Slipstream (Defense Epic)
+
+As a player,
+I want Afterburner Lv5 + Nanite Shield Lv3 to fuse into Slipstream,
+So that the dash archetype has its payoff.
+
+**Acceptance Criteria:**
+
+**Given** Afterburner Lv5 + Nanite Shield Lv3
+**When** fused
+**Then** **Slipstream**: each dash spawns a taunting decoy (3s) that explodes (FR31, NFR11)
+
+**Given** Slipstream is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.13: Event Horizon (Defense Epic)
+
+As a player,
+I want Gravity Well Lv5 + Mine Layer Lv3 to fuse into Event Horizon,
+So that the gravity archetype has its payoff.
+
+**Acceptance Criteria:**
+
+**Given** Gravity Well Lv5 + Mine Layer Lv3
+**When** fused
+**Then** **Event Horizon**: a permanent weak gravity field draws enemies in and curves bullets into them (FR31, NFR11)
+
+**Given** Event Horizon is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.14: Revenant (Defense Epic)
+
+As a player,
+I want Reinforced Hull Lv5 + Bomb Capacitor Lv3 to fuse into Revenant,
+So that accepting death can be a build.
+
+**Acceptance Criteria:**
+
+**Given** Reinforced Hull Lv5 + Bomb Capacitor Lv3 fused into **Revenant**
 **When** the player dies
 **Then** a 900-radius smart-bomb detonates and the player keeps their full multiplier — the deliberate "I accept death" exception to the multiplier-is-king rule (FR31, FR8)
+
+**Given** Revenant is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.15: Chain Reaction (Defense Epic)
+
+As a player,
+I want Bomb Capacitor Lv5 + Flak Burst Lv3 to fuse into Chain Reaction,
+So that the bomb archetype has its payoff.
+
+**Acceptance Criteria:**
+
+**Given** Bomb Capacitor Lv5 + Flak Burst Lv3
+**When** fused
+**Then** **Chain Reaction**: bomb-kills each detonate a mini-bomb in a screen-wide cascade, bounded so the cascade stays within the framerate budget (FR31, NFR11)
+
+**Given** Chain Reaction is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
+
+### Story 12.16: Stasis Lock (Defense Epic — generic partner)
+
+As a player,
+I want Chrono Field Lv5 + any defense Lv5 to fuse into Stasis Lock,
+So that an all-in defense build has a capstone.
+
+**Acceptance Criteria:**
+
+**Given** Chrono Field Lv5 + any defense item at Lv5
+**When** fused via the Story 12.1 generic partner rule
+**Then** **Stasis Lock**: every 12s all enemies freeze for 1.5s; frozen enemies take 2× dmg and shatter into extra XP (FR31, NFR11)
+
+**Given** Stasis Lock is active
+**When** it plays out
+**Then** its power sits near the ~4× Lv5-item ceiling and the Epic 9 director scales to it (FR31, FR32)
 
 ## Epic 13: The Generosity Engine (Opt-In Reward Ads)
 

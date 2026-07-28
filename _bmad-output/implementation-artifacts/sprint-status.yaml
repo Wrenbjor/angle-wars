@@ -137,11 +137,25 @@ development_status:
   epic-11-retrospective: optional
 
   # Epic 12 — The Fusion Tech Tree (Epics)
+  # Re-sliced 2026-07-27 from 4 bundled stories into 16 single-session stories
+  # (run 20260726-170549-ab23 timed out on every bundled story).
   epic-12: backlog
-  12-1-fusion-system-and-ux: backlog
-  12-2-proof-epics-tesla-railgun-phase-armor: backlog
-  12-3-offense-epics: backlog
-  12-4-defense-epics: backlog
+  12-1-fusion-core: backlog
+  12-2-fusion-ux: backlog
+  12-3-tesla-circuit: backlog
+  12-4-railgun: backlog
+  12-5-phase-armor: backlog
+  12-6-sunburst: backlog
+  12-7-swarm-protocol: backlog
+  12-8-singularity-field: backlog
+  12-9-kaleidoscope: backlog
+  12-10-fragmentation-cascade: backlog
+  12-11-critical-resonance: backlog
+  12-12-slipstream: backlog
+  12-13-event-horizon: backlog
+  12-14-revenant: backlog
+  12-15-chain-reaction: backlog
+  12-16-stasis-lock: backlog
   epic-12-retrospective: optional
 
   # Epic 13 — The Generosity Engine (Opt-In Reward Ads)
