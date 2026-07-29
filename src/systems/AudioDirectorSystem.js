@@ -74,6 +74,14 @@ export class AudioDirectorSystem extends System {
     this._prevShockwaveMs = bombSystem ? bombSystem.shockwaveMs : 0;
     this._prevDeathSeq = playerDeathSystem ? playerDeathSystem.deathSeq : 0;
 
+    // Story 12.2 — Fusion UX audio stings:
+    // _prevFusionReady tracks the last frame's fusion-ready state for edge detection.
+    // _pendingFusions counts edge transitions from false→true (fired once per trigger).
+    // _fusionPickPending is a one-shot for the fusion card selection event.
+    this._prevFusionReady = false;
+    this._pendingFusions = 0;
+    this._fusionPickPending = false;
+
     // Render-consumable SFX latches (reset by consumeSfxRequests()). Counts
     // accumulate across sub-steps; bomb/death are one-shot flags.
     this._pendingFire = 0;
@@ -88,7 +96,12 @@ export class AudioDirectorSystem extends System {
 
     // Reused output object for consumeSfxRequests() so the once-per-frame consume
     // allocates nothing (mirrors the zero-per-frame-allocation discipline).
-    this._sfxOut = { fire: 0, kill: 0, spawn: 0, bomb: false, death: false };
+    this._sfxOut = {
+      fire: 0, kill: 0, spawn: 0, bomb: false, death: false,
+      // Story 12.2 — Fusion UX audio stings.
+      fusionsReady: false, // true when a fusion-ready edge was detected this frame.
+      fusionPick: false,   // true when a fusion-pick edge was detected this frame.
+    };
   }
 
   /**
@@ -170,13 +183,36 @@ export class AudioDirectorSystem extends System {
     if (sd && typeof sd.progressAt === 'function') {
       this._musicIntensity = sd.progressAt(sd.elapsedMs);
     }
+
+    // (7) Story 12.2 — Fusion UX audio: edge-detect fusion-ready transitions.
+    //     The ArenaScene update loop calls setFusionsReady(true) each frame while
+    //     fusion is ready. We track the previous frame's state and increment
+    //     _pendingFusions on the first frame it becomes true (edge false→true).
+    const fr = this._fusionReadyLatch;
+    if (fr && !this._prevFusionReady) {
+      this._pendingFusions = 1;
+    }
+    if (fr) {
+      this._prevFusionReady = true;
+    } else {
+      this._prevFusionReady = false;
+    }
+
+    // (8) Story 12.2 — Fusion pick: one-shot latch consumed via setFusionPick()
+    //     by the ArenaScene when the fusion Epic card is applied. Edge-detected
+    //     so it fires exactly once.
+    if (this._fusionPickPending) {
+      // consumed in consumeSfxRequests — the ArenaScene will clear this after calling playSfx
+    }
   }
 
   /**
    * Read-and-reset the accumulated SFX requests since the last consume. Returns a
    * reused object (no per-frame allocation): fire/kill/spawn are non-negative counts,
-   * bomb/death are booleans. All latches reset to 0/false after the read.
-   * @returns {{fire:number, kill:number, spawn:number, bomb:boolean, death:boolean}}
+   * bomb/death are booleans, fusionsReady/fusionPick are booleans (Story 12.2).
+   * All latches reset to 0/false after the read.
+   * @returns {{fire:number, kill:number, spawn:number, bomb:boolean, death:boolean,
+   *   fusionsReady:boolean, fusionPick:boolean}}
    */
   consumeSfxRequests() {
     const out = this._sfxOut;
@@ -185,11 +221,16 @@ export class AudioDirectorSystem extends System {
     out.spawn = this._pendingSpawn;
     out.bomb = this._bombPending;
     out.death = this._deathPending;
+    // Story 12.2 — Fusion UX audio latches.
+    out.fusionsReady = this._pendingFusions > 0;
+    out.fusionPick = this._fusionPickPending;
     this._pendingFire = 0;
     this._pendingKill = 0;
     this._pendingSpawn = 0;
     this._bombPending = false;
     this._deathPending = false;
+    if (this._pendingFusions > 0) this._pendingFusions--;
+    this._fusionPickPending = false;
     return out;
   }
 
@@ -210,7 +251,30 @@ export class AudioDirectorSystem extends System {
    * or no unstable hole. Mirrors musicIntensity.
    * @returns {number}
    */
-  get blackHoleInstability() {
-    return this.blackHoleSystem ? this.blackHoleSystem.maxInstability : 0;
+   get blackHoleInstability() {
+     return this.blackHoleSystem ? this.blackHoleSystem.maxInstability : 0;
+   }
+
+  // ---------------------------------------------------------------------------
+  // Story 12.2 — Fusion UX audio latch setters
+  // Called by the ArenaScene update loop to signal fusion events to the director.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Signal that a fusion condition is currently satisfied. Edge-detects the
+   * first frame it becomes true (past false → true transition) so the audio sting
+   //   fires exactly once per fusion trigger event.
+   * @param {boolean} ready — true while a fusion is ready on this frame.
+   */
+  setFusionsReady(ready) {
+    this._fusionReadyLatch = ready;
+  }
+
+  /**
+   * Signal that the fusion Epic card was just applied (player chose the fusion card).
+   * Edge-detected so the payoff audio sting fires exactly once.
+   */
+  setFusionPick() {
+    this._fusionPickPending = true;
   }
 }

@@ -19,6 +19,9 @@ import {
   AUDIO_SFX_DEATH_FREQ,
   AUDIO_SFX_DEATH_MS,
   AUDIO_SFX_DEATH_GAIN,
+  AUDIO_SFX_FUSION_FREQ,
+  AUDIO_SFX_FUSION_MS,
+  AUDIO_SFX_FUSION_GAIN,
 } from '../config/constants.js';
 
 // audioEngine — the browser-bound procedural synth for Story 4.5 (Web Audio API).
@@ -66,6 +69,9 @@ export class AudioEngine {
       spawn: { freq: AUDIO_SFX_SPAWN_FREQ, ms: AUDIO_SFX_SPAWN_MS, gain: AUDIO_SFX_SPAWN_GAIN },
       bomb: { freq: AUDIO_SFX_BOMB_FREQ, ms: AUDIO_SFX_BOMB_MS, gain: AUDIO_SFX_BOMB_GAIN },
       death: { freq: AUDIO_SFX_DEATH_FREQ, ms: AUDIO_SFX_DEATH_MS, gain: AUDIO_SFX_DEATH_GAIN },
+      // Story 12.2: rising 4-tone fanfare arpeggio (440 → 554 → 660 → 880 Hz).
+      // Total duration is AUDIO_SFX_FUSION_MS split across 4 overlapping tones.
+      fusion: { freq: AUDIO_SFX_FUSION_FREQ, ms: AUDIO_SFX_FUSION_MS, gain: AUDIO_SFX_FUSION_GAIN },
     };
 
     if (!this._ctx) return; // no context → no-op engine
@@ -126,6 +132,12 @@ export class AudioEngine {
     const spec = this._sfx[type];
     if (!spec) return;
     try {
+      if (type === 'fusion') {
+        // Rising 4-tone ascending major-triad arpeggio (Story 12.2): 
+        // 440 → 554 → 660 → 880 Hz, ~100ms each with slight overlap.
+        this._playFusionArpeggio(spec.gain, spec.ms, this._ctx.currentTime);
+        return;
+      }
       const now = this._ctx.currentTime;
       const durSec = spec.ms / 1000;
       const osc = this._ctx.createOscillator();
@@ -149,6 +161,35 @@ export class AudioEngine {
       osc.stop(now + durSec);
     } catch {
       // A rejected schedule (e.g. context not yet resumed) never breaks the frame.
+    }
+  }
+
+  /**
+   * Play the fusion-ready rising arpeggio (Story 12.2): 4 overlapping ascending tones
+   //  440 → 554 → 660 → 880 Hz, each ~100ms, with quick attack/slow decay per tone.
+   *   Produces a heroic "fanfare" sound — distinct from all other SFX.
+   * @private
+   */
+  _playFusionArpeggio(peakGain, totalMs, now) {
+    // Four tones of an ascending major triad, each ~100ms with slight overlap.
+    const tones = [440, 554, 660, 880];
+    const perTone = Math.max(totalMs / 4, 80); // at least 80ms per tone
+    for (let i = 0; i < tones.length; i++) {
+      const freq = tones[i];
+      const start = now + i * (perTone / 1000) * 0.7; // slight overlap (0.7× spacing)
+      const durSec = (perTone + 30) / 1000; // each tone extends slightly past end
+      const osc = this._ctx.createOscillator();
+      const gain = this._ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      // Quick attack to peak, gentle decay — bright and clear.
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peakGain, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + durSec);
+      osc.connect(gain);
+      gain.connect(this._master);
+      osc.start(start);
+      osc.stop(start + durSec);
     }
   }
 

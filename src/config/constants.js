@@ -1812,6 +1812,16 @@ export const PARTICLE_BURST_COLOR = 0xffdd55;
 // this factor per second (exponential drag, interpolated per fixed step), so a
 // burst flings out fast then slows as it fades. Smaller = quicker settle.
 export const PARTICLE_DRAG_RETAIN_PER_SEC = 0.02;
+
+// Fusion-ready card particle aura (Story 12.2): golden particles emitted from the
+// fusion card area while the level-up overlay is open and a fusion Epic is offered.
+// Subtle shimmer — lower speed and smaller count than kill bursts.
+export const FUSION_PARTICLE_COUNT = 4;
+export const FUSION_PARTICLE_COLOR = 0xffdd44;
+export const FUSION_PARTICLE_SPEED_MULT = 0.7; // 0.7× normal burst speed
+export const FUSION_PARTICLE_LIFETIME_MULT = 0.8; // 0.8× normal burst lifetime
+export const FUSION_PARTICLE_SIZE = PARTICLE_BURST_SIZE;
+
 // Thrust-intent threshold: the ship leaves a trail only while
 // hypot(moveX, moveY) >= this, so a resting/near-still stick emits nothing.
 export const PARTICLE_THRUST_MIN_INTENT = 0.2;
@@ -1989,6 +1999,12 @@ export const AUDIO_SFX_DEATH_FREQ = 300;
 export const AUDIO_SFX_DEATH_MS = 600;
 export const AUDIO_SFX_DEATH_GAIN = 0.4;
 
+// Fusion-ready audio sting (Story 12.2): a rising 4-tone arpeggio (fanfare-style)
+// 440 → 554 → 660 → 880 Hz, ~100ms per tone = 400ms total. Distinctly heroic.
+export const AUDIO_SFX_FUSION_FREQ = 880;
+export const AUDIO_SFX_FUSION_MS = 400;
+export const AUDIO_SFX_FUSION_GAIN = 0.35;
+
 // Per-frame SFX caps: the most blips of each accumulating SFX type (fire/kill/spawn)
 // the render loop triggers in a single frame, so a burst (or a multi-sub-step catch-up
 // frame) cannot flood the mixer with dozens of overlapping voices. Bomb/death are
@@ -2027,6 +2043,15 @@ export const HUD_FONT = '20px monospace';
 // readout text. Centralized (Story 7.2) so the mobile-layout seam is the single
 // source of the HUD/debug offsets — replaces the former inline `+ 8` in ArenaScene.
 export const HUD_MARGIN = 8;
+
+// --- Fusion ready badge (Story 12.2 / Epic 12) ------------------------------
+// Gold ⚡ FUSION READY badge, top-left of the HUD readout.
+export const COLOR_FUSION_BADGE = '#ffcc00';
+export const FUSION_BADGE_FONT = '16px monospace';
+export const FUSION_BADGE_MARGIN = 16;
+// Gold styling for the fusion Epic card in level-up offers.
+export const COLOR_FUSION_GOLD = 0xffcc00;
+export const COLOR_FUSION_GOLD_TEXT = '#ffcc00';
 
 // --- Game-over overlay ------------------------------------------------------
 // Shown when PlayerState.gameOver is true: a dimming full-arena rectangle plus

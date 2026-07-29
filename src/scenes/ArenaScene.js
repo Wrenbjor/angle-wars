@@ -44,6 +44,16 @@ import {
   COLOR_HUD_TEXT,
   HUD_FONT,
   HUD_MARGIN,
+  COLOR_FUSION_BADGE,
+  FUSION_BADGE_FONT,
+  FUSION_BADGE_MARGIN,
+  COLOR_FUSION_GOLD,
+  COLOR_FUSION_GOLD_TEXT,
+  FUSION_PARTICLE_COUNT,
+  FUSION_PARTICLE_COLOR,
+  FUSION_PARTICLE_SPEED_MULT,
+  FUSION_PARTICLE_LIFETIME_MULT,
+  FUSION_PARTICLE_SIZE,
   COLOR_GAMEOVER_OVERLAY,
   GAMEOVER_OVERLAY_ALPHA,
   COLOR_GAMEOVER_TEXT,
@@ -290,9 +300,10 @@ export class ArenaScene extends Phaser.Scene {
     this.playerDeathSystem = arena.playerDeathSystem;
     this.highScoreSystem = arena.highScoreSystem;
     this.gridFieldSystem = arena.gridFieldSystem;
-    this.particleSystem = arena.particleSystem;
-    this.screenFeedbackSystem = arena.screenFeedbackSystem;
-    this.audioDirector = arena.audioDirector;
+     this.particleSystem = arena.particleSystem;
+     this.screenFeedbackSystem = arena.screenFeedbackSystem;
+     this.audioDirector = arena.audioDirector;
+     this.fusionSystem = arena.fusionSystem;
 
     // Input sampler + placeholder graphics relocated here from inside the old
     // inline world build (the factory is Phaser-free, so these scene-only Phaser
@@ -648,6 +659,18 @@ export class ArenaScene extends Phaser.Scene {
     // Pinned (scrollFactor 0) so the camera shake never jitters the readout.
     this.hudText.setScrollFactor(0);
 
+    // --- Fusion ready badge (Story 12.2 / Epic 12) -------------------------
+    // Gold ⚡ FUSION READY badge, top-left. Initially invisible; shown when a
+    // fusion condition is satisfied. The badge text includes the Epic name.
+    this.fusionBadge = this.add.text(
+      FUSION_BADGE_MARGIN,
+      ARENA_BORDER_INSET + HUD_MARGIN,
+      '',
+      { font: FUSION_BADGE_FONT, color: COLOR_FUSION_BADGE },
+    );
+    this.fusionBadge.setScrollFactor(0);
+    this.fusionBadge.setVisible(false);
+
     // --- Game-over overlay --------------------------------------------------
     // A dimming full-arena rectangle plus stacked title / final-score / restart
     // lines, created hidden and toggled on while PlayerState.gameOver. Built
@@ -907,6 +930,9 @@ export class ArenaScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setVisible(false);
+    // Story 12.2: one description Text per card for the fusion recipe (primary + partner).
+    // Initially empty — only set for the fusion card slot.
+    this._cardDescTexts = [];
 
     // --- Reroll / Banish action controls (Story 8.5) ------------------------
     // Two labelled action buttons (index 0 = Reroll, index 1 = Banish) below the prompt,
@@ -997,6 +1023,12 @@ export class ArenaScene extends Phaser.Scene {
       if (!this.levelUpSystem.selectionActive || this._paused) return;
       if (event && event.repeat) return;
       if (this._cardConfirmGraceMs > 0) return;
+      // Story 12.2 — Fusion UX audio: detect if the focused card is a fusion Epic.
+      const offer = this.levelUpSystem.currentOffer;
+      const focused = this._cardFocus;
+      if (offer[focused]?.isEpicCard && offer[focused]?.fusionRecipeId) {
+        this.audioDirector.setFusionPick();
+      }
       this.levelUpSystem.queueSelection(this._cardFocus);
     };
     // Story 8.5: R rerolls the trio, B banishes the focused card. Guarded exactly like
@@ -1381,6 +1413,8 @@ export class ArenaScene extends Phaser.Scene {
     for (let i = 0; i < spawnN; i++) this.audioEngine.playSfx('spawn');
     if (sfx.bomb) this.audioEngine.playSfx('bomb');
     if (sfx.death) this.audioEngine.playSfx('death');
+    // Story 12.2 — Fusion UX audio stings.
+    if (sfx.fusionsReady || sfx.fusionPick) this.audioEngine.playSfx('fusion');
     this.audioEngine.setMusicLayerGains(
       musicLayerGains(this.audioDirector.musicIntensity, this._musicGains),
     );
@@ -1720,6 +1754,25 @@ export class ArenaScene extends Phaser.Scene {
       `SCORE ${this.scoreState.score}\nMULT ${this.scoreState.multiplier}×\nBOMBS ${this.scoreState.bombs}\nLIVES ${this.playerState.lives}\nHIGH ${this.highScoreSystem.highScore}\nXP ${Math.floor(this.scoreState.xp)}\nLV ${this.levelSystem.level}${this.levelSystem.atCap ? ' MAX' : ` ${Math.floor(this.levelSystem.xpIntoLevel)}/${Math.ceil(this.levelSystem.xpToNext)}`}`,
     );
 
+    // --- Fusion ready badge (Story 12.2 / Epic 12) -------------------------
+    // Check if a fusion condition is satisfied; if so, show the badge.
+    // Edge-detect so the audio sting fires once when the condition becomes true.
+    const readyFusion = this.fusionSystem
+      ? this.fusionSystem.getReadyFusion(this.progressionState, undefined, this.levelUpSystem.registry)
+      : null;
+    this._prevFusionReady = readyFusion !== null;
+
+    if (readyFusion) {
+      const name = readyFusion.name || '';
+      this.fusionBadge.setVisible(true);
+      this.fusionBadge.setText(name ? `⚡ FUSION READY — ${name}` : '⚡ FUSION READY');
+      // Story 12.2: signal the audio director for the fusion-ready sting.
+      this.audioDirector.setFusionsReady(true);
+    } else {
+      this.fusionBadge.setVisible(false);
+      this.audioDirector.setFusionsReady(false);
+    }
+
     const over = this.playerState.gameOver;
     this.gameOverOverlay.setVisible(over);
     this.gameOverTitle.setVisible(over);
@@ -1799,27 +1852,79 @@ export class ArenaScene extends Phaser.Scene {
     // Story 8.5: a banished-charge-depleted look for the per-card glyphs (shared across
     // all three cards — a single banish counter gates them all).
     const banishDepleted = this.progressionState.banishCharges <= 0;
+
+    // Story 12.2 — Fusion UX: detect if slot 0 is a fusion Epic card (gold styling).
+    const fusion = cardsOpen && offer.length > 0 && offer[0]?.isEpicCard
+      ? offer[0]
+      : null;
+
     for (let i = 0; i < this._cardRects.length; i++) {
       const r = this._cardRects[i];
       const title = this.cardTitles[i];
       const banishLabel = this.cardBanishLabels[i];
+      // Story 12.2: Fusion card description text.
+      const desc = this._cardDescTexts[i];
       const shown = cardsOpen && i < offer.length;
       title.setVisible(shown);
       banishLabel.setVisible(shown);
+      if (desc) desc.setVisible(shown);
       if (!shown) continue;
       const focused = i === this._cardFocus;
-      cpg.fillStyle(
-        focused ? COLOR_LEVELUP_PANEL_FOCUS : COLOR_LEVELUP_PANEL,
-        focused ? LEVELUP_PANEL_FOCUS_ALPHA : LEVELUP_PANEL_ALPHA,
-      );
-      cpg.fillRect(r.x, r.y, r.w, r.h);
-      cpg.lineStyle(
-        focused ? LEVELUP_PANEL_FOCUS_BORDER_WIDTH : LEVELUP_PANEL_BORDER_WIDTH,
-        COLOR_LEVELUP_PANEL_BORDER,
-        1,
-      );
-      cpg.strokeRect(r.x, r.y, r.w, r.h);
-      title.setText(offer[i].title);
+
+      // Story 12.2 — Fusion UX: gold styling for the Epic card in slot 0.
+      const isFusion = fusion && i === 0;
+      let fuseRecipe = null;
+      // Look up the recipe data from FusionSystem for the recipe text.
+      if (isFusion && fusion?.fusionRecipeId && this.fusionSystem?.FUSION_RECIPES) {
+        const recipes = this.fusionSystem.FUSION_RECIPES;
+        fuseRecipe = recipes.find(r => r.id === fusion.fusionRecipeId) || null;
+      }
+
+      if (isFusion) {
+        // Gold fill with slightly dimmer alpha than regular panel.
+        cpg.fillStyle(COLOR_FUSION_GOLD, 0.25);
+        cpg.fillRect(r.x, r.y, r.w, r.h);
+        // Gold border (wider for emphasis).
+        const borderW = focused ? 5 : 3;
+        cpg.lineStyle(borderW, COLOR_FUSION_GOLD, 1);
+        cpg.strokeRect(r.x, r.y, r.w, r.h);
+        // Gold title text.
+        title.setColor(COLOR_FUSION_GOLD_TEXT);
+        title.setText(offer[i].title);
+        // Fusion recipe text beneath the title.
+        if (desc && fuseRecipe) {
+          // Build recipe description: "PrimaryItem + PartnerItem"
+          const reg = this.levelUpSystem.registry || [];
+          const primaryEntry = reg.find(e => e.id === fuseRecipe.primaryItemId);
+          const partnerEntry = fuseRecipe.partnerItemId
+            ? reg.find(e => e.id === fuseRecipe.partnerItemId)
+            : null;
+          const primaryName = primaryEntry?.title || fuseRecipe.primaryItemId;
+          const partnerName = partnerEntry?.title || fuseRecipe.partnerItemId || '?';
+          desc.setColor(COLOR_FUSION_GOLD_TEXT);
+          desc.setText(`${primaryName} Lv5 + ${partnerName} Lv3`);
+          desc.setPosition(r.cx, r.y + r.h + 12);
+          desc.setOrigin(0.5, 0);
+          desc.setFont('14px monospace');
+          desc.setVisible(true);
+        }
+      } else {
+        // Normal green styling (existing behavior).
+        cpg.fillStyle(
+          focused ? COLOR_LEVELUP_PANEL_FOCUS : COLOR_LEVELUP_PANEL,
+          focused ? LEVELUP_PANEL_FOCUS_ALPHA : LEVELUP_PANEL_ALPHA,
+        );
+        cpg.fillRect(r.x, r.y, r.w, r.h);
+        cpg.lineStyle(
+          focused ? LEVELUP_PANEL_FOCUS_BORDER_WIDTH : LEVELUP_PANEL_BORDER_WIDTH,
+          COLOR_LEVELUP_PANEL_BORDER,
+          1,
+        );
+        cpg.strokeRect(r.x, r.y, r.w, r.h);
+        title.setColor(COLOR_LEVELUP_TEXT);
+        title.setText(offer[i].title);
+        if (desc) desc.setVisible(false);
+      }
       // Per-card banish glyph in the top-right corner: enabled amber when a banish
       // charge remains, dimmed grey when depleted (reads as clearly unavailable).
       const b = this._cardBanishRects[i];
@@ -1837,6 +1942,23 @@ export class ArenaScene extends Phaser.Scene {
       banishLabel.setColor(
         banishDepleted ? COLOR_LEVELUP_ACTION_TEXT_DEPLETED : COLOR_LEVELUP_ACTION_TEXT,
       );
+    }
+    // Story 12.2 — Fusion UX: golden particle aura on the fusion card.
+    if (fusion && cardsOpen) {
+      const fr = this._cardRects[0];
+      if (fr) {
+        const speedMult = FUSION_PARTICLE_SPEED_MULT || 0.7;
+        const speedMin = PARTICLE_BURST_SPEED_MIN * speedMult;
+        const speedMax = PARTICLE_BURST_SPEED_MAX * speedMult;
+        const lifeMs = PARTICLE_BURST_LIFETIME_MS * (FUSION_PARTICLE_LIFETIME_MULT || 0.8);
+        this.particleSystem.emitBurst(
+          fr.cx, fr.cy,
+          FUSION_PARTICLE_COUNT,
+          FUSION_PARTICLE_COLOR,
+          FUSION_PARTICLE_SIZE,
+          speedMin, speedMax, lifeMs,
+        );
+      }
     }
     if (cardsOpen) {
       const method = this.inputSampler.activeMethod;

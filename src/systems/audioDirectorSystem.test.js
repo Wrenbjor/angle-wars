@@ -405,3 +405,70 @@ describe('AudioDirectorSystem — the fire cue counts VOLLEYS, not bullets (Stor
     expect(sys.consumeSfxRequests().fire).toBe(0);
   });
 });
+
+// Story 12.2 — Fusion UX audio latches (fusionsReady + fusionPick).
+describe('AudioDirectorSystem — Story 12.2 fusion audio latches', () => {
+  it('setFusionsReady(true) then consume returns fusionsReady: true', () => {
+    const sys = build();
+    sys.setFusionsReady(true);
+    sys.fixedUpdate(DT);
+    const r = sys.consumeSfxRequests();
+    expect(r.fusionsReady).toBe(true);
+    // Reset after consume
+    expect(sys.consumeSfxRequests().fusionsReady).toBe(false);
+  });
+
+  it('setFusionsReady(false) does not set the latch', () => {
+    const sys = build();
+    sys.setFusionsReady(false);
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fusionsReady).toBe(false);
+  });
+
+  it('setFusionsReady edge-detect: false→true fires once', () => {
+    const sys = build();
+    sys.setFusionsReady(false);
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fusionsReady).toBe(false);
+
+    sys.setFusionsReady(true);
+    sys.fixedUpdate(DT);
+    const first = sys.consumeSfxRequests();
+    expect(first.fusionsReady).toBe(true);
+
+    // While fusion is ready, no additional edge fires (only the false→true transition).
+    sys.setFusionsReady(true);
+    sys.fixedUpdate(DT);
+    expect(sys.consumeSfxRequests().fusionsReady).toBe(false);
+  });
+
+  it('setFusionPick() fires once on consume', () => {
+    const sys = build();
+    sys.setFusionPick();
+    sys.fixedUpdate(DT);
+    const r = sys.consumeSfxRequests();
+    expect(r.fusionPick).toBe(true);
+    // Reset after consume
+    expect(sys.consumeSfxRequests().fusionPick).toBe(false);
+  });
+
+  it('both fusion latches can be active in the same frame', () => {
+    const sys = build();
+    sys.setFusionsReady(true);
+    sys.setFusionPick();
+    sys.fixedUpdate(DT);
+    const r = sys.consumeSfxRequests();
+    expect(r.fusionsReady).toBe(true);
+    expect(r.fusionPick).toBe(true);
+  });
+
+  it('fusion latches are absent from the output object shape (defaults to false)', () => {
+    const sys = build();
+    sys.setFusionsReady(false);
+    sys.fixedUpdate(DT);
+    const r = sys.consumeSfxRequests();
+    expect(r.fire).toBe(0);
+    expect(r.fusionsReady).toBe(false);
+    expect(r.fusionPick).toBe(false);
+  });
+});

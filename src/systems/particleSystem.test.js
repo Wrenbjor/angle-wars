@@ -636,3 +636,34 @@ describe('ParticleSystem — the burning dash trail', () => {
     expect(fiveArg.pool.activeCount).toBe(0);
   });
 });
+
+// Story 12.2 — Fusion UX: golden particle aura emitted from the fusion card area.
+describe('ParticleSystem — Story 12.2 emitBurst (fusion card aura)', () => {
+  it('emitBurst spawns particles with the given color', () => {
+    const sys = new ParticleSystem(null, null, null, undefined);
+    sys.emitBurst(100, 200, 3, 0xff0000);
+    const particles = [];
+    sys.pool.forEachActive((p) => particles.push(p));
+    expect(particles).toHaveLength(3);
+    for (const p of particles) {
+      expect(p.color).toBe(0xff0000);
+    }
+  });
+
+  it('emitBurst respects the maxParticles cap', () => {
+    const sys = new ParticleSystem(null, null, null, undefined, 2);
+    sys.emitBurst(50, 50, 10, 0x00ff00);
+    const particles = [];
+    sys.pool.forEachActive((p) => particles.push(p));
+    expect(particles.length).toBeLessThanOrEqual(2);
+  });
+
+  it('emitBurst spawns particles at the given origin', () => {
+    const sys = new ParticleSystem(null, null, null, undefined);
+    sys.emitBurst(42, 99, 5, 0xabcdef);
+    sys.fixedUpdate(16);
+    const particles = [];
+    sys.pool.forEachActive((p) => particles.push(p));
+    expect(particles).toHaveLength(5);
+  });
+});

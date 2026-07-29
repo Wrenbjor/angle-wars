@@ -298,4 +298,39 @@ export class ParticleSystem extends System {
     p.color = color;
     return p;
   }
+
+  /**
+   * Emit a burst of particles in a radial spray from a point (Story 12.2).
+   * Reuses the pool acquisition logic from `_emit` but with configurable params.
+   * Honors the maxParticles cap — excess emissions are skipped.
+   * @param {number} x — emission origin X.
+   * @param {number} y — emission origin Y.
+   * @param {number} count — number of particles to emit.
+   * @param {number} color — particle color (0xRRGGBB).
+   * @param {number} [maxSize] — particle size. Defaults to PARTICLE_BURST_SIZE.
+   * @param {number} [speedMin] — minimum emission speed. Defaults to 0.7× normal.
+   * @param {number} [speedMax] — maximum emission speed. Defaults to 0.7× normal.
+   * @param {number} [lifeMs] — particle lifetime. Defaults to 0.8× normal.
+   */
+  emitBurst(x, y, count, color, maxSize = PARTICLE_BURST_SIZE,
+    speedMin = PARTICLE_BURST_SPEED_MIN * 0.7,
+    speedMax = PARTICLE_BURST_SPEED_MAX * 0.7,
+    lifeMs = PARTICLE_BURST_LIFETIME_MS * 0.8,
+  ) {
+    const TAU = Math.PI * 2;
+    for (let c = 0; c < count; c++) {
+      if (this.pool.activeCount >= this.maxParticles) break;
+      const heading = this.rng() * TAU;
+      const speed = speedMin + this.rng() * (speedMax - speedMin);
+      this._emit(
+        x,
+        y,
+        Math.cos(heading) * speed,
+        Math.sin(heading) * speed,
+        lifeMs,
+        maxSize,
+        color,
+      );
+    }
+  }
 }
