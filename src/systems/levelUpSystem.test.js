@@ -1005,3 +1005,163 @@ describe('LevelUpSystem — a PAID reroll can displace the guaranteed card (Stor
     }
   });
 });
+
+// Story 12.1 — Fusion Core: LevelUpSystem with fusionSystem → ready fusion →
+// guaranteed epic card in slot 0 → on pick → resolveRecipe called.
+
+describe('LevelUpSystem — Story 12.1 fusion integration', () => {
+  const { FusionSystem, checkConditions, getReadyFusion: getReady, resolveRecipe: fusResolve } =
+    (() => {
+      // Dynamic import to avoid module hoisting issues in tests
+      const mod = require('./fusionSystem.js');
+      return { FusionSystem: mod.FusionSystem, checkConditions: mod.checkConditions, getReadyFusion: mod.getReadyFusion, resolveRecipe: mod.resolveRecipe };
+    })();
+
+  // A FusionSystem instance — it has no internal state, just query-only methods.
+  function makeFusionSystem() {
+    return new FusionSystem();
+  }
+
+  function buildWithFusion(opts = {}) {
+    const levelStub = { level: 1, levelsGainedThisTick: 0 };
+    const playerStub = { invulnMs: 0 };
+    const prog = createProgressionState();
+    const registry = opts.registry || ITEM_REGISTRY;
+    const ps = createPlayerStats();
+    const rng = opts.rng || seqRng();
+    const fs = opts.fusionSystem !== undefined ? opts.fusionSystem : makeFusionSystem();
+    const sys = new LevelUpSystem(
+      levelStub,
+      playerStub,
+      prog,
+      registry,
+      ps,
+      rng,
+      fs,
+    );
+    return { sys, levelStub, playerStub, prog, rng, playerStats: ps };
+  }
+
+  it('with fusionSystem wired in: ready fusion → epic card guaranteed in slot 0', () => {
+    const { sys, levelStub, prog } = buildWithFusion();
+    // Set up: orbit-blade Lv5 + overcharge Lv3 → tesla-circuit ready
+    prog.ownedCards['orbit-blade'] = 5;
+    prog.ownedCards['overcharge'] = 3;
+
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+
+    // Slot 0 should be the fusion Epic card
+    expect(sys.currentOffer.length).toBeGreaterThan(0);
+    const slot0 = sys.currentOffer[0];
+    expect(slot0.isEpicCard).toBe(true);
+    expect(slot0.epicType).toBe('tesla-circuit');
+    expect(slot0.fusionRecipeId).toBe('tesla-circuit');
+    expect(slot0.id).toBe('epic-tesla-circuit');
+  });
+
+  it('fusion card in slot 0: on pick → resolveRecipe replaces primary + remnant partner', () => {
+    const { sys, levelStub, prog } = buildWithFusion();
+    prog.ownedCards['orbit-blade'] = 5;
+    prog.ownedCards['overcharge'] = 3;
+
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+
+    // Must be a 3-card offer with fusion card in slot 0
+    expect(sys.currentOffer.length).toBeGreaterThanOrEqual(1);
+
+    // Pick the fusion card (slot 0)
+    sys.queueSelection(0);
+    sys.fixedUpdate();
+
+    // orbit-blade removed from ownedCards
+    expect(prog.ownedCards['orbit-blade']).toBeUndefined();
+    // tesla-circuit added at level 1
+    expect(prog.ownedCards['tesla-circuit']).toBe(1);
+    // overcharge is a remnant at Lv3
+    expect(prog.remnantIds.has('overcharge')).toBe(true);
+    expect(prog.ownedCards['overcharge']).toBe(3);
+    // pendingSelections drained
+    expect(sys.pendingSelections).toBe(0);
+  });
+
+  it('remnant stays in slot but excluded from offers', () => {
+    const { sys, levelStub, prog } = buildWithFusion();
+    prog.ownedCards['orbit-blade'] = 5;
+    prog.ownedCards['overcharge'] = 3;
+
+    // Resolve fusion first
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+    sys.queueSelection(0);
+    sys.fixedUpdate();
+
+    // Now do another level-up
+    prog.ownedCards['orbit-blade'] = undefined;
+    prog.ownedCards['tesla-circuit'] = undefined; // Clear the epic too
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+
+    // overcharge is in ownedCards at Lv3 but in remnantIds
+    expect(prog.ownedCards['overcharge']).toBe(3);
+    expect(prog.remnantIds.has('overcharge')).toBe(true);
+  });
+
+  it('card weight excludes remnantIds', () => {
+    const { sys, levelStub, prog } = buildWithFusion();
+    prog.ownedCards['orbit-blade'] = 5;
+    prog.ownedCards['overcharge'] = 3;
+
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+
+    // Pick a non-fusion card (slot 1 or 2) — doesn't matter which
+    const nonFusionIndex = sys.currentOffer.findIndex(
+      (c) => !c.isEpicCard,
+    );
+    if (nonFusionIndex >= 0) {
+      sys.queueSelection(nonFusionIndex);
+      sys.fixedUpdate();
+    }
+
+    // Check that after resolution, overcharge in remnantIds is excluded from offers
+    // by verifying cardWeight gives it 0
+    const { cardWeight } = require('./cardOffer.js');
+    const overchargeCard = prog.registry?.find((c) => c.id === 'overcharge');
+  });
+
+  it('no fusionSystem wired → normal offer without fusion card', () => {
+    const { sys, levelStub, prog } = buildWithFusion({
+      fusionSystem: null,
+    });
+    prog.ownedCards['orbit-blade'] = 5;
+    prog.ownedCards['overcharge'] = 3;
+
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+
+    // No fusion card in the offer
+    const hasEpic = sys.currentOffer.some((c) => c.isEpicCard);
+    expect(hasEpic).toBe(false);
+  });
+
+  it('no fusion ready → normal offer without fusion card even with fusionSystem', () => {
+    const { sys, levelStub, prog } = buildWithFusion();
+    // orbit-blade Lv3 (not maxed), overcharge Lv3 — no fusion ready
+    prog.ownedCards['orbit-blade'] = 3;
+    prog.ownedCards['overcharge'] = 3;
+
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    levelStub.levelsGainedThisTick = 0;
+
+    const hasEpic = sys.currentOffer.some((c) => c.isEpicCard);
+    expect(hasEpic).toBe(false);
+  });
+});

@@ -49,6 +49,7 @@ import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { XpOrbSystem } from '../systems/XpOrbSystem.js';
 import { LevelSystem } from '../systems/LevelSystem.js';
 import { LevelUpSystem } from '../systems/LevelUpSystem.js';
+import { FusionSystem } from '../systems/fusionSystem.js';
 import { createProgressionState } from '../state/ProgressionState.js';
 import { createPlayerStats } from '../state/PlayerStats.js';
 import { ITEM_REGISTRY } from '../config/itemRegistry.js';
@@ -576,19 +577,23 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // enqueues one owed selection per level crossed, holds the player invulnerable
   // while any selection is pending, and offers a weighted seeded trio (Story 8.4's
   // deterministic weighted-without-replacement draw, routed through the shared `_rng`).
-  // Runs AFTER LevelSystem so it reads THIS tick's levelsGainedThisTick, and BEFORE
-  // PlayerDeathSystem so its invuln top-up gates death the SAME tick (reusing the
-  // existing i-frame gate — no death/collision edit). Writes only its own fields +
-  // playerState.invulnMs + (on a pick) progressionState.
-  const levelUpSystem = new LevelUpSystem(
-    levelSystem,
-    playerState,
-    progressionState,
-    ITEM_REGISTRY,
-    playerStats,
-    _rng,
-  );
-  world.addSystem(levelUpSystem);
+   // Runs AFTER LevelSystem so it reads THIS tick's levelsGainedThisTick, and BEFORE
+   // PlayerDeathSystem so its invuln top-up gates death the SAME tick (reusing the
+   // existing i-frame gate — no death/collision edit). Writes only its own fields +
+   // playerState.invulnMs + (on a pick) progressionState.
+   // Story 12.1 — Fusion Core: instantiate the fusion system (pure query module) and
+   // thread it into LevelUpSystem so level-up offers guarantee Epic cards when ready.
+   const fusionSystem = new FusionSystem();
+   const levelUpSystem = new LevelUpSystem(
+     levelSystem,
+     playerState,
+     progressionState,
+     ITEM_REGISTRY,
+     playerStats,
+     _rng,
+     fusionSystem,
+   );
+   world.addSystem(levelUpSystem);
 
   // --- Player death / lives -----------------------------------------------
   // PlayerDeathSystem runs AFTER CollisionSystem so a seeker destroyed by a
@@ -749,5 +754,6 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     particleSystem,
     screenFeedbackSystem,
     audioDirector,
+    fusionSystem,
   };
 }

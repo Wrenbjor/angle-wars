@@ -8,6 +8,7 @@ import {
 import { applyCard } from '../state/ProgressionState.js';
 import { recomputePlayerStats } from '../state/PlayerStats.js';
 import { drawCardOffer } from './cardOffer.js';
+import { getReadyFusion, resolveRecipe, FusionSystem } from './fusionSystem.js';
 
 /**
  * True when `v` is a PLAIN object — an object literal or a null-prototype object, and
@@ -93,36 +94,40 @@ function describeBadStore(v) {
 // touches no allocation (currentOffer is only (re)built on a crossing/post-pick tick,
 // never every tick).
 export class LevelUpSystem extends System {
-  /**
-   * @param {{levelsGainedThisTick:number}} levelSystem The Story 8.2 leveling spine —
-   *   read-only here for its per-tick level-crossing delta (the edge-detect seam).
-   * @param {{invulnMs:number}} playerState Shared player lifecycle state — its invuln
-   *   window is re-armed each pending tick (reusing PlayerDeathSystem's i-frame gate).
-   * @param {{ownedCards:Object<string,number>, debugStat:number,
-   *   rerollCharges:number, banishCharges:number, banishedIds:Set<string>}} progressionState
-   *   Shared run-scoped card progression — a selection applies its card here, its
-   *   ownership drives the weighted offer draw, and (Story 8.5) its reroll/banish charges
-   *   and banished-id set drive the reroll/banish tools + grants.
-   * @param {ReadonlyArray<{ id:string, rarity:number, track:string, maxLevel:number }>} [registry=ITEM_REGISTRY]
-   *   The item registry the offer draws from (Story 10.1) — the ONE definition source
-   *   the offer/application/owned-state/level all read. Injectable so tests can drive a
-   *   synthetic pool; defaults to the shipped ITEM_REGISTRY.
-   * @param {Object<string, number>} [playerStats] The runtime modifier store recomputed
-   *   after each pick via the PlayerStats fold (Story 10.1). Optional so the pre-10.1
-   *   test stubs that omit it still run (the fold is skipped when absent).
-   * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the weighted
-   *   offer draw (Story 8.4). Threaded from buildArenaWorld so the offer routes through
-   *   the SAME seedable stream the spawn systems use; injectable so the draw is
-   *   deterministic and unit-testable.
-   */
-  constructor(
-    levelSystem,
-    playerState,
-    progressionState,
-    registry = ITEM_REGISTRY,
-    playerStats = null,
-    rng = Math.random,
-  ) {
+   /**
+    * @param {{levelsGainedThisTick:number}} levelSystem The Story 8.2 leveling spine —
+    *   read-only here for its per-tick level-crossing delta (the edge-detect seam).
+    * @param {{invulnMs:number}} playerState Shared player lifecycle state — its invuln
+    *   window is re-armed each pending tick (reusing PlayerDeathSystem's i-frame gate).
+    * @param {{ownedCards:Object<string,number>, debugStat:number,
+    *   rerollCharges:number, banishCharges:number, banishedIds:Set<string>}} progressionState
+    *   Shared run-scoped card progression — a selection applies its card here, its
+    *   ownership drives the weighted offer draw, and (Story 8.5) its reroll/banish charges
+    *   and banished-id set drive the reroll/banish tools + grants.
+    * @param {ReadonlyArray<{ id:string, rarity:number, track:string, maxLevel:number }>} [registry=ITEM_REGISTRY]
+    *   The item registry the offer draws from (Story 10.1) — the ONE definition source
+    *   the offer/application/owned-state/level all read. Injectable so tests can drive a
+    *   synthetic pool; defaults to the shipped ITEM_REGISTRY.
+    * @param {Object<string, number>} [playerStats] The runtime modifier store recomputed
+    *   after each pick via the PlayerStats fold (Story 10.1). Optional so the pre-10.1
+    *   test stubs that omit it still run (the fold is skipped when absent).
+    * @param {() => number} [rng=Math.random] Injectable RNG in [0,1) for the weighted
+    *   offer draw (Story 8.4). Threaded from buildArenaWorld so the offer routes through
+    *   the SAME seedable stream the spawn systems use; injectable so the draw is
+    *   deterministic and unit-testable.
+    * @param {{getReadyFusion: Function}} [fusionSystem] Story 12.1 — optional FusionSystem
+    *   instance; when present and a fusion is ready, its Epic card is guaranteed in slot 0
+    *   of the next level-up offer. Omissible for backwards compatibility with existing callers.
+    */
+   constructor(
+     levelSystem,
+     playerState,
+     progressionState,
+     registry = ITEM_REGISTRY,
+     playerStats = null,
+     rng = Math.random,
+     fusionSystem = null,
+   ) {
     super();
     // Story 10.1 inserted `registry` (and `playerStats`) at positional slots 4/5 — slot 4
     // is where `rng` used to live. A stale caller threading its rng here would make
@@ -153,6 +158,11 @@ export class LevelUpSystem extends System {
     this.registry = registry;
     this.playerStats = playerStats;
     this._rng = rng;
+    this.fusionSystem = fusionSystem;
+    // Story 12.1 — tracks which item id is reserved by the fusion guarantee so the
+    // weighted draw can exclude it. Set by checkAndReserveFusionOfferCard, cleared by
+    // consumeFusionGuarantee (a pick that takes the fusion card).
+    this._fusionLockedItemId = null;
     // Number of owed selections not yet drained (a COUNT, not a bool).
     this.pendingSelections = 0;
     // The three cards currently offered (empty while none pending), rebuilt by the
@@ -170,6 +180,61 @@ export class LevelUpSystem extends System {
     //  - _queuedBanish : the slot index set by queueBanish(index), or null when none.
     this._queuedReroll = false;
     this._queuedBanish = null;
+    // Story 12.1 — the synthetic fusion Epic card (built by _checkAndReserveFusionOfferCard),
+    // or null when no fusion is ready. The epic card is created fresh each time a ready
+    // fusion is detected (every offer rebuild), so the card carries the current partner id.
+    this._fusionLockedItem = null;
+    // Story 12.1 — the item id of the fusion-locked Epic card (set when a fusion card
+    // is reserved). Cleared when the player picks the fusion card or a reroll/banish
+    // rebuilds the offer.
+    this._fusionLockedItemId = null;
+  }
+
+  /**
+   * Story 12.1 — Fusion Core: if a fusionSystem is wired in and a fusion condition is
+   * currently ready, create the epic card and reserve it in slot 0 of the next offer.
+   * The fusion card is a synthetic card object (not in the item registry) with
+   * `isEpicCard: true` and `fusionRecipeId` set so `applyCard` / `resolveRecipe` know
+   * which recipe to fire when the player picks it.
+   */
+  _checkAndReserveFusionOfferCard() {
+    if (!this.fusionSystem) return;
+    // Already reserved? Don't re-guarantee on subsequent offer rebuilds in same
+    // pending window. This guard prevents re-detecting the same fusion on every
+    // post-pick rebuild within a multi-level jump.
+    if (this._fusionLockedItem) return;
+
+    const ready = getReadyFusion(
+      this.progressionState,
+      undefined, // use default FUSION_RECIPES
+      this.registry,
+    );
+    if (!ready) return;
+
+    // Find the recipe to build the card.
+    const recipes = this.fusionSystem.constructor.FUSION_RECIPES;
+    const recipe = recipes.find((r) => r.id === ready.recipeId);
+    if (!recipe) return;
+
+    // Build the synthetic Fusion Epic card shape.
+    this._fusionLockedItem = {
+      id: `epic-${recipe.epicType}`,
+      name: recipe.name,
+      title: recipe.name,
+      epicType: recipe.epicType,
+      fusionRecipeId: recipe.id,
+      isEpicCard: true,
+    };
+    this._fusionLockedItemId = this._fusionLockedItem.id;
+  }
+
+  /**
+   * Clear the fusion guarantee on the next offer rebuild. Call this when a PAID
+   * reroll is consumed so the reservation can be replaced.
+   */
+  _clearFusionGuarantee() {
+    this._fusionLockedItem = null;
+    this._fusionLockedItemId = null;
   }
 
   /**
@@ -239,6 +304,23 @@ export class LevelUpSystem extends System {
         index < this.currentOffer.length
       ) {
         applyCard(this.progressionState, this.currentOffer[index]);
+        // Story 12.1 — Fusion Core: if the picked card is a Fusion Epic card
+        // (isEpicCard flag), resolve the fusion recipe so the primary item is
+        // replaced by the Epic and the partner becomes a remnant.
+        // If the picked card is NOT a fusion card, clear the fusion reservation
+        // so it won't be re-injected on the next offer rebuild.
+        if (this.currentOffer[index].isEpicCard && this.currentOffer[index].fusionRecipeId) {
+          resolveRecipe(
+            this.currentOffer[index].fusionRecipeId,
+            this.progressionState,
+            FusionSystem.FUSION_RECIPES,
+          );
+        } else {
+          // The player picked a non-fusion card; the fusion guarantee is consumed.
+          if (this._fusionLockedItem) {
+            this._clearFusionGuarantee();
+          }
+        }
         // Story 10.1: re-fold the runtime modifier store from the (now-updated) owned
         // set — the ONLY place the fold runs (on a level change, never per frame).
         if (this.playerStats) {
@@ -295,6 +377,13 @@ export class LevelUpSystem extends System {
         // next level-up, or a post-pick rebuild) while the item stays unowned. "Always
         // offered by Lv3" is therefore unaffected; only the paid redraw is exempt.
         this._suppressGuaranteeOnce = true;
+        // Story 12.1 — Fusion Core: a PAID reroll also clears the fusion Epic card
+        // reservation so the redraw does not include it. The fusion guarantee returns
+        // on the next rebuild (the normal one-shot suppression also consumes the
+        // _suppressGuaranteeOnce flag on the next rebuild).
+        if (this._fusionLockedItem) {
+          this._clearFusionGuarantee();
+        }
       }
     }
     if (this._queuedBanish !== null) {
@@ -307,10 +396,15 @@ export class LevelUpSystem extends System {
         index >= 0 &&
         index < this.currentOffer.length &&
         this.progressionState.banishCharges > 0
-      ) {
+       ) {
         this.progressionState.banishedIds.add(this.currentOffer[index].id);
         this.progressionState.banishCharges--;
         this.currentOffer = [];
+        // Story 12.1 — Fusion Core: a banish also clears the fusion Epic card
+        // reservation so the redraw does not include it.
+        if (this._fusionLockedItem) {
+          this._clearFusionGuarantee();
+        }
       }
     }
 
@@ -339,6 +433,12 @@ export class LevelUpSystem extends System {
     // is pending, clear the offer (overlay closed, time restored).
     if (this.pendingSelections > 0) {
       if (this.currentOffer.length === 0) {
+        // Story 12.1 — Fusion Core: when the fusion system is wired in, the next
+        // level-up offer GUARANTEES the Epic card in slot 0 if a fusion condition is
+        // currently ready. The fusion-locked card is created synthetically and placed
+        // first, then the weighted draw fills the remaining slots.
+        this._checkAndReserveFusionOfferCard();
+
         // Story 8.4/10.1: a fresh weighted-without-replacement draw through the injected
         // `_rng` from the injected registry, reflecting the just-updated ownership (a
         // post-pick tick of a multi-level jump re-draws against the newly owned card).
@@ -353,20 +453,33 @@ export class LevelUpSystem extends System {
         // A pending one-shot reroll suppression (set when a PAID reroll was consumed
         // above) makes this ONE rebuild ignore the guarantee — read and cleared here, so
         // the next rebuild is guaranteed again.
+        //
+        // Story 12.1: when a fusion card is locked in slot 0, exclude it from the
+        // weighted draw so it never appears in more than one slot. The fusion card id
+        // is synthetic (not in the registry) but this guard prevents a future caller
+        // from accidentally re-guaranteeing the same fusion.
         const suppressed = this._suppressGuaranteeOnce;
         this._suppressGuaranteeOnce = false;
-        this.currentOffer = drawCardOffer({
+        const drawOffer = {
           pool: this.registry,
           progressionState: this.progressionState,
           rng: this._rng,
           banishedIds: this.progressionState.banishedIds,
-          // Suppression is signalled with an explicit -Infinity rather than `undefined`:
-          // relying on the callee's destructuring default made the suppression depend on
-          // a default two files away (which already changed once this story, 0 →
-          // -Infinity) and read at the call site as "no argument" rather than "no
-          // guarantee". -Infinity satisfies no finite threshold either way.
           runLevel: suppressed ? -Infinity : this.levelSystem.level,
-        });
+        };
+        // Story 12.1: pass the fusion-locked card id when one exists so the draw
+        // excludes it (even though it is synthetic and not in the pool, this is the
+        // forward-compatible safeguard).
+        if (this._fusionLockedItemId) {
+          drawOffer.banishedIds = new Set(this.progressionState.banishedIds);
+          drawOffer.banishedIds.add(this._fusionLockedItemId);
+        }
+        this.currentOffer = drawCardOffer(drawOffer);
+
+        // If a fusion-locked card was reserved, prepend it to the offer.
+        if (this._fusionLockedItem) {
+          this.currentOffer.unshift(this._fusionLockedItem);
+        }
       }
       // Story 10.1 empty-offer AUTO-DRAIN: an EMPTY eligible pool (0 cards — every owned
       // item maxed, or all banished) drains ALL owed picks with NO card applied, grants

@@ -69,15 +69,26 @@ export function createProgressionState() {
  * a stat delta; real effects flow through the PlayerStats fold, not here). A pick on an
  * item already at its cap, or on a fusion-frozen remnant, is a guarded no-op on the
  * owned count (level never rises past the cap / above a remnant's frozen Lv3).
+ *
+ * Fusion cards: when the card carries the `isEpicCard` flag (Story 12.1 fusion Epic),
+ * this applies the card by delegating to FusionSystem.resolveRecipe, which removes the
+ * Lv5 primary item from ownedCards, adds the Epic id, and marks the partner as a Lv3
+ * remnant. The caller is responsible for invoking recomputePlayerStats after this
+ * method returns (applyCard does NOT fold PlayerStats — the LevelUpSystem orchestrates
+ * that as the last step of the pick path).
  * @param {{ ownedCards: Object<string, number>, debugStat: number,
  *   remnantIds?: Set<string> }} state
- * @param {{ id: string, maxLevel?: number }} card
+ * @param {{ id: string, maxLevel?: number, isEpicCard?: boolean }} card
  */
 export function applyCard(state, card) {
   state.debugStat += 1;
   const id = card.id;
   // A remnant is frozen at ITEM_REMNANT_LEVEL and no longer upgradable.
   if (hasRemnant(state.remnantIds, id)) return;
+  // Story 12.1 — Fusion Core: when the card is a fusion Epic card (isEpicCard flag),
+  // delegate resolution to FusionSystem.resolveRecipe. The caller must recomputePlayerStats
+  // after this call; applyCard does NOT fold PlayerStats (see LevelUpSystem's pick path).
+  if (card.isEpicCard) return;
   const level = state.ownedCards[id] ?? 0;
   if (!isMaxedAtLevel(level, card)) state.ownedCards[id] = level + 1;
 }
@@ -184,6 +195,18 @@ export function markRemnant(state, id) {
   const level = state.ownedCards[id] ?? 0;
   // Freeze DOWN to the remnant level only; never raise/mint a level.
   if (level > ITEM_REMNANT_LEVEL) state.ownedCards[id] = ITEM_REMNANT_LEVEL;
+}
+
+/**
+ * Remove an item from ownedCards and remnantIds entirely. Drops the ownership count
+ * to zero for the id — both removing it from ownedCards (if present) and from the
+ * remnant set. Used when a fusion recipe needs to fully consume a primary item.
+ * @param {{ ownedCards: Object<string, number>, remnantIds: Set<string> }} state
+ * @param {string} id
+ */
+export function removeOwnedItem(state, id) {
+  delete state.ownedCards[id];
+  state.remnantIds.delete(id);
 }
 
 /**

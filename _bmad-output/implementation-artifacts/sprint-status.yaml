@@ -140,7 +140,7 @@ development_status:
   # Re-sliced 2026-07-27 from 4 bundled stories into 16 single-session stories
   # (run 20260726-170549-ab23 timed out on every bundled story).
   epic-12: backlog
-  12-1-fusion-core: backlog
+  12-1-fusion-core: done
   12-2-fusion-ux: backlog
   12-3-tesla-circuit: backlog
   12-4-railgun: backlog
