@@ -372,3 +372,51 @@ describe('GridFieldSystem — construction seeds edge-detection prevs', () => {
     expect(system.warp.active).toBe(false);
   });
 });
+
+describe('GridFieldSystem — _emit', () => {
+  it('_emit at (x, y) creates active ripple with correct position', () => {
+    const system = new GridFieldSystem(
+      fakeCollision([], 0),
+      fakeBomb(),
+      fakeDeath(),
+      fakeHolePool(),
+    );
+
+    // Call _emit directly (it is exposed for use by implosion and other emitters).
+    system._emit(100, 200);
+
+    const active = activeRipples(system);
+    expect(active.length).toBe(1);
+    expect(active[0].active).toBe(true);
+    expect(active[0].x).toBe(100);
+    expect(active[0].y).toBe(200);
+    expect(active[0].ageMs).toBe(0);
+  });
+
+  it('_emit over capacity recycles oldest ripple', () => {
+    const system = new GridFieldSystem(
+      fakeCollision([], 0),
+      fakeBomb(),
+      fakeDeath(),
+      fakeHolePool(),
+    );
+
+    // Emit GRID_MAX_RIPPLES ripples directly, then one more to recycle.
+    const base = 100;
+    system._emit(base, base); // slot 0: origin (100,100) — oldest
+    for (let i = 0; i < GRID_MAX_RIPPLES - 1; i++) {
+      // distinct origins that won't collide with the recycled slot's original coords
+      system._emit(base + 1 + i * 100, base + 1 + i * 100);
+    }
+    expect(activeRipples(system).length).toBe(GRID_MAX_RIPPLES);
+
+    // One more — should recycle the oldest (100,100).
+    system._emit(999, 999);
+    expect(activeRipples(system).length).toBe(GRID_MAX_RIPPLES);
+    // The newest ripple exists.
+    const newest = system.ripples.find((r) => r.x === 999 && r.y === 999);
+    expect(newest).toBeTruthy();
+    // The oldest was recycled away (no ripple at (100,100) in any slot).
+    expect(system.ripples.some((r) => r.x === base && r.y === base)).toBe(false);
+  });
+});

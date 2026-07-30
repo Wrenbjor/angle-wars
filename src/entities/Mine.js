@@ -59,5 +59,11 @@ export function createMine() {
     damage: MINE_DETONATE_DAMAGE,
     pull: 0,
     chain: 0,
+    // Singularity Field (Story 12.8): mini black hole mode flags.
+    // When true, the mine is in pull phase rather than immediate detonation.
+    isSingularity: false,
+    // Simulation time (ms) when pull phase began. Used to detect implosion:
+    // when simNow - pullPhaseStartMs >= SINGULARITY_PULL_DURATION_MS, impode.
+    pullPhaseStartMs: 0,
   };
 }

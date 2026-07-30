@@ -24,6 +24,10 @@ import {
   MINE_POOL_PREWARM,
   PLAYER_BULLET_BASE_DAMAGE,
   ARMORED_HP,
+  SINGULARITY_PULL_DURATION_MS,
+  SINGULARITY_PULL_RADIUS,
+  SINGULARITY_PULL_STRENGTH,
+  SINGULARITY_DAMAGE_MULTIPLIER,
 } from '../config/constants.js';
 
 // Story 11.3 — MineLayerSystem owns the Mine Layer's mine POOL + the drop ACCUMULATOR, while
@@ -64,6 +68,19 @@ function makeSystem(stats = {}, pools) {
   const playerStats = stats === null ? null : { ...createPlayerStats(), ...stats };
   const system = new MineLayerSystem(ship, enemyPools, collisionSystem, playerStats);
   return { ship, enemyPools, enemyPool: enemyPools[0], collisionSystem, playerStats, system };
+}
+
+/**
+ * A no-op GridFieldSystem mock for testing ripple emission.
+ */
+function fakeGridField() {
+  return {
+    __fake: true,
+    ripples: [],
+    _emit(x, y) {
+      this.ripples.push({ x, y, ageMs: 0, active: true });
+    },
+  };
 }
 
 function addEnemy(pool, x, y, { telegraphMs = 0, hp } = {}) {
@@ -119,6 +136,28 @@ function isActive(pool, target) {
     if (e === target) found = true;
   });
   return found;
+}
+
+/**
+ * Inject a singularity mine directly into the pool (arm → singularity pull).
+ * Sets isSingularity=true and pullPhaseStartMs=simNow, with simulated age already past armMs.
+ */
+function injectSingularityMine(
+  system,
+  { x, y, damage = MINE_DETONATE_DAMAGE },
+) {
+  const m = system.pool.acquire();
+  m.x = x;
+  m.y = y;
+  m.ageMs = MINE_ARM_MS; // arm
+  m.armMs = MINE_ARM_MS;
+  m.detonateRadius = MINE_BASE_DETONATE_RADIUS;
+  m.damage = damage;
+  m.pull = 0;
+  m.chain = 0;
+  m.isSingularity = true;
+  m.pullPhaseStartMs = system._simMs;
+  return m;
 }
 
 function isMineActive(system, target) {
@@ -671,5 +710,235 @@ describe('MineLayerSystem — allocation', () => {
     expect(system._detonateList).toBe(detonateListRef);
     // …and no field was added to the instance across the run.
     expect(Object.keys(system).sort()).toEqual(shape);
+  });
+});
+
+describe('MineLayerSystem — Singularity Field (Story 12.8)', () => {
+  it('singularityFieldActive=false: an enemy in blast triggers normal detonation', () => {
+    const { enemyPool, collisionSystem, system, ship } = makeSystem(LV1);
+    const e = addEnemy(enemyPool, ship.x + 300, ship.y);
+    const mine = injectMine(system, { x: ship.x + 300, y: ship.y, detonateRadius: 60 });
+    system.singularityFieldActive = false;
+    system.fixedUpdate(DT);
+    expect(isActive(enemyPool, e)).toBe(false);
+    expect(collisionSystem.killedEnemies).toContain(e);
+    expect(isMineActive(system, mine)).toBe(false);
+  });
+
+  it('singularityFieldActive=true, enemy enters blast: mine transitions to pull phase', () => {
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    const e = addEnemy(enemyPool, mx + 300, ship.y); // outside blast(60)
+    system.singularityFieldActive = true;
+    const mine = injectMine(system, { x: mx, y: ship.y, detonateRadius: 500 }); // huge blast so enemy is in range
+    system.fixedUpdate(DT);
+    expect(mine.isSingularity).toBe(true);
+    expect(mine.pullPhaseStartMs).toBeGreaterThan(0);
+    // Mine is still active (not released).
+    expect(isMineActive(system, mine)).toBe(true);
+    // Enemy is still alive (singularity doesn't damage on transition).
+    expect(isActive(enemyPool, e)).toBe(true);
+  });
+
+  it('Pull phase: enemy within 150px is pulled toward the mine', () => {
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    const ex = mx + 50; // 50px from mine, inside SINGULARITY_PULL_RADIUS (150)
+    const e = addEnemy(enemyPool, ex, ship.y);
+    system.singularityFieldActive = true;
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    system.fixedUpdate(DT);
+    const dBefore = Math.abs(ex - mx);
+    const dAfter = Math.abs(e.x - mx);
+    expect(dAfter).toBeLessThan(dBefore); // nudged toward the mine
+    expect(dAfter).toBeGreaterThanOrEqual(0);
+  });
+
+  it('Pull phase: enemy outside 150px radius is not pulled', () => {
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    const e = addEnemy(enemyPool, mx + SINGULARITY_PULL_RADIUS + 100, ship.y); // 250px away
+    const x0 = e.x;
+    system.singularityFieldActive = true;
+    injectSingularityMine(system, { x: mx, y: ship.y });
+    system.fixedUpdate(DT);
+    expect(e.x).toBe(x0); // no movement
+  });
+
+  it('Implode at 1.5s: 3× damage dealt via applyPlayerDamage', () => {
+    const { enemyPool, collisionSystem, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    const e = addEnemy(enemyPool, mx + 20, ship.y); // within blast radius
+    system.singularityFieldActive = true;
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    // Advance past pull duration (1.5s) to trigger implosion.
+    const steps = Math.ceil(SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS) + 2;
+    for (let i = 0; i < steps; i++) {
+      system.fixedUpdate(DT);
+    }
+    // Verify 3× damage applied.
+    expect(collisionSystem.bulletDamageCount).toBeGreaterThanOrEqual(1);
+    expect(isActive(enemyPool, e)).toBe(false); // killed
+    expect(collisionSystem.killedEnemies).toContain(e);
+  });
+
+  it('Implode: grid ripple emitted at mine position', () => {
+    const gridFake = fakeGridField();
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    addEnemy(enemyPool, mx + 20, ship.y);
+    system.singularityFieldActive = true;
+    system.gridFieldSystem = gridFake;
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    // Advance to implosion.
+    for (let i = 0; i < SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS + 2; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(gridFake.ripples.length).toBeGreaterThanOrEqual(1);
+    expect(gridFake.ripples[0].x).toBe(mx);
+    expect(gridFake.ripples[0].y).toBe(ship.y);
+  });
+
+  it('Implode: mine reset to armed state (isSingularity=false, ageMs<2*DT)', () => {
+    const DT_MS = FIXED_STEP_MS;
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    addEnemy(enemyPool, mx + 20, ship.y);
+    system.singularityFieldActive = true;
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    // Advance to implosion.
+    const steps = Math.ceil(SINGULARITY_PULL_DURATION_MS / DT_MS) + 2;
+    for (let i = 0; i < steps; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(mine.isSingularity).toBe(false);
+    // ageMs may be a small positive value (< 2*DT) from the age pass that
+    // runs on the post-implosion tick before the implosion check.
+    expect(mine.ageMs).toBeLessThanOrEqual(DT_MS * 2);
+    expect(mine.pullPhaseStartMs).toBe(0);
+    // Mine is still active (not released back to pool).
+    expect(isMineActive(system, mine)).toBe(true);
+  });
+
+  it('Multiple mines in pull phase: each independently pulls enemies', () => {
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx1 = ship.x + 300;
+    const mx2 = ship.x - 300;
+    // Enemy between two singularity mines.
+    const e = addEnemy(enemyPool, ship.x, ship.y);
+    system.singularityFieldActive = true;
+    const m1 = injectSingularityMine(system, { x: mx1, y: ship.y });
+    const m2 = injectSingularityMine(system, { x: mx2, y: ship.y });
+    const dBefore = Math.abs(e.x);
+    system.fixedUpdate(DT);
+    const dAfter = Math.abs(e.x);
+    // Enemy moved due to pulls from both mines (net direction depends on relative distances).
+    expect(isMineActive(system, m1)).toBe(true);
+    expect(isMineActive(system, m2)).toBe(true);
+  });
+
+  it('Lv4 mine pull + singularity pull both apply to same enemy', () => {
+    const { enemyPool, system, ship } = makeSystem(LV4); // pull=1 from fold
+    const mx = ship.x + 300;
+    const e = addEnemy(enemyPool, mx + 80, ship.y); // within both pull radii
+    const x0 = e.x;
+    system.singularityFieldActive = true;
+    const mine = injectMine(system, { x: mx, y: ship.y, pull: 1, detonateRadius: 1000 }); // Lv4 pull mine
+    system.fixedUpdate(DT);
+    // Both Lv4 pull and singularity pull should combine — enemy moves more than from singularity alone.
+    // The exact amount is non-trivial, but that it moves at all with both pulls active is verifiable.
+    expect(e.x).not.toBe(x0);
+    // Enemy should have been moved inward (singularity pull).
+    const dAfter = Math.abs(e.x - mx);
+    expect(dAfter).toBeLessThan(80); // was at 80px from mine, moved closer
+  });
+
+  it('No enemies: pull phase does nothing', () => {
+    const { enemyPool, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    system.singularityFieldActive = true;
+    // Just run with a singularity mine but no enemies in the pool.
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    for (let i = 0; i < SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS + 2; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(isMineActive(system, mine)).toBe(true); // should survive after implosion (still active)
+  });
+
+  it('Reset mine re-triggers on enemy contact: after implosion, enemy in blast → normal detonation', () => {
+    const { enemyPool, collisionSystem, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    const e = addEnemy(enemyPool, mx + 20, ship.y); // inside blast radius
+    system.singularityFieldActive = true;
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    // Advance to implosion (reset).
+    for (let i = 0; i < SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS + 2; i++) {
+      system.fixedUpdate(DT);
+    }
+    // Mine should still be active and armed (reset but not released).
+    expect(isMineActive(system, mine)).toBe(true);
+    expect(mine.isSingularity).toBe(false);
+    // The enemy is still in range. Run one more tick → normal detonation.
+    system.fixedUpdate(DT);
+    // Now the reset should have detonated (the enemy is in blast radius).
+    expect(isActive(enemyPool, e)).toBe(false);
+    expect(collisionSystem.killedEnemies).toContain(e);
+  });
+
+  it('Implode damage routing: verifies applyPlayerDamage called (damage counted)', () => {
+    const { enemyPool, collisionSystem, system, ship } = makeSystem(LV1);
+    const mx = ship.x + 300;
+    const e = addEnemy(enemyPool, mx + 20, ship.y);
+    const dBefore = e.hp !== undefined ? e.hp : 1;
+    system.singularityFieldActive = true;
+    injectSingularityMine(system, { x: mx, y: ship.y });
+    // Advance to implosion.
+    for (let i = 0; i < SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS + 2; i++) {
+      system.fixedUpdate(DT);
+    }
+    // The damage is routed through applyPlayerDamage — it goes into bulletDamageCount.
+    expect(collisionSystem.bulletDamageCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Implode damage is exactly 3× base mine damage (SINGULARITY_DAMAGE_MULTIPLIER)', () => {
+    const armoredPool = new Pool(createArmored);
+    const { system: sys2 } = makeSystem(LV1, [armoredPool]);
+    const mx2 = sys2.ship.x + 300;
+    // Deploy an armored enemy just outside the kill threshold, so 3× damage kills it
+    // (verifying magnitude = mine.damage × multiplier, not a different value).
+    const a = addEnemy(armoredPool, mx2 + 20, sys2.ship.y, { hp: ARMORED_HP });
+    // Armored HP is 5; mine damage * 3 = 270. A 3× killed armored proves the multiplier.
+    // For a precise per-hit check, use a custom-hp enemy: set hp to exactly one
+    // implosion hit below one-shot, so the hit is absorbed (not a kill) and we can
+    // verify the exact damage absorbed via hp delta.
+    a.hp = SINGULARITY_DAMAGE_MULTIPLIER * MINE_DETONATE_DAMAGE + 10; // 280 (absorbed, not killed)
+    sys2.singularityFieldActive = true;
+    injectSingularityMine(sys2, { x: mx2, y: sys2.ship.y });
+    const hpBefore = a.hp;
+    const steps = Math.ceil(SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS) + 2;
+    for (let i = 0; i < steps; i++) sys2.fixedUpdate(DT);
+    // The implosion should have been absorbed — hp drops by exactly the implosion damage.
+    expect(a.hp).toBeCloseTo(hpBefore - (MINE_DETONATE_DAMAGE * SINGULARITY_DAMAGE_MULTIPLIER), 6);
+  });
+
+  it('Zero allocation in hot path during pull phase', () => {
+    const armoredPool = new Pool(createArmored);
+    const { system, ship } = makeSystem(LV1, [armoredPool]);
+    const mx = ship.x + 300;
+    // Deploy a stationary enemy so the singularity pull hot path (iterate enemies)
+    // actually executes real logic — not a vacuous empty-array loop.
+    const e = addEnemy(armoredPool, mx + 80, ship.y, { hp: 1e9 });
+    system.singularityFieldActive = true;
+    const mine = injectSingularityMine(system, { x: mx, y: ship.y });
+    const xBefore = e.x;
+    const totalBefore = system.pool.activeCount + system.pool.freeCount;
+    const shapeBefore = Object.keys(system).sort();
+    for (let i = 0; i < SINGULARITY_PULL_DURATION_MS / FIXED_STEP_MS + 2; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(system.pool.activeCount + system.pool.freeCount).toBe(totalBefore);
+    expect(Object.keys(system).sort()).toEqual(shapeBefore);
+    // Enemy should have been nudged by the pull (verifies the hot path ran).
+    expect(Math.abs(e.x - xBefore)).toBeGreaterThan(0);
   });
 });

@@ -631,6 +631,14 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         seekerDroneSystem.swarmProtocolActive = true;
       },
     );
+    // Story 12.8 — Singularity Field effect wiring. After fusion resolution sets
+    // 'singularity-field' in ownedCards, enable mini black hole behavior on mineLayerSystem.
+    FusionSystem.registerEffect(
+      'singularity-field',
+      () => {
+        mineLayerSystem.singularityFieldActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,
@@ -712,6 +720,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
 
   // Wire gridFieldSystem into piercingLanceSystem for railgun's rippleLine() (Story 12.4).
   piercingLanceSystem.gridFieldSystem = gridFieldSystem;
+  // Story 12.8 — wire gridFieldSystem into mineLayerSystem for singularity field
+  // implosion ripple emission.
+  mineLayerSystem.gridFieldSystem = gridFieldSystem;
 
   // --- Pooled particle system (Story 4.3) ---------------------------------
   // Registered LAST — after GridFieldSystem — so within every fixed tick each

@@ -16,6 +16,10 @@ import {
   MINE_PULL_STRENGTH,
   MINE_CHAIN_RADIUS,
   MINE_POOL_PREWARM,
+  SINGULARITY_PULL_DURATION_MS,
+  SINGULARITY_PULL_RADIUS,
+  SINGULARITY_PULL_STRENGTH,
+  SINGULARITY_DAMAGE_MULTIPLIER,
 } from '../config/constants.js';
 
 // MineLayerSystem — the Mine Layer's pooled timed mines + arm/pull/detonate/chain/drop
@@ -72,25 +76,28 @@ import {
 // Sets (the CollisionSystem / SeekerDroneSystem convention).
 export class MineLayerSystem extends System {
   /**
-   * @param {{x:number,y:number}} ship The player ship — read for the drop origin (the wake).
-   *   NEVER mutated here (the system only reads ship.x/y).
-   * @param {import('../core/Pool.js').Pool[]} enemyPools The five COMBAT archetype pools the
-   *   detonation + pull reach. Deliberately `enemyPools`, never `deathPools`: the Black Hole
-   *   and the Mirror Reflector are out of scope, the same scoping OrbitBladeSystem /
-   *   SeekerDroneSystem apply.
-   * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem The shared damage
-   *   seam — every detonation hit goes through its `applyPlayerDamage`, so armor, scoring, XP
-   *   and the kill latches behave exactly as for a bullet.
-   * @param {Object<string,number>|null} [playerStats=null] The shared player-stat store the
-   *   mine parameters are read from (optional — a null store means NO mines ever, i.e.
-   *   exactly the pre-11.3 behavior).
-   */
-  constructor(ship, enemyPools, collisionSystem, playerStats = null) {
+    * @param {{x:number,y:number}} ship The player ship — read for the drop origin (the wake).
+    *   NEVER mutated here (the system only reads ship.x/y).
+    * @param {import('../core/Pool.js').Pool[]} enemyPools The five COMBAT archetype pools the
+    *   detonation + pull reach. Deliberately `enemyPools`, never `deathPools`: the Black Hole
+    *   and the Mirror Reflector are out of scope, the same scoping OrbitBladeSystem /
+    *   SeekerDroneSystem apply.
+    * @param {import('./CollisionSystem.js').CollisionSystem} collisionSystem The shared damage
+    *   seam — every detonation hit goes through its `applyPlayerDamage`, so armor, scoring, XP
+    *   and the kill latches behave exactly as for a bullet.
+    * @param {Object<string,number>|null} [playerStats=null] The shared player-stat store the
+    *   mine parameters are read from (optional — a null store means NO mines ever, i.e.
+    *   exactly the pre-11.3 behavior).
+    * @param {import('./GridFieldSystem.js').GridFieldSystem|null} [gridFieldSystem=null] Optional
+    *   grid field system for implosion ripple emission (Story 12.8).
+    */
+  constructor(ship, enemyPools, collisionSystem, playerStats = null, gridFieldSystem = null) {
     super();
     this.ship = ship;
     this.enemyPools = enemyPools;
     this.collisionSystem = collisionSystem;
     this.playerStats = playerStats;
+    this.gridFieldSystem = gridFieldSystem;
 
     // The mine pool — the single source of active/free mine truth. Prewarmed so a drop never
     // hits the factory once running.
@@ -139,6 +146,20 @@ export class MineLayerSystem extends System {
     // caught in overlapping blasts / a chain cascade is hit — and released — at most once.
     // Cleared each tick, so it is still reused (no per-tick allocation).
     this._hitEnemies = new Set();
+
+    // Story 12.8 — Singularity Field: active flag set by fusion effect handler.
+    // When true, armed mines that detect an enemy in blast radius transition to
+    // "mini black hole" mode (pull phase → implosion → reset) instead of
+    // immediate detonation.
+    this.singularityFieldActive = false;
+
+    // Simulation time accumulator in ms. Tracks the total elapsed simulation
+    // time so implosion timers have an absolute reference point.
+    this._simMs = 0;
+
+    // Scratch array for tracking mines still in pull phase (so we can re-check
+    // each tick without iterating the full mines list).
+    this._singularityMines = [];
   }
 
   /**
@@ -236,6 +257,9 @@ export class MineLayerSystem extends System {
     const pullFlag = this._pull();
     const chainFlag = this._chain();
 
+    // Track simulation time for implosion timer.
+    this._simMs += dt;
+
     // (2) Materialize the combat enemies (+ owners) ONCE through the hoisted collector, which
     // skips a telegraphing (spawning-in) enemy — so it is never a pull target NOR a hit.
     const enemies = this._enemies;
@@ -288,6 +312,28 @@ export class MineLayerSystem extends System {
       }
     }
 
+    // (4b) SINGULARITY FIELD — pull phase. For each mine in pull mode, apply
+    // gravity-like pull toward the mine. The pull formula is identical to the
+    // Lv4 mine pull: strength × (1 - d/RADIUS) × dtSec.
+    if (this.singularityFieldActive && ship) {
+      for (let i = 0; i < mines.length; i++) {
+        const m = mines[i];
+        if (!m.isSingularity) continue;
+        for (let j = 0; j < enemies.length; j++) {
+          const e = enemies[j];
+          const dx = m.x - e.x;
+          const dy = m.y - e.y;
+          const d = Math.hypot(dx, dy);
+          if (d > 0 && d < SINGULARITY_PULL_RADIUS) {
+            const pull = SINGULARITY_PULL_STRENGTH * (1 - d / SINGULARITY_PULL_RADIUS) * dtSec;
+            const inv = pull / d;
+            e.x += dx * inv;
+            e.y += dy * inv;
+          }
+        }
+      }
+    }
+
     // (5) DETONATE (+ chain cascade). First mark every ARMED mine an enemy has ENTERED. Then
     // process the detonation queue: a chain-stamped mine adds adjacent ARMED mines within
     // MINE_CHAIN_RADIUS, and each detonating mine damages every combat enemy in its blast
@@ -301,15 +347,30 @@ export class MineLayerSystem extends System {
     detonateSet.clear();
     hitEnemies.clear();
 
-    // Trigger scan: an ARMED mine detonates if any combat enemy center is within
-    // mine.detonateRadius + enemy.radius of it.
+    // Trigger scan: an ARMED mine triggers (enters pull phase) if any combat enemy
+    // center is within mine.detonateRadius + enemy.radius of it.
+    // When singularityFieldActive is false: normal detonation.
+    // When singularityFieldActive is true: transition to pull phase (mini black hole).
     for (let i = 0; i < mines.length; i++) {
       const m = mines[i];
-      if (m.ageMs < m.armMs) continue; // unarmed → inert, never detonates
+      if (m.ageMs < m.armMs) continue; // unarmed → inert
       if (detonateSet.has(m)) continue;
+
+      if (m.isSingularity) {
+        // Already in pull phase — skip (pull already applied, waiting for implosion).
+        continue;
+      }
+
       if (this._enemyInBlast(m, enemies)) {
-        detonateSet.add(m);
-        detonateList.push(m);
+        if (this.singularityFieldActive) {
+          // Transition to mini black hole pull phase.
+          m.isSingularity = true;
+          m.pullPhaseStartMs = this._simMs;
+        } else {
+          // Normal detonation.
+          detonateSet.add(m);
+          detonateList.push(m);
+        }
       }
     }
 
@@ -351,6 +412,27 @@ export class MineLayerSystem extends System {
     // Release every detonated mine (safe now — we are done iterating the snapshot).
     for (let i = 0; i < detonateList.length; i++) {
       pool.release(detonateList[i]);
+    }
+
+    // (5.5) SINGULARITY FIELD — implosion. Check all mines in pull phase. When
+    // a mine reaches the pull lifetime, it implodes: AoE damage at 3× normal,
+    // triggers a grid ripple, then resets to armed state (ageMs=0, isSingularity=false).
+    if (this.singularityFieldActive) {
+      const singularityMines = this._singularityMines;
+      singularityMines.length = 0;
+
+      for (let i = 0; i < mines.length; i++) {
+        const m = mines[i];
+        if (!m.isSingularity) continue;
+
+        if (this._simMs - m.pullPhaseStartMs >= SINGULARITY_PULL_DURATION_MS) {
+          // Implode.
+          this._implode(m, pools);
+        } else {
+          // Still in pull phase — track for next tick's implosion check.
+          singularityMines.push(m);
+        }
+      }
     }
 
     // (6) DROP cadence. Only when OWNED (dropPeriod > 0) AND with a valid ship (a mine is laid
@@ -406,11 +488,57 @@ export class MineLayerSystem extends System {
   }
 
   /**
-   * Release the OLDEST live mine (max ageMs — a mine dropped earlier has aged longer) back to
-   * the pool. Called before an over-cap drop so the live count stays bounded. Removal (not a
-   * detonation) is the deterministic eviction half — no eviction-triggered chain cascade to
-   * reason about, and it fully satisfies "live count stays bounded." Reuses the `_mines`
-   * scratch (the age/pull/detonate passes have finished by drop time), so it allocates
+    * Implode a singularity mine: deal AoE damage at 3× normal, trigger a grid
+    * ripple at the mine's position, then reset the mine to an armed state
+    * (not singularity) so it can enter pull mode again on next enemy contact.
+    *
+    * Uses `collisionSystem.applyPlayerDamage` for the AoE damage (armor/scoring/
+    * XP/kill-latches behave correctly).
+    *
+    * @param {object} mine The mine to impode.
+    * @param {import('../core/Pool.js').Pool[]} [pools] The combat enemy pools.
+    */
+  _implode(mine, pools) {
+    // Emit a grid ripple at the implosion point.
+    if (this.gridFieldSystem) {
+      this.gridFieldSystem._emit(mine.x, mine.y);
+    }
+
+    // Apply AoE damage: 3× the base mine damage.
+    if (pools && this.collisionSystem) {
+      const implosionDamage = mine.damage * SINGULARITY_DAMAGE_MULTIPLIER;
+      const enemies = this._enemies;
+      const owners = this._owners;
+      const hitEnemies = this._hitEnemies;
+      hitEnemies.clear();
+      for (let j = 0; j < enemies.length; j++) {
+        const e = enemies[j];
+        if (hitEnemies.has(e)) continue;
+        const dx = mine.x - e.x;
+        const dy = mine.y - e.y;
+        const rr = mine.detonateRadius + e.radius;
+        if (dx * dx + dy * dy <= rr * rr) {
+          hitEnemies.add(e);
+          this.collisionSystem.applyPlayerDamage(e, owners[j], implosionDamage);
+        }
+      }
+    }
+
+    // Reset the mine: it becomes a normal armed mine again, ready for a new
+    // cycle. The mine stays active (not in detonateList, so the release pass
+    // above does NOT release it). On the next tick, when an enemy is in range,
+    // it will detonate normally (since isSingularity is false).
+    mine.isSingularity = false;
+    mine.pullPhaseStartMs = 0;
+    mine.ageMs = 0;
+  }
+
+  /**
+    * Release the OLDEST live mine (max ageMs — a mine dropped earlier has aged longer) back to
+    * the pool. Called before an over-cap drop so the live count stays bounded. Removal (not a
+    * detonation) is the deterministic eviction half — no eviction-triggered chain cascade to
+    * reason about, and it fully satisfies "live count stays bounded." Reuses the `_mines`
+    * scratch (the age/pull/detonate passes have finished by drop time), so it allocates
    * nothing. A no-op if somehow no mine is active.
    * @private
    */

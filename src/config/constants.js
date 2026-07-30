@@ -1133,6 +1133,17 @@ export const COLOR_MINE_UNARMED = 0x886644;
 // note). Epic 4 owns the real aesthetic.
 export const COLOR_MINE_ARMED = 0xffaa22;
 
+// --- Singularity Field (Story 12.8 / Epic 12 — offense Epic) -------------------
+// Mini black hole pull phase duration (ms). A mine stays in pull for 1.5s before
+// imploding.
+export const SINGULARITY_PULL_DURATION_MS = 1500;
+// Gravity pull radius for singularity mines (px). Same as MINE_PULL_RADIUS.
+export const SINGULARITY_PULL_RADIUS = 150;
+// Gravity pull strength for singularity mines (px/s). Same as MINE_PULL_STRENGTH.
+export const SINGULARITY_PULL_STRENGTH = 220;
+// Damage multiplier on singularity implosion. Mine implosion deals mult × normal damage.
+export const SINGULARITY_DAMAGE_MULTIPLIER = 3;
+
 // --- Piercing Lance (Story 11.4 / PRD §13.3) --------------------------------
 // The fourth Epic-11 "exotic" offense item and the first PIERCING projectile: a slow,
 // heavy bolt auto-fired on a cadence FROM the ship TOWARD the nearest combat enemy that
