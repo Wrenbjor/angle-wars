@@ -1225,6 +1225,11 @@ export const RAILGUN_BEAM_THICKNESS = 20;
 // px — perpendicular distance from the beam line that counts as a hit.
 // An enemy within this radius of the beam line takes damage.
 
+// --- Sunburst (Story 12.6 / Epic 12 — offense Epic) -------------------------
+// Number of bullets in the 360° ring that fires every 4th Spread Cannon volley.
+// 36 bullets gives 10° spacing, filling the circle.
+export const SUNBURST_RING_BULLET_COUNT = 36;
+
 // --- Ricochet Rounds (Story 11.5 / PRD §13.4) -------------------------------
 // The fifth Epic-11 "exotic" offense item and the first BASE-GUN MODIFIER of the epic: it
 // makes the player's ORDINARY bullets bounce off the arena walls (once → twice → 4×)

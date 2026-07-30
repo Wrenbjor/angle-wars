@@ -17,6 +17,7 @@ import {
   BULLET_POOL_PREWARM,
   SPREAD_MAX_WAYS,
   SPREAD_MAX_ARC_DEG,
+  SUNBURST_RING_BULLET_COUNT,
 } from '../config/constants.js';
 import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 
@@ -1732,5 +1733,133 @@ describe('FiringSystem — Ricochet Rounds (Story 11.5)', () => {
       guard++;
     }
     expect(system.bulletPool.activeCount).toBe(0);
+  });
+});
+
+// --- Story 12.6 (Sunburst): 360° ring every 4th volley -----------------------
+describe('FiringSystem — Sunburst (Story 12.6)', () => {
+  function makeSunburstSystem(opts = {}) {
+    const { ship, playerStats } = opts;
+    const stats = { ...createPlayerStats(), spreadWays: 5, spreadArcDeg: 16, ...playerStats };
+    const { input, system } = makeSystem({
+      ship: ship ?? { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+      aim: [0, 1],
+      playerStats: stats,
+    });
+    // Enable sunburst so the ring counter advances
+    system.sunburstActive = true;
+    return { input, system };
+  }
+
+  function activeBulletData(system) {
+    const bullets = [];
+    system.bulletPool.forEachActive((b) => bullets.push({ ...b }));
+    return bullets;
+  }
+
+  function fireNVolleys(system, input, n) {
+    // Drain any banked accumulator, then advance exactly one cadence per call
+    system._accumMs = 0;
+    for (let i = 0; i < n; i++) {
+      input.setAim(0, 1);
+      system.fixedUpdate(FIRE_INTERVAL_MS);
+    }
+  }
+
+  it('sunburstActive=false: normal spread behavior unchanged', () => {
+    const { system } = makeSunburstSystem({ playerStats: { spreadWays: 5, spreadArcDeg: 16 } });
+    system.sunburstActive = false;
+    system.fixedUpdate(DT);
+    expect(activeBulletData(system)).toHaveLength(5); // spread volley
+  });
+
+  it('sunburstActive=true, volley 1: normal spread fires, counter → 1', () => {
+    const { system, input } = makeSunburstSystem();
+    system._accumMs = 0; // reset to avoid seeded accumulator
+    fireNVolleys(system, input, 1);
+    expect(system._sunburstVolleyCounter).toBe(1);
+  });
+
+  it('sunburstActive=true, volley 2: normal spread, counter → 2', () => {
+    const { system, input } = makeSunburstSystem();
+    system._accumMs = 0;
+    fireNVolleys(system, input, 2);
+    expect(system._sunburstVolleyCounter).toBe(2);
+  });
+
+  it('sunburstActive=true, volley 3: normal spread, counter → 3', () => {
+    const { system, input } = makeSunburstSystem();
+    system._accumMs = 0;
+    fireNVolleys(system, input, 3);
+    expect(system._sunburstVolleyCounter).toBe(3);
+  });
+
+  it('sunburstActive=true, volley 4: 360° ring fires, counter resets to 0', () => {
+    const { system, input } = makeSunburstSystem();
+    system._accumMs = 0;
+    fireNVolleys(system, input, 4);
+    expect(system._sunburstVolleyCounter).toBe(0);
+    // Volleys 1-3 each fire a spread of 5, volley 4 fires a ring of 36 = total 51
+    const bullets = activeBulletData(system);
+    expect(bullets.length).toBe(51); // 15 spread + 36 ring
+    // Among them, exactly 36 have pierceRemaining=2 (the ring bullets)
+    const ringCount = bullets.filter(b => b.pierceRemaining === 2).length;
+    expect(ringCount).toBe(SUNBURST_RING_BULLET_COUNT);
+  });
+
+  it('ring bullet pierceRemaining=2', () => {
+    const { system, input } = makeSunburstSystem();
+    system._accumMs = 0;
+    fireNVolleys(system, input, 4);
+    // All ring bullets (pierceRemaining=2) should have pierceRemaining=2
+    const ringBullets = activeBulletData(system).filter((b) => b.pierceRemaining === 2);
+    expect(ringBullets.length).toBe(SUNBURST_RING_BULLET_COUNT);
+    for (const b of ringBullets) {
+      expect(b.pierceRemaining).toBe(2);
+    }
+  });
+
+  it('ring bullet direction coverage: min angle ≈ 0, max angle ≈ 2π', () => {
+    const { system, input } = makeSunburstSystem();
+    system._accumMs = 0;
+    fireNVolleys(system, input, 4);
+    // Only check directions of ring bullets (spread bullets from volleys 1-3 have different angles)
+    const ringBullets = activeBulletData(system).filter((b) => b.pierceRemaining === 2);
+    expect(ringBullets.length).toBe(SUNBURST_RING_BULLET_COUNT);
+    // Normalize atan2 results from [-π, π] to [0, 2π]
+    const angles = ringBullets.map((b) => {
+      const a = Math.atan2(b.vy, b.vx);
+      return a < 0 ? a + Math.PI * 2 : a;
+    });
+    const minAngle = Math.min(...angles);
+    const maxAngle = Math.max(...angles);
+    expect(minAngle).toBeLessThan(0.35);
+    expect(maxAngle).toBeGreaterThan(Math.PI * 2 - 0.35);
+  });
+
+  it('counter advances only on cadence interval', () => {
+    const { system, input } = makeSunburstSystem();
+    system.sunburstActive = true;
+    input.setAim(0, 1);
+    system._accumMs = 0;
+    system.fixedUpdate(FIRE_INTERVAL_MS / 2);
+    // Half-interval: no volley fires (accumulator < interval)
+    expect(system._sunburstVolleyCounter).toBe(0);
+    // Run another half-interval + 1ms: should have fired one
+    input.setAim(0, 1);
+    system.fixedUpdate(FIRE_INTERVAL_MS / 2 + 1);
+    expect(system._sunburstVolleyCounter).toBe(1);
+  });
+
+  it('ring bullet damage matches base × damageMult', () => {
+    const { system, input } = makeSunburstSystem({
+      playerStats: { ...createPlayerStats(), damageMult: 2.0, spreadWays: 5, spreadArcDeg: 16 },
+    });
+    system._accumMs = 0;
+    fireNVolleys(system, input, 4);
+    const bullets = activeBulletData(system);
+    for (const b of bullets) {
+      expect(b.damage).toBeCloseTo(PLAYER_BULLET_BASE_DAMAGE * 2.0, 10);
+    }
   });
 });

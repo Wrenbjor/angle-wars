@@ -10,7 +10,7 @@ import { BULLET_RADIUS, PLAYER_BULLET_BASE_DAMAGE } from '../config/constants.js
 // so the zeroed values here are just a well-defined starting shape.
 //
 // Shape: { x, y, vx, vy, radius, damage, bouncesRemaining, dmgPerBounce,
-//          bounceOffEnemies, seek, bounced }
+//          bounceOffEnemies, seek, bounced, pierceRemaining }
 //  - x, y   : position (px, arena/logical space)
 //  - vx, vy : velocity (px/s) — set from aim direction × BULLET_SPEED
 //  - radius : half-extent (px) for the placeholder shape and Story 1.4
@@ -62,7 +62,7 @@ import { BULLET_RADIUS, PLAYER_BULLET_BASE_DAMAGE } from '../config/constants.js
  * not yet bounced) so even a foreign/unstamped consumer of a cold bullet sees pre-11.5 behaviour.
  * @returns {{x:number, y:number, vx:number, vy:number, radius:number, damage:number,
  *   bouncesRemaining:number, dmgPerBounce:number, bounceOffEnemies:boolean, seek:boolean,
- *   bounced:boolean}}
+ *   bounced:boolean, pierceRemaining:number}}
  */
 export function createBullet() {
   return {
@@ -85,6 +85,10 @@ export function createBullet() {
     flakFragments: 0,
     flakDamageMult: 0,
     flakSecondaryAirburst: 0,
+    // Sunburst (Story 12.6) — cold default = 0 (no pierce).
+    // >0 means the bullet pierces through enemies, decrementing on each hit.
+    // Consumed only when pierceRemaining reaches 0 or it exits the arena.
+    pierceRemaining: 0,
   };
 }
 

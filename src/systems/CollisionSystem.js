@@ -237,12 +237,29 @@ export class CollisionSystem extends System {
           // Ricochet Rounds (Story 11.5): a bullet flagged to bounce off enemies WITH budget
           // left reflects OFF the enemy it hit (still dealing the damage recorded above),
           // grows its damage, spends a bounce, and STAYS LIVE — it is NOT added to hitBullets
-          // and so is not consumed. Every other bullet takes the pre-11.5 consume path. Either
-          // way the bullet `break`s after one enemy, preserving the one-enemy-per-tick contract.
+          // and so is not consumed. Sunburst (Story 12.6) pierce also decrements on bounce
+          // off an enemy (the bullet reflects AND pierces), then stays alive.
           if (b.bounceOffEnemies && b.bouncesRemaining > 0) {
             reflectBulletOffEnemy(b, s);
-          } else {
-            hitBullets.add(b); // bullet consumed — at most one enemy per bullet
+            // Also decrement pierse so a bullet with both Ricochet + Sunburst
+            // doesn't achieve unlimited pierce via bounce-pierce cycle.
+            if (b.pierceRemaining > 0) {
+              b.pierceRemaining = Math.max(0, b.pierceRemaining - 1);
+            }
+          }
+          // Sunburst (Story 12.6): ring bullets with pierceRemaining > 0 DO NOT
+          // get consumed on enemy hit — they pierce through to the next enemy.
+          else if (b.pierceRemaining > 1) {
+            b.pierceRemaining -= 1;
+            // Bullet stays alive — NOT added to hitBullets.
+          }
+          // Non-piercing bullet (pierceRemaining === 0) or last-pierce bullet (pierceRemaining === 1):
+          // consumed after this hit. Decrement to 0 to reflect the bullet being done.
+          else {
+            if (b.pierceRemaining === 1) {
+              b.pierceRemaining = 0;
+            }
+            hitBullets.add(b);
           }
           break;
 

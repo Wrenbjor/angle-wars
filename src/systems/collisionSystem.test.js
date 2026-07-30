@@ -19,6 +19,9 @@ import {
   ARMORED_XP,
   PLAYER_BULLET_BASE_DAMAGE,
   PLAYER_BULLET_MIN_DAMAGE,
+  ARENA_WIDTH,
+  ARENA_HEIGHT,
+  ARENA_BORDER_INSET,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -1211,3 +1214,103 @@ describe('CollisionSystem — Ricochet enemy bounce (Story 11.5)', () => {
     expect(bulletPool.activeCount).toBe(1);
   });
 });
+
+// --- Story 12.6 (Sunburst): bullet piercing --------------------------------
+describe('CollisionSystem — bullet piercing (Story 12.6)', () => {
+  function makePierceSystem() {
+    const bulletPool = new Pool(createBullet);
+    const seekerPool = new Pool(createSeeker);
+    const system = new CollisionSystem(bulletPool, [seekerPool]);
+    return { bulletPool, seekerPool, system };
+  }
+
+  function addPiercingBullet(pool, x, y, opts = {}) {
+    const b = pool.acquire();
+    b.x = x;
+    b.y = y;
+    b.vx = 900;
+    b.vy = 0;
+    b.damage = opts.damage ?? 1;
+    b.pierceRemaining = opts.pierceRemaining ?? 0;
+    return b;
+  }
+
+  it('pierceRemaining=2: first hit, bullet NOT consumed, pierce decremented to 1', () => {
+    const { bulletPool, seekerPool, system } = makePierceSystem();
+    const b = addPiercingBullet(bulletPool, 95, 100, { pierceRemaining: 2 });
+    const s = addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    // Seeker has no .hp (one-shot by default); verify kill via pool state.
+    expect(seekerPool.activeCount).toBe(0); // enemy killed
+    expect(bulletPool.activeCount).toBe(1); // bullet NOT consumed
+    expect(b.pierceRemaining).toBe(1); // decremented by 1
+    expect(system.bulletKillCount).toBe(1); // kill still scored
+  });
+
+  it('pierceRemaining=1: second hit, bullet consumed, pierce decremented to 0', () => {
+    const { bulletPool, seekerPool, system } = makePierceSystem();
+    const b = addPiercingBullet(bulletPool, 95, 100, { pierceRemaining: 1 });
+    addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0); // enemy killed
+    expect(bulletPool.activeCount).toBe(0); // bullet consumed
+    expect(b.pierceRemaining).toBe(0); // decremented to 0
+    expect(system.bulletKillCount).toBe(1);
+  });
+
+  it('pierceRemaining=0: normal one-hit consume', () => {
+    const { bulletPool, seekerPool, system } = makePierceSystem();
+    const b = addPiercingBullet(bulletPool, 95, 100, { pierceRemaining: 0 });
+    addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0);
+    expect(bulletPool.activeCount).toBe(0); // consumed as normal
+    expect(b.pierceRemaining).toBe(0);
+  });
+
+  it('pierceRemaining=3: high pierce, bullet NOT consumed after first hit', () => {
+    const { bulletPool, seekerPool, system } = makePierceSystem();
+    const b = addPiercingBullet(bulletPool, 95, 100, { pierceRemaining: 3 });
+    addSeekerAt(seekerPool, 100, 100);
+
+    system.fixedUpdate(DT);
+
+    expect(bulletPool.activeCount).toBe(1); // bullet NOT consumed
+    expect(b.pierceRemaining).toBe(2); // decremented from 3 to 2
+  });
+
+  it('ring bullet exits arena: released on arena exit, pierceRemaining unchanged', () => {
+    // A pierce bullet that never hits any enemy should still be usable normally.
+    // This tests that a bullet with pierceRemaining > 0 that doesn't hit an enemy
+    // passes through the collision system unchanged (not added to hitBullets).
+    const { bulletPool, seekerPool, system } = makePierceSystem();
+    // Place seeker far from bullet so it never collides
+    addSeekerAt(seekerPool, 800, 800);
+    // Place the bullet away from any enemy
+    const b = addPiercingBullet(bulletPool, 100, 100, { pierceRemaining: 2 });
+    b.vx = 900;
+
+    system.fixedUpdate(DT);
+
+    // The bullet should still be active (no collision happened) and pierce unchanged
+    expect(bulletPool.activeCount).toBe(1);
+    expect(b.pierceRemaining).toBe(2);
+    // The bullet is NOT in hitBullets since it didn't hit anything
+    expect(system._hitBullets.has(b)).toBe(false);
+  });
+});
+
+function addSeekerAt(pool, x, y) {
+  const s = pool.acquire();
+  s.x = x;
+  s.y = y;
+  s.vx = 0;
+  s.vy = 0;
+  return s;
+}

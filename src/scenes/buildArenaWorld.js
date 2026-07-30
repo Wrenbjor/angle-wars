@@ -614,6 +614,14 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         naniteShieldSystem.phaseActive = true;
       },
     );
+    // Story 12.6 — Sunburst effect wiring. After fusion resolution sets
+    // 'sunburst' in ownedCards, enable the 360° ring effect on firingSystem.
+    FusionSystem.registerEffect(
+      'sunburst',
+      () => {
+        firingSystem.sunburstActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,

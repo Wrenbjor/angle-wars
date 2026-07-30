@@ -19,6 +19,7 @@ import {
   BULLET_POOL_PREWARM,
   SPREAD_MAX_WAYS,
   SPREAD_MAX_ARC_DEG,
+  SUNBURST_RING_BULLET_COUNT,
 } from '../config/constants.js';
 
 // Degrees → radians, for the volley cone (Story 10.3). Module-level so the conversion
@@ -267,6 +268,14 @@ export class FiringSystem extends System {
     // AUDIO_SFX_FIRE_MAX_PER_FRAME cap on every single tick.
     this.volleysFiredCount = 0;
 
+    // --- Story 12.6 — Sunburst: active flag set by fusion effect handler.
+    // When true, every 4th volley (of the spread-cannon cadence) fires a
+    // 360° ring of piercing bullets instead of the normal spread cone.
+    this.sunburstActive = false;
+    // Counter of volleys — advances on each cadence interval when sunburst is active.
+    // Resets to 0 before each 4th volley's ring (1, 2, 3, 4=ring, repeat).
+    this._sunburstVolleyCounter = 0;
+
     // --- Story 10.3 cached per-bullet rotation table ---------------------------
     // Parallel cos/sin buffers holding each bullet's rotation offset from the aim
     // direction, preallocated at SPREAD_MAX_WAYS so a rebuild writes in place and the
@@ -472,6 +481,37 @@ export class FiringSystem extends System {
 
 
   /**
+   * Story 12.6 — Sunburst: fire a 360° ring of bullets, evenly spaced at 10° intervals.
+   * Each ring bullet is stamped with pierceRemaining = 2 (pierce through 2 enemies).
+   * Replaces the normal spread/single volley on the 4th volley.
+   * Zero allocation on the hot path: acquire → stamp → release, one bullet at a time.
+   * @private
+   */
+  _fireSunburstRing() {
+    const count = SUNBURST_RING_BULLET_COUNT;
+    const angleInc = (2 * Math.PI) / count;
+    const ship = this.ship;
+    const mult = this._mult('damageMult');
+    const dmg = Math.max(PLAYER_BULLET_MIN_DAMAGE, PLAYER_BULLET_BASE_DAMAGE * mult);
+    const pool = this.bulletPool;
+    for (let i = 0; i < count; i++) {
+      const angle = i * angleInc;
+      const b = pool.acquire();
+      b.x = ship.x;
+      b.y = ship.y;
+      b.vx = Math.cos(angle) * BULLET_SPEED;
+      b.vy = Math.sin(angle) * BULLET_SPEED;
+      b.damage = dmg;
+      stampRicochet(b, this._ricochet);
+      this._stampFlak(b);
+      b.pierceRemaining = 2;
+      this.shotsFiredCount++;
+    }
+  }
+
+
+
+  /**
    * The nearest materialized combat enemy to a point, or null when none exist (Ricochet Lv5
    * seek). Reads the hoisted `_enemies` scratch (already filtered of telegraphing enemies),
    * so it allocates nothing. Squared distance — no sqrt. Mirrors SeekerDroneSystem._nearestEnemy.
@@ -607,6 +647,19 @@ export class FiringSystem extends System {
       const ways = this._spreadWays();
       if (ways > 1) this._ensureOffsetTable(ways, this._spreadArcDeg());
       while (this._accumMs >= interval) {
+        // Story 12.6 — Sunburst: every 4th volley fires a 360° ring.
+        if (this.sunburstActive) {
+          this._sunburstVolleyCounter += 1;
+          if (this._sunburstVolleyCounter >= 4) {
+            this._sunburstVolleyCounter = 0;
+            // Ring replaces the spread — no spread volleys, no single shot.
+            this._fireSunburstRing();
+            this.volleysFiredCount++;
+            this._accumMs -= interval;
+            continue; // skip normal spread — ring replaced it
+          }
+        }
+        // --- existing single-shot / spread-volley logic below ---
         if (ways <= 1) {
           // BASE VOLLEY — the literal pre-10.3 code path, kept verbatim rather than
           // folded into a one-iteration case of the fan loop, so "no Spread Cannon owned
