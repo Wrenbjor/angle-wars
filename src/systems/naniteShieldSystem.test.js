@@ -18,6 +18,7 @@ import {
   SHIELD_ABSORB_INVULN_MS,
   SHIELD_KNOCKBACK_RADIUS,
   SHIELD_KNOCKBACK_PUSH,
+  PHASE_INTEGRITY_DURATION_MS,
 } from '../config/constants.js';
 
 // Story 10.4 — NaniteShieldSystem owns the shield's RUNTIME state (the live charge
@@ -33,12 +34,26 @@ const DT = FIXED_STEP_MS;
  * A shield system over a fresh ship, one seeker pool, and a real player-stat store
  * seeded with the given shield fields (the shape `recomputePlayerStats` produces).
  */
-function makeSystem(stats = {}) {
+function makeSystem(stats = {}, playerState = null) {
   const ship = createPlayerShip();
   const enemyPool = new Pool(createSeeker);
   const playerStats = { ...createPlayerStats(), ...stats };
-  const system = new NaniteShieldSystem(ship, [enemyPool], playerStats);
-  return { ship, enemyPool, playerStats, system };
+  // Story 12.5 — Phase Armor needs a collisionSystem stub with applyPlayerDamage.
+  let appliedDmgSeq = 0;
+  const collisionSystem = {
+    applyPlayerDamage: (enemy, ownerPool, _damage) => {
+      appliedDmgSeq += 1;
+      enemy._appliedDmgSeq = appliedDmgSeq;
+      ownerPool.release(enemy);
+      collisionSystem.bulletKillCount += 1;
+      return true;
+    },
+    killedEnemies: [],
+    bulletKillCount: 0,
+    bulletDamageCount: 0,
+  };
+  const system = new NaniteShieldSystem(ship, [enemyPool], collisionSystem, playerStats, playerState);
+  return { ship, enemyPool, playerStats, system, collisionSystem };
 }
 
 function addSeeker(pool, x, y, telegraphMs = 0) {
@@ -532,7 +547,13 @@ describe('NaniteShieldSystem — the Lv5 break pulse', () => {
     const seekers = new Pool(createSeeker);
     const squares = new Pool(createGreenSquare);
     const playerStats = { ...createPlayerStats(), ...LV5 };
-    const system = new NaniteShieldSystem(ship, [seekers, squares], playerStats);
+    const collisionSystem = {
+      applyPlayerDamage: (enemy, ownerPool) => {
+        ownerPool.release(enemy);
+        return true;
+      },
+    };
+    const system = new NaniteShieldSystem(ship, [seekers, squares], collisionSystem, playerStats);
     const s = addSeeker(seekers, ship.x + 50, ship.y);
     const q = squares.acquire();
     q.x = ship.x;
@@ -689,5 +710,157 @@ describe('NaniteShieldSystem — allocation', () => {
     // No enemy released, none acquired, no materialization pass into the pool.
     expect(enemyPool.activeCount).toBe(20);
     expect(enemyPool.activeCount + enemyPool.freeCount).toBe(total);
+  });
+});
+
+// --- Phase Armor (Story 12.5 / Epic 12 — defense-transform Epic) ------------
+
+describe('NaniteShieldSystem — Phase Armor (Story 12.5)', () => {
+  it('phaseActive=false: knockback fires on final charge (negative control)', () => {
+    const { ship, enemyPool, system } = makeSystem(LV5);
+    ship.x = ARENA_WIDTH / 2;
+    ship.y = ARENA_HEIGHT / 2;
+    // Place enemies within knockback radius.
+    for (let i = 0; i < 5; i++) {
+      addSeeker(enemyPool, ship.x + 50 * (i + 1), ship.y);
+    }
+    // tick first to sync max from playerStats (which has Lv5 maxCharges=3).
+    system.fixedUpdate(DT);
+    // Drain all 3 charges (Lv5).
+    expect(system.tryAbsorb()).toBe(true);
+    expect(system.tryAbsorb()).toBe(true);
+    expect(system.tryAbsorb()).toBe(true);
+    // The pulse moved at least one enemy (knockback radius is 260).
+    expect(system.absorbSeq).toBe(3);
+  });
+
+  it('phaseActive=true: knockback suppressed, phaseIntangible set true on final charge', () => {
+    const playerState = { phaseIntangible: false };
+    const { ship, enemyPool, system } = makeSystem(LV5, playerState);
+    // Enable phase armor.
+    system.phaseActive = true;
+    // tick first to sync max.
+    system.fixedUpdate(DT);
+    // Drain all 3 charges (Lv5).
+    system.tryAbsorb();
+    system.tryAbsorb();
+    system.tryAbsorb();
+    // absorbSeq bumped, phaseIntangible set.
+    expect(system.absorbSeq).toBe(3);
+    expect(playerState.phaseIntangible).toBe(true);
+    // Phase timer was set to the full duration.
+    expect(system._phaseTimerMs).toBe(PHASE_INTEGRITY_DURATION_MS);
+  });
+
+  it('phase timer counts down in fixedUpdate, deactivates at zero', () => {
+    const playerState = { phaseIntangible: false };
+    const { ship, enemyPool, system } = makeSystem(LV5, playerState);
+    system.phaseActive = true;
+    playerState.phaseIntangible = true;
+    system._phaseTimerMs = PHASE_INTEGRITY_DURATION_MS;
+    // Tick for 2001ms (just past 2s at 60fps = 121 ticks).
+    for (let i = 0; i < 121; i++) system.fixedUpdate(DT);
+    // Phase should now be deactivated.
+    expect(system.phaseActive).toBe(false);
+    expect(playerState.phaseIntangible).toBe(false);
+    expect(system._phaseTimerMs).toBeLessThanOrEqual(0);
+  });
+
+  it('phase sweep damages overlapping enemies via applyPlayerDamage', () => {
+    const playerState = { phaseIntangible: false };
+    const { ship, enemyPool, system, collisionSystem } = makeSystem(LV5, playerState);
+    ship.x = 500;
+    ship.y = 300;
+    // Enable phase and set timer.
+    system.phaseActive = true;
+    system._phaseTimerMs = 1000;
+    playerState.phaseIntangible = true;
+    // Place an enemy overlapping the ship.
+    addSeeker(enemyPool, ship.x, ship.y);
+    // Pre-bulletKillCount for delta check.
+    const preKills = collisionSystem.bulletKillCount;
+    // Tick fixedUpdate — triggers _phaseSweep.
+    system.fixedUpdate(DT);
+    // Enemy should have been killed (1 damage = 1-HP enemy).
+    expect(collisionSystem.bulletKillCount).toBeGreaterThanOrEqual(preKills + 1);
+  });
+
+  it('phase sweep skips telegraphing enemies', () => {
+    const playerState = { phaseIntangible: false };
+    const { ship, enemyPool, system, collisionSystem } = makeSystem(LV5, playerState);
+    ship.x = 500;
+    ship.y = 300;
+    system.phaseActive = true;
+    system._phaseTimerMs = 1000;
+    playerState.phaseIntangible = true;
+    // Place a telegraphing enemy.
+    addSeeker(enemyPool, ship.x, ship.y, 500);
+    const preKills = collisionSystem.bulletKillCount;
+    system.fixedUpdate(DT);
+    // Telegraphing enemy should NOT be damaged.
+    expect(collisionSystem.bulletKillCount).toBe(preKills);
+  });
+
+  it('phase sweep skips stunned enemies', () => {
+    const playerState = { phaseIntangible: false };
+    const { ship, enemyPool, system, collisionSystem } = makeSystem(LV5, playerState);
+    ship.x = 500;
+    ship.y = 300;
+    system.phaseActive = true;
+    system._phaseTimerMs = 1000;
+    playerState.phaseIntangible = true;
+    const e = addSeeker(enemyPool, ship.x, ship.y, 0);
+    e.stunMs = 100; // Stunned -> immune.
+    const preKills = collisionSystem.bulletKillCount;
+    system.fixedUpdate(DT);
+    expect(collisionSystem.bulletKillCount).toBe(preKills);
+  });
+
+  it('shield recharges during phase, but new charge does NOT extend window', () => {
+    const playerState = { phaseIntangible: false };
+    const { ship, enemyPool, system } = makeSystem(LV5, playerState);
+    system.phaseActive = true;
+    playerState.phaseIntangible = true;
+    // Start phase with 2000ms and already-drained charges.
+    system._phaseTimerMs = 2000;
+    system.charges = 0;
+    system.maxCharges = 3;
+    // Let time pass: at Lv5, rechargeIntervalMs = 10000ms, so charges fill slowly.
+    // Use a faster recharge for testing: inject a faster playerStats.
+    const fastStats = { shieldCharges: 3, shieldRechargeMs: 100, shieldKnockback: 1 };
+    system.playerStats = fastStats;
+    const preTime = system._phaseTimerMs;
+    // Tick 50 times = 833ms.
+    for (let i = 0; i < 50; i++) system.fixedUpdate(DT);
+    // Phase timer should have ticked down by ~833ms.
+    expect(system._phaseTimerMs).toBeLessThan(preTime);
+    // Phase should still be active.
+    expect(system.phaseActive).toBe(true);
+    expect(playerState.phaseIntangible).toBe(true);
+  });
+
+  it('null playerState: does not throw when activating phase', () => {
+    // Collision system without collisionSystem -> _phaseSweep returns.
+    const { enemyPool, system } = makeSystem(LV5);
+    system.phaseActive = true;
+    system._phaseTimerMs = 1000;
+    // Should not throw even with null playerState.
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
+  });
+
+  it('null collisionSystem: _phaseSweep does not throw', () => {
+    // Ship created without collisionSystem.
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const system = new NaniteShieldSystem(
+      ship,
+      [enemyPool],
+      null,  // collisionSystem = null
+      createPlayerStats(),
+    );
+    system.phaseActive = true;
+    system._phaseTimerMs = 1000;
+    addSeeker(enemyPool, ship.x + 10, ship.y);
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
   });
 });

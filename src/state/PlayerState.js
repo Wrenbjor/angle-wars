@@ -8,7 +8,7 @@ import { PLAYER_START_LIVES } from '../config/constants.js';
 // separate from the ship entity because lives/invulnerability/game-over are a
 // distinct lifecycle concern from the ship's position/velocity/facing.
 //
-// Shape: { lives, invulnMs, gameOver, pendingDeath }
+// Shape: { lives, invulnMs, gameOver, pendingDeath, phaseIntangible }
 //  - lives        : remaining lives (starts at PLAYER_START_LIVES; never negative)
 //  - invulnMs     : remaining respawn-invulnerability window (ms; 0 = vulnerable)
 //  - gameOver     : true once the last life is lost (run ended)
@@ -23,11 +23,15 @@ import { PLAYER_START_LIVES } from '../config/constants.js';
 //                   WEIGHT-KILL (Story 6.3) — the reflector's lethal region is its two
 //                   weights (not a uniform circle), so it is NOT in the PlayerDeathSystem
 //                   pool list and instead sets pendingDeath when the ship overlaps a weight.
+//  - phaseIntangible : true when Phase Armor is active (Story 12.5): the ship is
+//                   intangible after the final shield charge breaks. PlayerDeathSystem
+//                   checks this at the top of `_applyDeath()` and returns early when
+//                   true.
 
 /**
  * Create the player lifecycle state at the start of a run: full lives, not
  * invulnerable, not game-over, no pending programmatic death.
- * @returns {{lives:number, invulnMs:number, gameOver:boolean, pendingDeath:boolean}}
+ * @returns {{lives:number, invulnMs:number, gameOver:boolean, pendingDeath:boolean, phaseIntangible:boolean}}
  */
 export function createPlayerState() {
   return {
@@ -35,5 +39,7 @@ export function createPlayerState() {
     invulnMs: 0,
     gameOver: false,
     pendingDeath: false,
+    // Story 12.5 — Phase Armor: intangible after final shield break.
+    phaseIntangible: false,
   };
 }

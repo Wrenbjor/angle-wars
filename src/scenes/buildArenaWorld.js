@@ -578,11 +578,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // while any selection is pending, and offers a weighted seeded trio (Story 8.4's
   // deterministic weighted-without-replacement draw, routed through the shared `_rng`).
    // Runs AFTER LevelSystem so it reads THIS tick's levelsGainedThisTick, and BEFORE
-   // PlayerDeathSystem so its invuln top-up gates death the SAME tick (reusing the
-   // existing i-frame gate — no death/collision edit). Writes only its own fields +
-   // playerState.invulnMs + (on a pick) progressionState.
-   // Story 12.1 — Fusion Core: instantiate the fusion system (pure query module) and
-   // thread it into LevelUpSystem so level-up offers guarantee Epic cards when ready.
+    // PlayerDeathSystem so its invuln top-up gates death the SAME tick (reusing the
+    // existing i-frame gate — no death/collision edit). Writes only its own fields +
+    // playerState.invulnMs + (on a pick) progressionState.
+    // Story 12.5 — Phase Armor: create naniteShieldSystem here so the phase-armor
+    // effect handler can reference it (see the 'naniteShieldSystem = ' declaration below).
+    // World add happens AFTER levelUpSystem for correct tick ordering (see line ~650).
+    const naniteShieldSystem = new NaniteShieldSystem(ship, enemyPools, collisionSystem, playerStats, playerState);
+    // Story 12.1 — Fusion Core: instantiate the fusion system (pure query module) and
+    // thread it into LevelUpSystem so level-up offers guarantee Epic cards when ready.
     const fusionSystem = new FusionSystem();
     // Story 12.3 — Tesla Circuit effect wiring. After fusion resolution sets
     // 'tesla-circuit' in ownedCards, wire the active flag on orbitBladeSystem.
@@ -600,6 +604,14 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
       'railgun',
       () => {
         piercingLanceSystem.railgunActive = true;
+      },
+    );
+    // Story 12.5 — Phase Armor effect wiring. After fusion resolution sets
+    // 'phase-armor' in ownedCards, enable phase behavior on naniteShieldSystem.
+    FusionSystem.registerEffect(
+      'phase-armor',
+      () => {
+        naniteShieldSystem.phaseActive = true;
       },
     );
     const levelUpSystem = new LevelUpSystem(
@@ -638,7 +650,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // Given `enemyPools` (NOT deathPools) — the Lv5 break pulse only ever displaces the
   // five combat archetypes; the Black Hole and the Mirror Reflector are immune to AoE,
   // the same scoping BombSystem.detonateAt applies.
-  const naniteShieldSystem = new NaniteShieldSystem(ship, enemyPools, playerStats);
+  // Note: `naniteShieldSystem` is declared above alongside fusionSystem (Story 12.5).
   world.addSystem(naniteShieldSystem);
 
   const deathPools = [...enemyPools, blackHoleSystem.holePool];

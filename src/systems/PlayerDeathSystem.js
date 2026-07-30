@@ -247,6 +247,13 @@ export class PlayerDeathSystem extends System {
     const ship = this.ship;
     const ps = this.playerState;
 
+    // Story 12.5 — Phase Armor: intangible ship absorbs the hit.
+    // The phase window grants complete invulnerability — no life lost,
+    // no respawn, multiplier preserved. The shield absorb below is skipped entirely.
+    if (ps.phaseIntangible) {
+      return;
+    }
+
     // Story 10.4 — Nanite Shield absorb. Placed at the very top of the SHARED body so
     // it covers BOTH the ship↔enemy contact path AND the programmatic `pendingDeath`
     // path (a Black Hole detonation, Story 6.2; a Mirror Reflector weight-kill, Story

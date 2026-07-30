@@ -7,6 +7,8 @@ import {
   SHIELD_RECHARGE_FLOOR_MS,
   SHIELD_KNOCKBACK_RADIUS,
   SHIELD_KNOCKBACK_PUSH,
+  PHASE_INTEGRITY_DURATION_MS,
+  PHASE_CONTACT_DAMAGE,
 } from '../config/constants.js';
 
 // NaniteShieldSystem — the Nanite Shield's RUNTIME state (Story 10.4 / PRD §13.4),
@@ -51,15 +53,24 @@ export class NaniteShieldSystem extends System {
    *   pools the Lv5 break pulse displaces. Deliberately `enemyPools`, never
    *   `deathPools`: the Black Hole and the Mirror Reflector are immune to AoE, the
    *   same scoping BombSystem.detonateAt applies.
+   * @param {import('../systems/CollisionSystem.js').CollisionSystem} collisionSystem
+   *   The shared damage seam — Phase Armor's `_phaseSweep` routes contact damage
+   *   through `applyPlayerDamage` here.
    * @param {Object<string,number>|null} [playerStats=null] The shared player-stat
    *   store the MAXIMA are read from (optional — a null store means no shield ever,
    *   i.e. exactly the pre-10.4 behavior).
+   * @param {{phaseIntangible:boolean}|null} [playerState=null]
+   *   Optional PlayerState reference (Story 12.5). When Phase Armor is fused, the
+   *   system sets `phaseIntangible` to true on final-charge break and reads nothing
+   *   from it (write-only from this system's perspective).
    */
-  constructor(ship, enemyPools, playerStats = null) {
+  constructor(ship, enemyPools, collisionSystem, playerStats = null, playerState = null) {
     super();
     this.ship = ship;
     this.enemyPools = enemyPools;
+    this.collisionSystem = collisionSystem;
     this.playerStats = playerStats;
+    this.playerState = playerState;
 
     // Public runtime state.
     /** Live charge count — what an absorb spends. Starts empty (nothing owned). */
@@ -80,9 +91,28 @@ export class NaniteShieldSystem extends System {
     // per-charge regeneration, not part of the observable contract.
     this._rechargeMs = 0;
 
+    // Story 12.5 — Phase Armor fields.
+    /** When true, knockback is replaced by 2s intangibility on final charge break. */
+    this.phaseActive = false;
+    /** Countdown (ms) remaining in the current phase window. */
+    this._phaseTimerMs = 0;
+
     // Hoisted pulse callback so the per-pool `forEachActive` reuses ONE closure
     // instead of allocating a fresh arrow per pool per break.
     this._pushEnemy = (e) => this._push(e);
+
+    // Story 12.5 — Phase Armor scratch: reusable arrays for _phaseSweep.
+    /** Materialized active enemies, reused each tick to avoid allocation. */
+    this._enemies = [];
+    /** Owner pools for each materialized enemy (parallel to `_enemies`), reused each tick. */
+    this._owners = [];
+    /** Pool being iterated by `_currentPool.forEachActive(this._pushEnemy)`. */
+    this._currentPool = null;
+    /** Callback: collect active enemy from the current pool into scratch arrays. */
+    this._collectPhaseEnemy = (e) => {
+      this._enemies.push(e);
+      this._owners.push(this._currentPool);
+    };
   }
 
   /**
@@ -153,6 +183,22 @@ export class NaniteShieldSystem extends System {
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
   fixedUpdate(dt) {
+    // Story 12.5 — Phase Armor: tick down the phase timer and deactivate.
+    // Shield recharges continue normally during the phase (handled below),
+    // but recharging does NOT extend the phase window.
+    if (this.phaseActive && this._phaseTimerMs > 0) {
+      this._phaseTimerMs -= dt;
+      if (this._phaseTimerMs <= 0) {
+        this.phaseActive = false;
+        if (this.playerState) {
+          this.playerState.phaseIntangible = false;
+        }
+      } else {
+        // Damage enemies overlapping the ship during intangibility.
+        this._phaseSweep();
+      }
+    }
+
     // (1) Sync the MAX first, so a pick applied earlier this tick (LevelUpSystem runs
     // before this system) is already reflected. A RISE grants the SAME delta to the
     // live count immediately — the card you just picked is usable now, not one recharge
@@ -203,8 +249,19 @@ export class NaniteShieldSystem extends System {
     if (this.charges < 1) return false;
     this.charges -= 1;
     this.absorbSeq += 1;
-    if (this.charges === 0 && this._knockbackEnabled()) {
-      this._pulse();
+    // Story 12.5 — Phase Armor: on final charge, replace knockback with phase shift.
+    // The ship becomes intangible for PHASE_INTEGRITY_DURATION_MS.
+    // The knockback pulse is suppressed entirely when phase is active.
+    if (this.charges === 0) {
+      if (this.phaseActive) {
+        // Phase Armor: replace knockback with intangibility.
+        this._phaseTimerMs = PHASE_INTEGRITY_DURATION_MS;
+        if (this.playerState) {
+          this.playerState.phaseIntangible = true;
+        }
+      } else if (this._knockbackEnabled()) {
+        this._pulse();
+      }
     }
     return true;
   }
@@ -293,5 +350,46 @@ export class NaniteShieldSystem extends System {
     }
     e.x = x;
     e.y = y;
+  }
+
+  /**
+   * Phase Armor intangibility damage sweep: damage all enemies overlapping the ship.
+   *
+   * During the 2s intangibility window, every enemy overlapping the ship takes
+   * `PHASE_CONTACT_DAMAGE` per fixed step. Telegraphing and stunned enemies are
+   * immune (the same guards PlayerDeathSystem uses for lethal contact).
+   *
+   * Damage routes through `CollisionSystem.applyPlayerDamage` so armor, scoring,
+   * XP, and kill-latches behave identically to a bullet kill.
+   *
+   * Uses the DashSystem `_sweep()` pattern: materialize pools into scratch arrays,
+   * circle-circle test, release via applyPlayerDamage.
+   * @private
+   */
+  _phaseSweep() {
+    const pools = this.enemyPools;
+    const cs = this.collisionSystem;
+    if (!pools || !cs) return;
+    const enemies = this._enemies;
+    const owners = this._owners;
+    enemies.length = 0;
+    owners.length = 0;
+    for (let p = 0; p < pools.length; p++) {
+      this._currentPool = pools[p];
+      pools[p].forEachActive(this._collectPhaseEnemy);
+    }
+    const ship = this.ship;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      // Telegraphing and stunned enemies are immune to intangible touch damage.
+      if (e.telegraphMs > 0 || e.stunMs > 0) continue;
+      const dx = ship.x - e.x;
+      const dy = ship.y - e.y;
+      const r = ship.radius + e.radius;
+      // Squared compare avoids a sqrt; ≤ so boundary touch counts.
+      if (dx * dx + dy * dy <= r * r) {
+        cs.applyPlayerDamage(e, owners[i], PHASE_CONTACT_DAMAGE);
+      }
+    }
   }
 }

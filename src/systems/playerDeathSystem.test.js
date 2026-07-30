@@ -870,7 +870,14 @@ describe('PlayerDeathSystem — Nanite Shield absorb (Story 10.4)', () => {
     const scoreState = createScoreState();
     const playerStats = createPlayerStats();
     recomputePlayerStats(playerStats, { 'nanite-shield': level }, ITEM_REGISTRY);
-    const shieldSystem = new NaniteShieldSystem(ship, [enemyPool], playerStats);
+    // Story 12.5 — Phase Armor: collisionSystem is now required by NaniteShieldSystem.
+    const stubCollision = {
+      applyPlayerDamage: (enemy, ownerPool, _damage) => {
+        ownerPool.release(enemy);
+        return true;
+      },
+    };
+    const shieldSystem = new NaniteShieldSystem(ship, [enemyPool], stubCollision, playerStats);
     // The shield syncs its max off the fold on its own tick (it is registered BEFORE
     // PlayerDeathSystem in the assembled world), so charge it the same way here.
     shieldSystem.fixedUpdate(DT);
@@ -1160,7 +1167,8 @@ describe('PlayerDeathSystem — the Afterburner dash i-frames and cancel (Story 
     );
     let shieldSystem = null;
     if (withShield) {
-      shieldSystem = new NaniteShieldSystem(ship, [enemyPool], playerStats);
+      // Story 12.5 — Phase Armor: collisionSystem is now required.
+      shieldSystem = new NaniteShieldSystem(ship, [enemyPool], collisionSystem, playerStats);
       shieldSystem.fixedUpdate(DT);
     }
     const system = new PlayerDeathSystem(
@@ -1400,5 +1408,48 @@ describe('PlayerDeathSystem — the Afterburner dash i-frames and cancel (Story 
     // Still at centre. Without the cancel the dash branch would have driven it ~238px
     // away during the respawn's invulnerability window.
     expect(Math.hypot(h.ship.x - CENTER_X, h.ship.y - CENTER_Y)).toBeLessThan(1);
+  });
+});
+
+// --- Phase Armor (Story 12.5 / Epic 12 — defense-transform Epic) ------------
+
+describe('PlayerDeathSystem — Phase Armor (Story 12.5)', () => {
+  it('phaseIntangible=true: _applyDeath returns early, no life lost', () => {
+    const h = makeSystem({});
+    // Set phaseIntangible as Phase Armor would.
+    h.playerState.phaseIntangible = true;
+    // Place enemy in contact.
+    addSeeker(h.enemyPool, h.ship.x, h.ship.y);
+    // Record pre-death state.
+    const preLives = h.playerState.lives;
+    const preSeq = h.system.deathSeq;
+    h.system.fixedUpdate(DT);
+    // Death should be absorbed: lives unchanged, no deathSeq bump.
+    expect(h.playerState.lives).toBe(preLives);
+    expect(h.system.deathSeq).toBe(preSeq);
+    expect(h.playerState.phaseIntangible).toBe(true); // still active
+  });
+
+  it('phaseIntangible=true: game-over does NOT gate the phase absorb', () => {
+    const h = makeSystem({});
+    h.playerState.lives = 1;
+    h.playerState.gameOver = false;
+    h.playerState.phaseIntangible = true;
+    addSeeker(h.enemyPool, h.ship.x, h.ship.y);
+    h.system.fixedUpdate(DT);
+    // Should NOT have gone to game-over; life preserved.
+    expect(h.playerState.gameOver).toBe(false);
+    expect(h.playerState.lives).toBe(1);
+  });
+
+  it('phaseIntangible=false: normal death flow proceeds', () => {
+    const h = makeSystem({});
+    // phaseIntangible starts as false.
+    expect(h.playerState.phaseIntangible).toBe(false);
+    addSeeker(h.enemyPool, h.ship.x, h.ship.y);
+    h.system.fixedUpdate(DT);
+    // Normal death: life deducted.
+    expect(h.playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(h.system.deathSeq).toBe(1);
   });
 });

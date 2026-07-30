@@ -827,6 +827,16 @@ export const SHIELD_KNOCKBACK_RADIUS = 260;
 // the Lv5 break the screen clear this constant exists to avoid.
 export const SHIELD_KNOCKBACK_PUSH = 180;
 
+// --- Phase Armor (Story 12.5 / Epic 12 — defense-transform Epic) ------------
+// When Phase Armor is fused (Nanite Shield Lv5 + Afterburner Lv3), the final
+// shield charge break replaces the Lv5 knockback pulse with a 2-second
+// intangibility window. The ship passes through enemies unharmed and deals
+// 1 contact damage per fixed step to overlapping enemies.
+export const PHASE_INTEGRITY_DURATION_MS = 2000;
+// Contact damage dealt to enemies overlapping the ship during intangibility.
+// 1 per fixed step, routed through applyPlayerDamage for armor/scoring consistency.
+export const PHASE_CONTACT_DAMAGE = 1;
+
 // --- Afterburner (Story 10.5 / PRD §13.4) -----------------------------------
 // The defense item that makes the ship FASTER (a `moveSpeedMult` the movement
 // system applies to BOTH its thrust acceleration and its speed cap) and, from Lv2,
