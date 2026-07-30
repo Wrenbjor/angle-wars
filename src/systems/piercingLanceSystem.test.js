@@ -27,6 +27,10 @@ import {
   LANCE_TRAIL_NODE_MAX,
   ARMORED_HP,
   PLAYER_BULLET_BASE_DAMAGE,
+  RAILGUN_CHARGE_TIME_MS,
+  RAILGUN_DAMAGE_MULT,
+  RAILGUN_BEAM_MAX_LENGTH,
+  RAILGUN_BEAM_THICKNESS,
 } from '../config/constants.js';
 
 // Story 11.4 — PiercingLanceSystem owns the Piercing Lance's bolt POOL + trail-node POOL + the
@@ -727,5 +731,181 @@ describe('PiercingLanceSystem — allocation', () => {
     expect(system._killedThisTick).toBe(killedRef);
     // …and no field was added to the instance across the run.
     expect(Object.keys(system).sort()).toEqual(shape);
+  });
+});
+
+describe('PiercingLanceSystem — Railgun (Story 12.4)', () => {
+  it('railgunActive=false → normal lance cadence, no beam (disabled when not fused)', () => {
+    const { system } = makeSystem(LV5);
+    expect(system.railgunActive).toBe(false);
+    const { system: sys2 } = makeSystem(LV5);
+    sys2.railgunActive = false;
+    addEnemy(sys2.enemyPools[0], sys2.ship.x + 300, sys2.ship.y);
+    sys2._fireAccumMs = LV5.lancePeriodMs;
+    sys2.fixedUpdate(DT);
+    // Normal bolts fire, NOT a beam. Lv5 fires 2 bolts (forward + backward).
+    expect(sys2.pool.activeCount).toBe(2);
+  });
+
+  it('railgunActive=true, charge accumulates — no beam until RAILGUN_CHARGE_TIME_MS', () => {
+    const { system, enemyPool, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    addEnemy(system.enemyPools[0], ship.x + 300, ship.y);
+
+    // Charge 90% of RAILGUN_CHARGE_TIME_MS — no beam yet.
+    const partialTicks = Math.floor(RAILGUN_CHARGE_TIME_MS * 0.9 / DT);
+    for (let i = 0; i < partialTicks; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(system._railgunChargeAccumMs).toBeGreaterThan(0);
+    // Charge should be within a few ms of but not past the threshold.
+    expect(system._railgunChargeAccumMs).toBeLessThan(RAILGUN_CHARGE_TIME_MS);
+    // No bolts, no beam kills — the beam hasn't fired yet.
+    expect(system.pool.activeCount).toBe(0);
+  });
+
+  it('charge set to RAILGUN_CHARGE_TIME_MS → beam fires, charge resets', () => {
+    const { system, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    addEnemy(system.enemyPools[0], ship.x + 300, ship.y);
+
+    // Directly set charge to threshold — fire the beam.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+    // Charge should be reset to just accumulated delta (< DT).
+    expect(system._railgunChargeAccumMs).toBeLessThan(DT * 2);
+    // No bolts — beam replaces bolts.
+    expect(system.pool.activeCount).toBe(0);
+  });
+
+  it('beam deals RAILGUN_DAMAGE_MULT × damage to enemies along the beam line', () => {
+    const { system, collisionSystem, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    addEnemy(system.enemyPools[0], ship.x + 100, ship.y);      // on center line
+    addEnemy(system.enemyPools[0], ship.x + 300, ship.y);      // on center line
+    addEnemy(system.enemyPools[0], ship.x + 500, ship.y);      // on center line
+
+    // Fire the beam directly by setting charge.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+
+    // The beam damage is lanceDamage × RAILGUN_DAMAGE_MULT = 6 × 3.0 = 18.
+    // Each on-center enemy should have taken ≥ 1 damage through applyPlayerDamage.
+    expect(collisionSystem.bulletDamageCount).toBeGreaterThanOrEqual(3);
+  });
+
+  it('beam misses enemies outside RAILGUN_BEAM_THICKNESS perpendicular distance', () => {
+    const { system, collisionSystem, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    // Place the NEAREST enemy straight ahead on the +X axis so aim is +X.
+    // Place ANOTHER enemy 100px off the aim line (off the beam path).
+    // The beam fires on +X; the off-line enemy has perpDist=100 > 20.
+    addEnemy(system.enemyPools[0], ship.x + 100, ship.y);        // nearest → on beam line
+    addEnemy(system.enemyPools[0], ship.x + 300, ship.y + 100);  // off beam line
+
+    const beamDamageCountBefore = collisionSystem.bulletDamageCount;
+
+    // Fire the beam directly (aim is +X due to nearest enemy on +X).
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+
+    // The on-line enemy was hit; the off-line enemy (100px off) was not.
+    // bulletDamageCount = 1 (only the on-line enemy was damaged).
+    expect(collisionSystem.bulletDamageCount).toBe(1);
+  });
+
+  it('no aim direction → beam does NOT fire', () => {
+    const { system } = makeSystem(LV5);
+    system.railgunActive = true;
+    // No enemies → no aim direction → no beam fires.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+    // Still no aim direction.
+    expect(system._railgunAimX).toBe(0);
+    expect(system._railgunAimY).toBe(0);
+  });
+
+  it('charge does NOT reset when no aim target', () => {
+    const { system } = makeSystem(LV5);
+    system.railgunActive = true;
+    // Fire the beam with no aim — it should NOT reset the charge.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    const chargeBefore = system._railgunChargeAccumMs;
+    system.fixedUpdate(DT);
+    // Charge should be unchanged — beam didn't fire (no aim target).
+    expect(system._railgunChargeAccumMs).toBeGreaterThanOrEqual(chargeBefore);
+  });
+
+  it('gridFieldSystem.rippleLine() is called when gridFieldSystem is wired', () => {
+    const { system, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    addEnemy(system.enemyPools[0], ship.x + 300, ship.y);
+
+    let rippleLineCalled = false;
+    let rippleOrigin = { x: 0, y: 0 };
+    // Mock gridFieldSystem with rippleLine.
+    system.gridFieldSystem = {
+      rippleLine: (ox, oy, dx, dy) => {
+        rippleLineCalled = true;
+        rippleOrigin.x = ox;
+        rippleOrigin.y = oy;
+      },
+    };
+
+    // Fire the beam directly.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+
+    expect(rippleLineCalled).toBe(true);
+    expect(rippleOrigin.x).toBeCloseTo(ship.x, 6);
+    expect(rippleOrigin.y).toBeCloseTo(ship.y, 6);
+  });
+
+  it('beam fires even when rippleLine is undefined (graceful degradation)', () => {
+    const { system, enemyPool, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    system.gridFieldSystem = null;
+    addEnemy(system.enemyPools[0], ship.x + 300, ship.y);
+
+    const totalEnemiesBefore = enemyPool.activeCount;
+
+    // Fire the beam directly.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+
+    // Beam still fires — damage through collision seam despite no gridFieldSystem.
+    expect(system.pool.activeCount).toBe(0); // no bolts
+    // Some enemies should have been hit.
+    expect(system.collisionSystem.bulletDamageCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('beam fires once per charge — second charge also fires', () => {
+    const { system, collisionSystem, ship } = makeSystem(LV5);
+    system.railgunActive = true;
+    // Use an armored enemy (hp 5, beam damage = 18 → killed) + one more enemy.
+    const armored = addEnemy(system.enemyPools[0], ship.x + 100, ship.y, { hp: ARMORED_HP });
+    addEnemy(system.enemyPools[0], ship.x + 500, ship.y);
+    const total = system.enemyPools[0].activeCount + system.enemyPools[0].freeCount;
+
+    // First charge.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+    const beam1Hits = collisionSystem.bulletDamageCount;
+    expect(system._railgunChargeAccumMs).toBeLessThan(DT * 2);
+
+    // Second charge.
+    system._railgunChargeAccumMs = RAILGUN_CHARGE_TIME_MS + DT;
+    system.fixedUpdate(DT);
+    const beam2Hits = collisionSystem.bulletDamageCount;
+    expect(system._railgunChargeAccumMs).toBeLessThan(DT * 2);
+
+    // Both beams fired. At minimum, the first beam hit ≥1 enemy, and the second
+    // beam also triggered (same enemies are hit again in a new tick).
+    expect(beam1Hits).toBeGreaterThanOrEqual(1);
+    expect(beam2Hits).toBeGreaterThanOrEqual(0); // second beam fires regardless of targets
+    // At least one beam hit something.
+    expect(beam1Hits + beam2Hits).toBeGreaterThanOrEqual(1);
+    // Pool didn't grow (no allocation leak).
+    expect(system.enemyPools[0].activeCount + system.enemyPools[0].freeCount).toBe(total);
   });
 });

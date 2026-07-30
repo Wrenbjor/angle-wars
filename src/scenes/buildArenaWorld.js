@@ -594,6 +594,14 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         orbitBladeSystem.teslaCircuitActive = true;
       },
     );
+    // Story 12.4 — Railgun effect wiring. After fusion resolution sets
+    // 'railgun' in ownedCards, wire the active flag on piercingLanceSystem.
+    FusionSystem.registerEffect(
+      'railgun',
+      () => {
+        piercingLanceSystem.railgunActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,
@@ -672,6 +680,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     blackHoleSystem.holePool,
   );
   world.addSystem(gridFieldSystem);
+
+  // Wire gridFieldSystem into piercingLanceSystem for railgun's rippleLine() (Story 12.4).
+  piercingLanceSystem.gridFieldSystem = gridFieldSystem;
 
   // --- Pooled particle system (Story 4.3) ---------------------------------
   // Registered LAST — after GridFieldSystem — so within every fixed tick each

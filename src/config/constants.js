@@ -1194,6 +1194,27 @@ export const COLOR_LANCE_BOLT = 0xcc33ff;
 // the lingering trail reads as the bolt's fading wake rather than its own element.
 export const COLOR_LANCE_TRAIL = 0x772299;
 
+// --- Railgun (Story 12.4 / Epic 12 proof Epic) -------------------------------
+// The fusion-resolved Piercing Lance transformation: a 1.2s charge fires an arena-width,
+// infinite-pierce beam that deforms the grid in a shockwave line (NFR5).
+// The beam replaces the normal lance cadence (no bolts when railgun is active).
+
+export const RAILGUN_CHARGE_TIME_MS = 1200;
+// ms — time required to charge a full beam. A full charge fires the beam.
+
+export const RAILGUN_DAMAGE_MULT = 3.0;
+// 3× base pierce-lance damage (+200%). This is the damage multiplier applied to
+// the folded lanceDamage when the beam fires. Delivered through the shared
+// applyPlayerDamage seam — armor-respecting like a bullet.
+
+export const RAILGUN_BEAM_MAX_LENGTH = Math.sqrt(ARENA_WIDTH ** 2 + ARENA_HEIGHT ** 2);
+// Arena diagonal — the theoretical maximum beam length. The beam travels from
+// the ship origin toward the aim direction to this length.
+
+export const RAILGUN_BEAM_THICKNESS = 20;
+// px — perpendicular distance from the beam line that counts as a hit.
+// An enemy within this radius of the beam line takes damage.
+
 // --- Ricochet Rounds (Story 11.5 / PRD §13.4) -------------------------------
 // The fifth Epic-11 "exotic" offense item and the first BASE-GUN MODIFIER of the epic: it
 // makes the player's ORDINARY bullets bounce off the arena walls (once → twice → 4×)

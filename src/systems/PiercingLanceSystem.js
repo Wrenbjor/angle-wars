@@ -16,6 +16,10 @@ import {
   LANCE_TRAIL_DROP_MS,
   LANCE_TRAIL_DAMAGE,
   LANCE_TRAIL_NODE_MAX,
+  RAILGUN_CHARGE_TIME_MS,
+  RAILGUN_DAMAGE_MULT,
+  RAILGUN_BEAM_MAX_LENGTH,
+  RAILGUN_BEAM_THICKNESS,
 } from '../config/constants.js';
 
 // PiercingLanceSystem — the Piercing Lance's pooled bolts + their Lv4+ trail nodes (Story
@@ -97,6 +101,11 @@ export class PiercingLanceSystem extends System {
     this.enemyPools = enemyPools;
     this.collisionSystem = collisionSystem;
     this.playerStats = playerStats;
+    this.railgunActive = false;
+    this._railgunChargeAccumMs = 0;
+    this._railgunAimX = 0;
+    this._railgunAimY = 0;
+    this.gridFieldSystem = null;
 
     // The bolt pool — the single source of active/free bolt truth. Prewarmed so a fire never
     // hits the factory once running.
@@ -387,54 +396,140 @@ export class PiercingLanceSystem extends System {
       }
     }
 
-    // (5) Fire cadence. Only when OWNED (period > 0) AND with a valid ship (a bolt is fired
-    // FROM the ship position). Accumulate dt, then while a full period is banked AND a target
-    // exists, fire a bolt FROM the clamped ship origin TOWARD the nearest enemy (Lv5 also fires
-    // the antipodal bolt), decrementing by the period. Clamp the accumulator to `period` so a
-    // target-less build cannot bank unbounded credit — it fires ONCE the instant a target
-    // appears (responsive, never a backlog burst). When unowned, hold the accumulator at 0.
-    const ship = this.ship;
-    if (period > 0 && ship) {
-      this._fireAccumMs += dt;
-      const pierce = this._pierce();
-      const damage = this._damage();
-      const trail = this._trail();
-      const backward = this._backward();
-      while (this._fireAccumMs >= period) {
-        // Clamp the fire ORIGIN into the arena interior so a wall-pressed ship never fires a
-        // bolt born out of bounds (which isOutsideArena would release the very next tick) — a
-        // no-op for an inside ship (the normal case). The SeekerDroneSystem spawn-clamp.
-        const ox = clamp(ship.x, ARENA_BORDER_INSET, ARENA_WIDTH - ARENA_BORDER_INSET);
-        const oy = clamp(ship.y, ARENA_BORDER_INSET, ARENA_HEIGHT - ARENA_BORDER_INSET);
-        const t = this._nearestEnemy(ox, oy);
-        if (!t) break; // no target — hold fire (the accumulator is clamped below)
-        // Aim FROM the clamped origin toward the target.
-        const dx = t.x - ox;
-        const dy = t.y - oy;
-        const mag = Math.hypot(dx, dy);
-        let ux;
-        let uy;
-        if (mag > 0) {
-          const inv = LANCE_BOLT_SPEED / mag;
-          ux = dx * inv;
-          uy = dy * inv;
-        } else {
-          // Target coincident with the ship: no direction — pick an arbitrary but finite
-          // velocity (never a NaN). It exits the arena regardless.
-          ux = 0;
-          uy = LANCE_BOLT_SPEED;
-        }
-        this._spawnBolt(ox, oy, ux, uy, pierce, damage, trail);
-        // Lv5: a second bolt fires antipodal (backward), full pierce/damage/trail.
-        if (backward >= 1) {
-          this._spawnBolt(ox, oy, -ux, -uy, pierce, damage, trail);
-        }
-        this._fireAccumMs -= period;
-      }
-      if (this._fireAccumMs > period) this._fireAccumMs = period;
+    // (5) Fire cadence. Railgun (Story 12.4) REPLACES the normal lance cadence: when
+    // railgun is active, the system charges for RAILGUN_CHARGE_TIME_MS, then fires
+    // a single beam instead of lance bolts. Normal lance fire is skipped entirely.
+    if (this.railgunActive) {
+      this._railgunFire(dt);
     } else {
-      // Unowned (or no ship): hold the accumulator at 0 so going owned starts a fresh cadence.
-      this._fireAccumMs = 0;
+      this._fireCadence(dt);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Railgun (Story 12.4) — charge mechanic and beam fire
+  // ---------------------------------------------------------------------------
+
+  /**
+  Railgun: charge for RAILGUN_CHARGE_TIME_MS toward the nearest enemy, then fire
+  an arena-width beam that deals RAILGUN_DAMAGE_MULT × lanceDamage to every enemy
+  along the beam path and deforms the grid in a shockwave line.
+
+  Skips the normal lance-fire cadence when active.
+  @param {number} dt Fixed-step delta, in ms.
+  @private
+  */
+  _railgunFire(dt) {
+    const ship = this.ship;
+    if (!ship) return;
+
+    // Clamp the fire origin into the arena interior.
+    const ox = clamp(ship.x, ARENA_BORDER_INSET, ARENA_WIDTH - ARENA_BORDER_INSET);
+    const oy = clamp(ship.y, ARENA_BORDER_INSET, ARENA_HEIGHT - ARENA_BORDER_INSET);
+
+    // Scan for the nearest enemy to establish aim direction.
+    // Reuse the same collector pattern as the normal fire cadence.
+    const enemies = this._enemies;
+    const owners = this._owners;
+    enemies.length = 0;
+    owners.length = 0;
+    const pools = this.enemyPools;
+    if (pools) {
+      for (let p = 0; p < pools.length; p++) {
+        this._currentPool = pools[p];
+        pools[p].forEachActive(this._collectEnemy);
+      }
+    }
+
+    const nearest = this._nearestEnemy(ox, oy);
+    if (nearest) {
+      // Compute the aim direction towards the nearest enemy.
+      const dx = nearest.x - ox;
+      const dy = nearest.y - oy;
+      const mag = Math.hypot(dx, dy);
+      if (mag > 0) {
+        this._railgunAimX = dx / mag;
+        this._railgunAimY = dy / mag;
+      }
+    }
+
+    // Accumulate charge.
+    this._railgunChargeAccumMs += dt;
+
+    // When charge is ready AND we have an aim direction, fire the beam.
+    if (this._railgunChargeAccumMs >= RAILGUN_CHARGE_TIME_MS
+        && (this._railgunAimX !== 0 || this._railgunAimY !== 0)) {
+      this._fireBeam(ox, oy);
+      this._railgunChargeAccumMs = 0;
+    }
+  }
+
+  /**
+  Fire the railgun beam from (ox, oy) along the stored aim direction.
+  Computes beam damage for each enemy along the line, routes through
+  the shared collisionSystem seam, and triggers a grid ripple.
+  @param {number} ox Clamped ship origin x.
+  @param {number} oy Clamped ship origin y.
+  @private
+  */
+  _fireBeam(ox, oy) {
+    const cs = this.collisionSystem;
+    const aimedX = this._railgunAimX;
+    const aimedY = this._railgunAimY;
+    if (!cs) return; // No collision system — beam does nothing.
+
+    const damage = this._damage() * RAILGUN_DAMAGE_MULT;
+
+    // Per-beam hit guard — an enemy takes beam damage at most once.
+    const beamHitSet = new Set();
+
+    // Materialize enemies into the hoisted collectors + owners parallel arrays.
+    const enemies = this._enemies;
+    const owners = this._owners;
+    enemies.length = 0;
+    owners.length = 0;
+
+    const beamDx = aimedX * RAILGUN_BEAM_THICKNESS;
+    const beamDy = aimedY * RAILGUN_BEAM_THICKNESS;
+    const beamLenSq = RAILGUN_BEAM_MAX_LENGTH * RAILGUN_BEAM_MAX_LENGTH;
+    const beamLen = RAILGUN_BEAM_MAX_LENGTH;
+    const pools = this.enemyPools;
+
+    if (pools) {
+      for (let p = 0; p < pools.length; p++) {
+        const pool = pools[p];
+        const ownerPool = pool;
+        // Materialize enemies for the beam scan.
+        const beamScan = this._beamScratch;
+        if (!beamScan) this._beamScratch = [];
+        this._beamScratch.length = 0;
+        pool.forEachActive((e) => {
+          this._beamScratch.push(e);
+        });
+        for (let j = 0; j < this._beamScratch.length; j++) {
+          const enemy = this._beamScratch[j];
+          if (enemy.telegraphMs > 0) continue;
+
+          const ex = enemy.x - ox;
+          const ey = enemy.y - oy;
+          const dot = ex * aimedX + ey * aimedY;
+          if (dot < 0) continue;
+          if (dot > beamLen) continue;
+
+          const perpDist = Math.abs(ex * aimedY - ey * aimedX);
+          if (perpDist > RAILGUN_BEAM_THICKNESS) continue;
+
+          if (beamHitSet.has(enemy)) continue;
+          beamHitSet.add(enemy);
+          cs.applyPlayerDamage(enemy, ownerPool, damage);
+        }
+      }
+    }
+
+    // Grid shockwave decoration: emit a line of ripples from ship origin along the beam direction.
+    const gfs = this.gridFieldSystem;
+    if (gfs && typeof gfs.rippleLine === 'function') {
+      gfs.rippleLine(ox, oy, aimedX, aimedY, beamLen);
     }
   }
 
@@ -508,6 +603,56 @@ export class PiercingLanceSystem extends System {
       }
     }
     if (oldest) trailPool.release(oldest);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normal lance-fire cadence — extracted from the original fixedUpdate body
+  // ---------------------------------------------------------------------------
+
+  /**
+  The standard lance-fire cadence: accumulate dt, fire a bolt each `period` toward
+  the nearest enemy (Lv5 also fires antipodal). This path is used when railgun is
+  NOT active.
+  @param {number} dt Fixed-step delta, in ms.
+  @private
+  */
+  _fireCadence(dt) {
+    const period = this._periodMs();
+    const ship = this.ship;
+    if (period > 0 && ship) {
+      this._fireAccumMs += dt;
+      const pierce = this._pierce();
+      const damage = this._damage();
+      const trail = this._trail();
+      const backward = this._backward();
+      while (this._fireAccumMs >= period) {
+        const ox = clamp(ship.x, ARENA_BORDER_INSET, ARENA_WIDTH - ARENA_BORDER_INSET);
+        const oy = clamp(ship.y, ARENA_BORDER_INSET, ARENA_HEIGHT - ARENA_BORDER_INSET);
+        const t = this._nearestEnemy(ox, oy);
+        if (!t) break;
+        const dx = t.x - ox;
+        const dy = t.y - oy;
+        const mag = Math.hypot(dx, dy);
+        let ux;
+        let uy;
+        if (mag > 0) {
+          const inv = LANCE_BOLT_SPEED / mag;
+          ux = dx * inv;
+          uy = dy * inv;
+        } else {
+          ux = 0;
+          uy = LANCE_BOLT_SPEED;
+        }
+        this._spawnBolt(ox, oy, ux, uy, pierce, damage, trail);
+        if (backward >= 1) {
+          this._spawnBolt(ox, oy, -ux, -uy, pierce, damage, trail);
+        }
+        this._fireAccumMs -= period;
+      }
+      if (this._fireAccumMs > period) this._fireAccumMs = period;
+    } else {
+      this._fireAccumMs = 0;
+    }
   }
 }
 

@@ -3,6 +3,8 @@ import {
   GRID_MAX_RIPPLES,
   GRID_RIPPLE_DURATION_MS,
   BLACKHOLE_UNSTABLE_RADIUS,
+  RAILGUN_BEAM_MAX_LENGTH,
+  RAILGUN_BEAM_THICKNESS,
 } from '../config/constants.js';
 
 // GridFieldSystem — the Phaser-free simulation seam for the deforming grid field
@@ -193,5 +195,31 @@ export class GridFieldSystem extends System {
     slot.x = x;
     slot.y = y;
     slot.ageMs = 0;
+  }
+
+  /**
+  Emit a line of ripples along a segment from (x, y) in direction (dirX, dirY)
+  for length `length`. Spacing between individual ripples is `rippleSpacing` px,
+  creating a shockwave-line effect along the beam path. This reuses the existing
+  point-ripple mechanism (same GPU shader, no shader change required).
+
+  Allocates nothing — slots are recycled from the fixed pool.
+
+  @param {number} originX Origin x.
+  @param {number} originY Origin y.
+  @param {number} dirX Normalized direction x.
+  @param {number} dirY Normalized direction y.
+  @param {number} length The ray length (usually RAILGUN_BEAM_MAX_LENGTH).
+  */
+  rippleLine(originX, originY, dirX, dirY, length = RAILGUN_BEAM_MAX_LENGTH) {
+    const rippleSpacing = 20;
+    const maxDist = length;
+    let distance = 0;
+    let emitted = 0;
+    while (distance < maxDist && emitted < GRID_MAX_RIPPLES) {
+      this._emit(originX + dirX * distance, originY + dirY * distance);
+      emitted++;
+      distance += rippleSpacing;
+    }
   }
 }
