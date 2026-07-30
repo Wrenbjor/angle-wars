@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   FusionSystem,
   FUSION_RECIPES,
@@ -6,6 +6,8 @@ import {
   resolveRecipe,
   getReadyFusion,
   isRecipeReady,
+  effectRegistry,
+  registerEffect,
 } from './fusionSystem.js';
 import { markRemnant, removeOwnedItem } from '../state/ProgressionState.js';
 import { ITEM_REGISTRY } from '../config/itemRegistry.js';
@@ -434,5 +436,63 @@ describe('FusionSystem — class structure', () => {
   it('FUSION_RECIPES is accessible as a static property', () => {
     expect(FusionSystem.FUSION_RECIPES).toBe(FUSION_RECIPES);
     expect(FusionSystem.FUSION_RECIPES.length).toBe(14);
+  });
+});
+
+// --- EffectRegistry wiring ---------------------------------------------------
+
+describe('FusionSystem — effectRegistry wiring', () => {
+  beforeEach(() => {
+    // Clean the registry before each test to avoid cross-test pollution.
+    for (const key of Object.keys(effectRegistry)) {
+      delete effectRegistry[key];
+    }
+  });
+
+  it('effectRegistry is an object', () => {
+    expect(effectRegistry).toBeTypeOf('object');
+  });
+
+  it('registerEffect stores a handler by recipe Id', () => {
+    let called = false;
+    registerEffect('tesla-circuit', () => { called = true; });
+    expect(effectRegistry['tesla-circuit']).toBeTypeOf('function');
+  });
+
+  it('resolveRecipe calls registered handler with { recipeId, progressionState }', () => {
+    let ctx = null;
+    registerEffect('tesla-circuit', (c) => { ctx = c; });
+    const prog = makeProg({ 'orbit-blade': 5, 'overcharge': 3 });
+    resolveRecipe('tesla-circuit', prog, FUSION_RECIPES);
+    expect(ctx).not.toBeNull();
+    expect(ctx.recipeId).toBe('tesla-circuit');
+    expect(ctx.progressionState).toBe(prog);
+    expect(ctx.progressionState.ownedCards['tesla-circuit']).toBe(1);
+    expect(ctx.progressionState.ownedCards['orbit-blade']).toBeUndefined();
+  });
+
+  it('handler that sets a flag on an external target is called by resolveRecipe', () => {
+    // Simulates the buildArenaWorld pattern: an external system receives
+    // the registration and gets its flag set by the handler.
+    const externalTarget = { teslaActive: false };
+    registerEffect('tesla-circuit', () => {
+      externalTarget.teslaActive = true;
+    });
+    const prog = makeProg({ 'orbit-blade': 5, 'overcharge': 3 });
+    resolveRecipe('tesla-circuit', prog, FUSION_RECIPES);
+    expect(externalTarget.teslaActive).toBe(true);
+  });
+
+  it('unregistered recipes call no handler (no throw)', () => {
+    const prog = makeProg({ 'orbit-blade': 5, 'overcharge': 3 });
+    registerEffect('some-fake-recipe', () => { throw new Error('should not call'); });
+    // Resolve a genuine recipe that has no registered handler.
+    resolveRecipe('tesla-circuit', prog, FUSION_RECIPES);
+    expect(prog.ownedCards['tesla-circuit']).toBe(1);
+  });
+
+  it('FusionSystem.registerEffect and FusionSystem.effectRegistry mirror the module exports', () => {
+    expect(FusionSystem.registerEffect).toBe(registerEffect);
+    expect(FusionSystem.effectRegistry).toBe(effectRegistry);
   });
 });

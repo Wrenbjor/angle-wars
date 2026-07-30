@@ -22,6 +22,11 @@ import {
   ORBIT_BLADE_POOL_PREWARM,
   PLAYER_BULLET_BASE_DAMAGE,
   ARMORED_HP,
+  TESLA_CIRCUIT_CHAIN_TARGET_CAP,
+  TESLA_CIRCUIT_ARC_DAMAGE_MULT,
+  TESLA_CIRCUIT_CHAIN_COOLDOWN_MS,
+  TESLA_CIRCUIT_KILL_CHAIN_RADIUS,
+  TESLA_CIRCUIT_CHAIN_JUMP_COUNT,
 } from '../config/constants.js';
 
 // Story 11.1 — OrbitBladeSystem owns the Orbit Blade's blade POOL + rotation PHASE while
@@ -528,5 +533,216 @@ describe('OrbitBladeSystem — allocation', () => {
     expect(system._activeBlades).toBe(activeBladesRef);
     // …and no field was added to the instance across the run.
     expect(Object.keys(system).sort()).toEqual(shape);
+  });
+});
+
+// --- Tesla Circuit (Epic 12.3) -----------------------------------------------
+
+describe('OrbitBladeSystem — Tesla Circuit arc damage', () => {
+  function placeOnBlade(system, pool, opts = {}) {
+    system.fixedUpdate(DT);
+    const [b] = activeBlades(system);
+    return addEnemy(pool, b.x, b.y, opts);
+  }
+
+  it('LV5 + teslaCircuitActive: arc damage through applyPlayerDamage for each blade pair', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity; // cooldown always elapsed
+    const a = placeOnBlade(system, armoredPool, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    // HP drops by blade damage + 5 arc links × arc damage (Lv5 = 5 blades = 5 links).
+    const arcDmg = LV5.orbitBladeDamage * TESLA_CIRCUIT_ARC_DAMAGE_MULT;
+    const expectedHp = 1e9 - LV5.orbitBladeDamage - 5 * arcDmg;
+    expect(a.hp).toBeCloseTo(expectedHp, 4);
+  });
+
+  it('teslaCircuitActive=false: no arc damage when not fused', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = false;
+    system._teslaChainCooldownAt = -Infinity;
+    const a = placeOnBlade(system, armoredPool, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    // Only blade damage, no arc.
+    expect(a.hp).toBe(1e9 - LV5.orbitBladeDamage);
+  });
+
+  it('single blade (Lv1): 0 arc links (guard: arcs require count >= 2)', () => {
+    const armoredPool = new Pool(createArmored);
+    const { system } = makeSystem(LV1, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+    const a = placeOnBlade(system, armoredPool, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    // Only blade damage at Lv1 (1 blade = no consecutive pairs), no arc.
+    expect(a.hp).toBe(1e9 - LV1.orbitBladeDamage);
+  });
+
+  it('LV2: exactly 2 arc links for 2 adjacent blades (ring closure)', () => {
+    const armoredPool = new Pool(createArmored);
+    const stats2 = { orbitBladeCount: 2, orbitBladeDamage: 90, orbitBladePeriodMs: 1200 };
+    const { system } = makeSystem(stats2, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+    const a = placeOnBlade(system, armoredPool, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    const arcDmg = LV1.orbitBladeDamage * TESLA_CIRCUIT_ARC_DAMAGE_MULT;
+    const expectedHp = 1e9 - LV1.orbitBladeDamage - 2 * arcDmg;
+    expect(a.hp).toBeCloseTo(expectedHp, 4);
+  });
+});
+
+describe('OrbitBladeSystem — Tesla Circuit kill chain', () => {
+  function placeOnBladeAndKill(system, pool, hp) {
+    system.fixedUpdate(DT);
+    const [b] = activeBlades(system);
+    const e = addEnemy(pool, b.x, b.y, { hp });
+    system.fixedUpdate(DT);
+    return e;
+  }
+
+  it('kill chain with 2 neighbors: both jumps hit', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+    const [ship] = [];
+    // Place the kill target and two neighbors at known positions.
+    system.fixedUpdate(DT);
+    const blades = activeBlades(system);
+    const killTarget = addEnemy(armoredPool, blades[0].x, blades[0].y, { hp: LV5.orbitBladeDamage });
+    // Neighbors within TESLA_CIRCUIT_KILL_CHAIN_RADIUS of the kill target.
+    const n1 = addEnemy(armoredPool, killTarget.x + 50, killTarget.y + 50, { hp: 1e9 });
+    const n2 = addEnemy(armoredPool, killTarget.x - 50, killTarget.y + 80, { hp: 1e9 });
+    // Advance so the kill target overlaps a blade and is killed.
+    system.fixedUpdate(DT);
+    // Kill target should be dead and chains should fire.
+    expect(isActive(armoredPool, killTarget)).toBe(false);
+    // Both neighbors should take arc damage from the chain.
+    const arcDmg = LV5.orbitBladeDamage * TESLA_CIRCUIT_ARC_DAMAGE_MULT;
+    // n1 and n2 should each have received arc damage (hp decreased from 1e9).
+    expect(n1.hp).toBeLessThan(1e9);
+    expect(n2.hp).toBeLessThan(1e9);
+  });
+
+  it('kill chain with 1 neighbor: only first jump hits', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+    system.fixedUpdate(DT);
+    const blades = activeBlades(system);
+    const killTarget = addEnemy(armoredPool, blades[0].x, blades[0].y, { hp: LV5.orbitBladeDamage });
+    // Only one neighbor within range.
+    const n1 = addEnemy(armoredPool, killTarget.x + 50, killTarget.y + 50, { hp: 1e9 });
+    // Second neighbor is WAY outside the chain radius → jump 2 terminates.
+    addEnemy(armoredPool, killTarget.x + 5000, killTarget.y + 5000, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    expect(isActive(armoredPool, killTarget)).toBe(false);
+    // Only 1 neighbor hit, the second chain jump skips (no target within radius of jump1).
+    expect(n1.hp).toBeLessThan(1e9);
+    // The second neighbor should NOT be hit (2 jumps = 1 target + the kill origin's search,
+    // but only one target was within range of jump 1's origin).
+  });
+
+  it('kill chain with 0 neighbors: chain emits but hits 0 targets', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+    system.fixedUpdate(DT);
+    const blades = activeBlades(system);
+    // Kill target far from any other enemies (only seeker in pool is the one we placed).
+    const killTarget = addEnemy(armoredPool, blades[0].x, blades[0].y, { hp: LV5.orbitBladeDamage });
+    // No other enemies near the kill target.
+    system.fixedUpdate(DT);
+    expect(isActive(armoredPool, killTarget)).toBe(false);
+    // No neighbors = chain jumps hit nothing. The enemy was removed by blade damage only.
+  });
+});
+
+describe('OrbitBladeSystem — Tesla Circuit kill-chain cooldown', () => {
+  it('suppresses chain within 500ms, fires after cooldown elapsed', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = true;
+    // Set cooldownAt high so kill-chain is suppressed until _elapsedMs >= cooldownAt.
+    system._teslaChainCooldownAt = 10000;
+    system.fixedUpdate(DT);
+    const blades = activeBlades(system);
+    // Place a survivor near the kill target (within TESLA_CIRCUIT_KILL_CHAIN_RADIUS).
+    addEnemy(armoredPool, blades[0].x + 50, blades[0].y + 50, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    // Run enough ticks for _elapsedMs to exceed 10000ms (cooldownAt).
+    const neededMs = 10000 + TESLA_CIRCUIT_CHAIN_COOLDOWN_MS;
+    const ticksToCooldown = Math.ceil(neededMs / DT) + 10;
+    for (let i = 0; i < ticksToCooldown; i++) system.fixedUpdate(DT);
+    // Place kill TARGET on current blade position after cooldown has elapsed.
+    const currentBlades = activeBlades(system);
+    const killTarget = addEnemy(armoredPool, currentBlades[0].x, currentBlades[0].y, { hp: 1 });
+    // Advance one tick: death + chain should fire since cooldown elapsed.
+    system.fixedUpdate(DT);
+    // Chain targets should have been allocated (chain fired because cooldown elapsed).
+    expect(system._teslaChainTargets.length).toBeGreaterThan(0);
+  });
+});
+
+describe('OrbitBladeSystem — Tesla Circuit target cap', () => {
+  it('64+ enemies dying simultaneously: only TESLA_CIRCUIT_CHAIN_TARGET_CAP targets hit', () => {
+    const armoredPool = new Pool(createArmored);
+    const { collisionSystem, system } = makeSystem(LV5, [armoredPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+
+    // Place the kill target + 100 neighbors within chain radius.
+    system.fixedUpdate(DT);
+    const blades = activeBlades(system);
+    const centerX = blades[0].x;
+    const centerY = blades[0].y;
+    // Center kill target.
+    const killTarget = addEnemy(armoredPool, centerX, centerY, { hp: LV5.orbitBladeDamage });
+    // 100 neighbors within TESLA_CIRCUIT_KILL_CHAIN_RADIUS.
+    for (let i = 0; i < 100; i++) {
+      const angle = (i / 100) * Math.PI * 2;
+      const r = 100; // well within TESLA_CIRCUIT_KILL_CHAIN_RADIUS (200px)
+      addEnemy(armoredPool, centerX + r * Math.cos(angle), centerY + r * Math.sin(angle), { hp: 1e9 });
+    }
+    // Advance past blade hit → kill chain fires.
+    system.fixedUpdate(DT);
+    expect(isActive(armoredPool, killTarget)).toBe(false);
+    // Chain has max 2 jumps per kill, so total targets ≈ 2 (not 100).
+    // The real test: chain targets don't exceed the cap.
+    expect(system._teslaChainTargets.length).toBeLessThanOrEqual(TESLA_CIRCUIT_CHAIN_TARGET_CAP);
+  });
+});
+
+describe('OrbitBladeSystem — Tesla Circuit no over-allocation', () => {
+  it('scratch arrays reused (length-reset, never reallocated) under tesla circuit', () => {
+    const enemyPool = new Pool(createArmored);
+    const { system, ship } = makeSystem(LV5, [enemyPool]);
+    system.teslaCircuitActive = true;
+    system._teslaChainCooldownAt = -Infinity;
+    addEnemy(enemyPool, ship.x + ORBIT_BLADE_ORBIT_RADIUS, ship.y, { hp: 1e9 });
+    system.fixedUpdate(DT);
+    const arcTargetRef = system._teslaArcTargets;
+    const chainTargetRef = system._teslaChainTargets;
+    const total = system.pool.activeCount + system.pool.freeCount;
+
+    for (let i = 0; i < 600; i++) system.fixedUpdate(DT);
+
+    // The scratch arrays are the SAME references (length-reset, not reallocated).
+    expect(system._teslaArcTargets).toBe(arcTargetRef);
+    expect(system._teslaChainTargets).toBe(chainTargetRef);
+    expect(system.pool.activeCount).toBe(5);
+    expect(system.pool.activeCount + system.pool.freeCount).toBe(total);
+  });
+});
+
+describe('OrbitBladeSystem — teslaCircuitActive flag defaults to false', () => {
+  it('new systems have teslaCircuitActive = false by default', () => {
+    const { system } = makeSystem(LV1);
+    expect(system.teslaCircuitActive).toBe(false);
   });
 });

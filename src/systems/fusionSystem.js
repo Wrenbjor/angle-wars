@@ -23,8 +23,28 @@ import { markRemnant, hasRemnant, getLevel } from '../state/ProgressionState.js'
 // ---------------------------------------------------------------------------
 
 /**
+ * Mapping of recipe id → handler function for post-fusion effect wiring.
+ * Populated at runtime by buildArenaWorld (and test fixtures) after all
+ * gameplay systems are constructed.
+ * @type {Object<string, Function>}
+ */
+export const effectRegistry = {};
+
+/**
+ * Register an effect handler for a given recipe id. Called by
+ * buildArenaWorld after all game systems are created.
+ *
+ * @param {string} recipeId — the fusion recipe id (e.g. 'tesla-circuit').
+ * @param {Function} handler — receives { recipeId, progressionState }.
+ */
+export function registerEffect(recipeId, handler) {
+  effectRegistry[recipeId] = handler;
+}
+
+/**
  * The frozen fusion-recipe array — 14 recipes, each one defining the fusion condition
- * and its result. Constructed from PRD §13.5. Effects are STUBS (no-op functions).
+ * and its result. Constructed from PRD §13.5. Effects are STUBS (no-op functions)
+ * that each recipe uses for backwards compatibility.
  * Every entry has: id, primaryItemId, partnerRule, partnerItemId, requiredLevel,
  *   epicType, name, effect (stub).
  * @type {ReadonlyArray<{ id: string, primaryItemId: string,
@@ -318,6 +338,11 @@ export class FusionSystem {
 // card-building path. (Same reference as the module-level export.)
 FusionSystem.FUSION_RECIPES = FUSION_RECIPES;
 
+// Make the effect registry and registration function accessible as static members
+// so test fixtures and buildArenaWorld can wire effects without module-level imports.
+FusionSystem.effectRegistry = effectRegistry;
+FusionSystem.registerEffect = registerEffect;
+
 /**
  * Check ALL fusion conditions against the current progression state and return
  * which recipes are satisfied and the specific partner that satisfies each.
@@ -380,6 +405,13 @@ export function resolveRecipe(recipeId, prog, registry = FUSION_RECIPES) {
     if (partnerItemId) {
       markRemnant(prog, partnerItemId);
     }
+  }
+
+  // Call any registered effect handler for this recipe. The handler receives the
+  // recipe id and the (now-updated) progressionState as context.
+  const handler = effectRegistry[recipeId];
+  if (typeof handler === 'function') {
+    handler({ recipeId, progressionState: prog });
   }
 }
 

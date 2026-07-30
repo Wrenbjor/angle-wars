@@ -583,16 +583,26 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
    // playerState.invulnMs + (on a pick) progressionState.
    // Story 12.1 — Fusion Core: instantiate the fusion system (pure query module) and
    // thread it into LevelUpSystem so level-up offers guarantee Epic cards when ready.
-   const fusionSystem = new FusionSystem();
-   const levelUpSystem = new LevelUpSystem(
-     levelSystem,
-     playerState,
-     progressionState,
-     ITEM_REGISTRY,
-     playerStats,
-     _rng,
-     fusionSystem,
-   );
+    const fusionSystem = new FusionSystem();
+    // Story 12.3 — Tesla Circuit effect wiring. After fusion resolution sets
+    // 'tesla-circuit' in ownedCards, wire the active flag on orbitBladeSystem.
+    // FusionSystem.registerEffect is called here after all game systems are
+    // constructed so orbitBladeSystem is available.
+    FusionSystem.registerEffect(
+      'tesla-circuit',
+      () => {
+        orbitBladeSystem.teslaCircuitActive = true;
+      },
+    );
+    const levelUpSystem = new LevelUpSystem(
+      levelSystem,
+      playerState,
+      progressionState,
+      ITEM_REGISTRY,
+      playerStats,
+      _rng,
+      fusionSystem,
+    );
    world.addSystem(levelUpSystem);
 
   // --- Player death / lives -----------------------------------------------

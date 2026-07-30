@@ -8,6 +8,11 @@ import {
   ORBIT_BLADE_BASE_PERIOD_MS,
   ORBIT_BLADE_HIT_COOLDOWN_MS,
   ORBIT_BLADE_POOL_PREWARM,
+  TESLA_CIRCUIT_CHAIN_JUMP_COUNT,
+  TESLA_CIRCUIT_CHAIN_TARGET_CAP,
+  TESLA_CIRCUIT_CHAIN_COOLDOWN_MS,
+  TESLA_CIRCUIT_KILL_CHAIN_RADIUS,
+  TESLA_CIRCUIT_ARC_DAMAGE_MULT,
 } from '../config/constants.js';
 
 const TWO_PI = Math.PI * 2;
@@ -117,6 +122,21 @@ export class OrbitBladeSystem extends System {
     // Materialized both to release the surplus (never mid-forEachActive) and to reposition.
     this._activeBlades = [];
     this._collectBlade = (b) => this._activeBlades.push(b);
+
+    // --- Tesla Circuit (Epic 12.3) -------------------------------------------
+    // Active flag set by the effect stub in buildArenaWorld when the tesla-circuit
+    // Epic card is owned (fusion of Orbit Blade Lv5 + Overcharge Lv3).
+    this.teslaCircuitActive = false;
+
+    // Cooldown timer for kill-proportionated chain: absolute elapsed-ms at which
+    // the chain may fire again. Resets to `_elapsedMs + TESLA_CIRCUIT_CHAIN_COOLDOWN_MS`.
+    this._teslaChainCooldownAt = 0;
+
+    // Scratch arrays for chain target tracking — length-reset each tick, zero allocation.
+    // _teslaArcTargets holds enemies already affected by arc damage this tick.
+    this._teslaArcTargets = [];
+    // _teslaChainTargets holds enemies already hit by chain jumps this tick.
+    this._teslaChainTargets = [];
   }
 
   /**
@@ -247,8 +267,14 @@ export class OrbitBladeSystem extends System {
     // the sweep must only run after step 3 actually POSITIONED the blades, so a null ship
     // (blades left at their prior/zeroed coords) can never spuriously hit an enemy near the
     // origin.
+    //
+    // Also: reset Tesla Circuit scratch arrays at sweep start (per-tick, zero allocation).
     this._elapsedMs += dt;
-    if (count > 0 && ship) this._sweep(count);
+    if (count > 0 && ship) {
+      this._teslaArcTargets.length = 0;
+      this._teslaChainTargets.length = 0;
+      this._sweep(count);
+    }
   }
 
   /**
@@ -299,6 +325,8 @@ export class OrbitBladeSystem extends System {
 
     const now = this._elapsedMs;
     const damage = this._damage();
+
+    // (A) Main hit pass + arc damage.
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
       // A telegraphing (spawning-in) enemy is inert — the same non-lethality seam
@@ -332,6 +360,125 @@ export class OrbitBladeSystem extends System {
       if (!hit) continue;
       e._orbitBladeHitAt = now;
       cs.applyPlayerDamage(e, owners[i], damage);
+
+      // --- Tesla Circuit: arc damage on blade hit + kill-proportionated chain --------
+      // Arc damage and kill chain both require tesla-circuit to be active.
+      // Arc damage only fires when bladeCount >= 2 (ring-order pairing needs ≥ 2 blades).
+      // Kill chain fires whenever bladeCount >= 1 (a single blade can kill → chain).
+      // arcDmg is computed once and reused for both arc links and chain jumps.
+      if (this.teslaCircuitActive) {
+        const arcDmg = damage * TESLA_CIRCUIT_ARC_DAMAGE_MULT;
+
+        // --- Arc damage on blade hit ---
+        // Each consecutive blade pair (ring-order adjacency) adds one arc link
+        // that routes identical arc damage through applyPlayerDamage to the SAME hit enemy.
+        if (bladeCount >= 2) {
+          for (let l = 0; l < bladeCount; l++) {
+            if (!this._isActive(owners[i], e)) break;
+            cs.applyPlayerDamage(e, owners[i], arcDmg);
+          }
+        }
+
+        // --- Kill-proportionated chain ---
+        // If this blade hit killed an enemy, fire a 2-jump chain from the
+        // killed enemy's position (cooldown-gated, cap-bounded).
+        const killedEnemies = cs.killedEnemies;
+        if (killedEnemies.length > 0 && killedEnemies[killedEnemies.length - 1] === e) {
+          if (now >= this._teslaChainCooldownAt) {
+            this._teslaChainCooldownAt = now + TESLA_CIRCUIT_CHAIN_COOLDOWN_MS;
+            this._teslaChain({ x: e.x, y: e.y }, now, cs, arcDmg);
+          }
+        }
+      }
     }
+  }
+
+   /**
+    * Tesla Circuit: 2-jump kill-chain from a killed enemy's position.
+    * Each jump targets the nearest unhit combat enemy within TESLA_CIRCUIT_KILL_CHAIN_RADIUS.
+    * Chain targets are tracked to prevent duplicates. Hard cap at TESLA_CIRCUIT_CHAIN_TARGET_CAP.
+    * Arc damage per jump = the same as arc links (already computed from main hit damage).
+    * No per-tick allocation: uses scratch arrays (_teslaChainTargets) cleared at sweep start.
+    * @param {{x:number,y:number}} originXy The killed enemy's position (read-only).
+    * @param {number} arcDamage The pre-computed arc damage per jump (bladeHitDmg × arcMult).
+    * @param {number} now The current elapsed milliseconds (for cooldown tracking).
+    * @param {import('./CollisionSystem.js').CollisionSystem} cs The shared damage seam.
+    * @private
+    */
+   _teslaChain(originXy, now, cs, arcDamage) {
+     const pools = this.enemyPools;
+     if (!pools) return;
+     const jumpCount = TESLA_CIRCUIT_CHAIN_JUMP_COUNT;
+     const radius = TESLA_CIRCUIT_KILL_CHAIN_RADIUS;
+     const radiusSq = radius * radius;
+     let totalTargets = this._teslaChainTargets.length;
+     let chainX = originXy.x;
+     let chainY = originXy.y;
+
+     for (let j = 0; j < jumpCount; j++) {
+       // Hard cap: stop adding targets once we reach the cap.
+       if (totalTargets >= TESLA_CIRCUIT_CHAIN_TARGET_CAP) break;
+
+       // Find nearest unhit enemy within radius of current chain origin.
+       let bestDist = Infinity;
+       let bestEnemy = null;
+       let bestOwner = null;
+       for (let p = 0; p < pools.length; p++) {
+         const pool = pools[p];
+         pool.forEachActive((e) => {
+           // Skip already-hit chain targets (dedup across chains in same tick).
+           if (this._isChainTarget(e)) return;
+           const dx = e.x - chainX;
+           const dy = e.y - chainY;
+           const dSq = dx * dx + dy * dy;
+           if (dSq > radiusSq) return; // outside chain radius
+           if (dSq < bestDist) {
+             bestDist = dSq;
+             bestEnemy = e;
+             bestOwner = pool;
+           }
+         });
+       }
+       // No eligible target — chain terminates early (jump skipped).
+       if (!bestEnemy) break;
+
+       // Deal arc damage through applyPlayerDamage, then track and advance.
+       cs.applyPlayerDamage(bestEnemy, bestOwner, arcDamage);
+       totalTargets++;
+       this._teslaChainTargets.push({ enemy: bestEnemy, pool: bestOwner });
+
+       // Next jump originates from this hit enemy's position.
+       chainX = bestEnemy.x;
+       chainY = bestEnemy.y;
+     }
+   }
+
+  /**
+   * Check if an enemy is still active in its pool (alive, not released).
+   * @param {import('../core/Pool.js').Pool} pool - the pool to check.
+   * @param {object} target - the enemy to check.
+   * @returns {boolean} true if the enemy is still active in the pool.
+   * @private
+   */
+  _isActive(pool, target) {
+    let found = false;
+    pool.forEachActive((e) => {
+      if (e === target) found = true;
+    });
+    return found;
+  }
+
+  /**
+   * Check if an enemy is already tracked as a chain target this tick.
+   * @param {object} candidate - the enemy to check.
+   * @returns {boolean} true if already in the chain target pool.
+   * @private
+   */
+  _isChainTarget(candidate) {
+    const targets = this._teslaChainTargets;
+    for (let t = 0; t < targets.length; t++) {
+      if (targets[t].enemy === candidate) return true;
+    }
+    return false;
   }
 }

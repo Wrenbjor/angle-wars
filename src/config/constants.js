@@ -925,6 +925,28 @@ export const ORBIT_BLADE_POOL_PREWARM = ORBIT_BLADE_MAX_COUNT;
 // the neon/bloom background at additive blend. Epic 4 owns the real aesthetic.
 export const COLOR_ORBIT_BLADE = 0xff3355;
 
+// --- Tesla Circuit (Epic 12.3 — chain-damage augmentation) --------------------
+// The Fusion-resolved transformation of Orbit Blade Lv5 + Overcharge Lv3.
+// The tesla-circuit ACTIVE on OrbitBladeSystem augments the existing sweep with:
+//   (1) arc damage on each blade hit — ring-order adjacency between consecutive blades;
+//   (2) kill-proportionated 2-jump chain to new enemies (500 ms cooldown).
+// No rendering or audio: the system computes hits, routes damage through
+// collisionSystem.applyPlayerDamage, and delegates visuals to Story 12.2.
+
+// Kill-chain propagation depth (fixed): 2-jump chain from a killed enemy's position.
+export const TESLA_CIRCUIT_CHAIN_JUMP_COUNT = 2;
+// Hard cap on total chain targets across all active chains (NFR11).
+export const TESLA_CIRCUIT_CHAIN_TARGET_CAP = 64;
+// Cooldown (ms) between kill-chains: the chain does not fire until this elapsed.
+export const TESLA_CIRCUIT_CHAIN_COOLDOWN_MS = 500;
+// Kill-chain target selection radius (px): max distance from chain origin to eligible
+// enemy (nearest within this radius is selected per jump).
+export const TESLA_CIRCUIT_KILL_CHAIN_RADIUS = 200;
+// Arc damage multiplier: damage per arc link = bladeHitDamage × this.
+// With Lv5 blade at 126 dmg: arcDamagePerLink = 126 × 0.30 = 37.8 per link.
+// At Lv5 (5 blades) = 5 arc links per hit → 5 × 37.8 = 189 arc damage per hit.
+export const TESLA_CIRCUIT_ARC_DAMAGE_MULT = 0.30;
+
 // --- Seeker Drones (Story 11.2 / PRD §13.3) ---------------------------------
 // The second Epic-11 "exotic" offense item: autonomous shooters that ride a ring
 // around the ship and fire pooled shots at the nearest combat enemy on their own
