@@ -1030,6 +1030,22 @@ export const COLOR_SEEKER_DRONE = 0x33ffaa;
 // so a shot reads as its own moving element.
 export const COLOR_DRONE_SHOT = 0x66ffcc;
 
+// --- Swarm Protocol (Story 12.7 / Epic 12 — offense Epic) --------------------
+// Damage dealt by a swarm drone on ram-contact (base).
+export const SWARM_RAM_DAMAGE = 2;
+// Cooldown (ms) before a killed drone respawns onto the ring.
+export const SWARM_RESPAWN_MS = 3000;
+// Speed at which swarm drones move toward enemies (px/s).
+export const SWARM_DRONE_MOVE_SPEED = 400;
+// Lifetime (ms) of a spawned mini-drone before it self-destructs.
+export const SWARM_MINI_DRONE_LIFETIME_MS = 5000;
+// Hard cap on live mini-drone count (NFR11 bounding).
+export const SWARM_MAX_MINI_DRONES = 24;
+// Damage dealt by a mini-drone on contact (not auto-kill).
+export const SWARM_MINI_DRONE_DAMAGE = 1;
+// Pool prewarm count for mini-drones.
+export const SWARM_MINI_DRONE_POOL_PREWARM = 48;
+
 // --- Mine Layer (Story 11.3 / PRD §13.3) ------------------------------------
 // The third Epic-11 "exotic" offense item and the first AoE-DETONATION entity: the
 // kiting ship drops timed mines in its wake that ARM after a delay, then DETONATE when a

@@ -38,5 +38,16 @@ export function createSeekerDrone() {
     y: 0,
     radius: SEEKER_DRONE_RADIUS,
     fireAccumMs: 0,
+    // Swarm Protocol (Story 12.7) — cooldown timer set on ram-kill.
+    // When > 0, the drone is in cooldown until (simNowMs - lastKillTimeMs) >= SWARM_RESPAWN_MS.
+    lastKillTimeMs: 0,
+    // Whether this is a mini-drone spawned from a parent kill.
+    isMini: false,
+    // Spawn timestamp for mini-drone lifetime tracking (ms). Separate from lastKillTimeMs
+    // to avoid field collision: parents use lastKillTimeMs for cooldown, mini-drones use
+    // miniSpawnTimeMs for lifetime.
+    miniSpawnTimeMs: 0,
+    // Track how many mini-drones this entity was used as (for test assertions).
+    miniSpawnCount: 0,
   };
 }

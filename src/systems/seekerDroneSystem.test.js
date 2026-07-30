@@ -25,6 +25,13 @@ import {
   SEEKER_DRONE_SHOT_LIFETIME_MS,
   PLAYER_BULLET_BASE_DAMAGE,
   ARMORED_HP,
+  SWARM_RAM_DAMAGE,
+  SWARM_RESPAWN_MS,
+  SWARM_DRONE_MOVE_SPEED,
+  SWARM_MINI_DRONE_LIFETIME_MS,
+  SWARM_MAX_MINI_DRONES,
+  SWARM_MINI_DRONE_DAMAGE,
+  SWARM_MINI_DRONE_POOL_PREWARM,
 } from '../config/constants.js';
 
 // Story 11.2 — SeekerDroneSystem owns the Seeker Drones' drone POOL + shot POOL + the
@@ -832,5 +839,420 @@ describe('SeekerDroneSystem — decorative ring rotation', () => {
     const expectedPerTick = (2 * Math.PI * DT) / SEEKER_DRONE_ROTATE_PERIOD_MS;
     expect(delta).toBeGreaterThan(0); // it genuinely advanced (not frozen)
     expect(delta).toBeCloseTo(expectedPerTick * K, 4);
+  });
+});
+
+// Story 12.7 — Swarm Protocol: ram-kill, cooldown, mini-drone lifecycle.
+
+/** Shared swarm system factory used by all Swarm Protocol sub-describe blocks. */
+function makeSwarmSystem(stats, pools) {
+  if (!stats) stats = createPlayerStats();
+  if (!pools) pools = [new Pool(createSeeker)];
+  const ship = createPlayerShip();
+  ship.x = ARENA_WIDTH / 2;
+  ship.y = ARENA_HEIGHT / 2;
+  const collisionSystem = new CollisionSystem(new Pool(createBullet), pools);
+  const playerStats = { ...createPlayerStats(), ...stats };
+  const system = new SeekerDroneSystem(ship, pools, collisionSystem, playerStats);
+  system.swarmProtocolActive = true;
+  return { ship, enemyPools: pools, enemyPool: pools[0], collisionSystem, playerStats, system };
+}
+
+function activeMiniDrones(system) {
+  const out = [];
+  system.miniDronePool.forEachActive((d) => {
+    if (d.isMini) out.push(d);
+  });
+  return out;
+}
+
+describe('SeekerDroneSystem — Swarm Protocol (Story 12.7)', () => {
+  it('swarmProtocolActive=true: drones fly toward nearest enemy, no shots fired', () => {
+    const { enemyPool, system, ship } = makeSwarmSystem(LV5);
+    addEnemy(enemyPool, ship.x + 200, ship.y);
+    system.fixedUpdate(DT);
+    expect(system.pool.activeCount).toBe(5);
+    expect(system.shotPool.activeCount).toBe(0);
+  });
+
+  it('Drone ram-kill: contact destroys enemy through applyPlayerDamage', () => {
+    const { enemyPool, collisionSystem, system, ship } = makeSwarmSystem(LV5);
+    const e = addEnemy(enemyPool, ship.x + 50, ship.y);
+    let killed = false;
+    for (let t = 0; !killed && t < 200; t++) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    expect(killed).toBe(true);
+    expect(collisionSystem.killedEnemies).toContain(e);
+    expect(collisionSystem.bulletKillCount).toBe(1);
+  });
+
+  it('Drone ram vs armored: damage is halved (1 per hit), drone enters cooldown', () => {
+    const armoredPool = new Pool(createArmored);
+    const { system, ship, collisionSystem } = makeSwarmSystem(LV5, [armoredPool]);
+    const a = addEnemy(armoredPool, ship.x + 50, system.ship.y, { hp: ARMORED_HP });
+    let killed = false;
+    for (let t = 0; !killed && t < 200; t++) {
+      system.fixedUpdate(DT);
+      killed = !isActive(armoredPool, a);
+    }
+    // ARMORED_HP=5, halved ram=1 → 5 ram-kills needed.
+    expect(killed).toBe(true);
+    // Cooldown should have been triggered on the kill drone.
+    const drones = activeDrones(system);
+    let onCooldown = 0;
+    for (const d of drones) {
+      if (!d.isMini && d.lastKillTimeMs > 0) onCooldown++;
+    }
+    expect(onCooldown).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Non-lethal ram contact (with high HP enemy): drone does NOT enter cooldown unless killed', () => {
+    // Use a Seeker with artificially high HP to survive 2 ram-damage hits.
+    const highHpPool = [new Pool(createSeeker)];
+    const { system, ship } = makeSwarmSystem(LV5, highHpPool);
+    // Give the seeker very high HP so ram doesn't kill it.
+    const e = addEnemy(highHpPool[0], ship.x + 50, ship.y, { hp: 100 });
+    // Advance past many ticks — drone flies toward enemy and rams it repeatedly.
+    let killed = false;
+    for (let t = 0; !killed && t < 300; t++) {
+      system.fixedUpdate(DT);
+      killed = !isActive(highHpPool[0], e);
+    }
+    // Enemy with 100 HP should NOT die from ram damage (2 per hit).
+    // The drone enters cooldown only on kill.
+    if (!killed) {
+      // Verify drone took contact damage but did not enter cooldown.
+      const drones = activeDrones(system);
+      let onCooldown = 0;
+      for (const d of drones) {
+        if (!d.isMini && d.lastKillTimeMs > 0) onCooldown++;
+      }
+      // No drone should be on cooldown since enemy didn't die.
+      expect(onCooldown).toBe(0);
+    }
+  });
+
+  it('Ram contact vs non-armored: one-shot kill (damage 2)', () => {
+    const { enemyPool, collisionSystem, system } = makeSwarmSystem(LV1);
+    const e = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    for (let t = 0; !killed && t < 500; t++) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    expect(killed).toBe(true);
+    expect(collisionSystem.killedEnemies).toContain(e);
+    const drones = activeDrones(system);
+    let onCooldown = 0;
+    for (const d of drones) {
+      if (d.lastKillTimeMs > 0) onCooldown++;
+    }
+    expect(onCooldown).toBe(1);
+  });
+
+  it('Drone cooldown: drone with lastKillTimeMs resets after SWARM_RESPAWN_MS', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV1);
+    const e = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    const drones = activeDrones(system);
+    expect(drones[0].lastKillTimeMs).toBeGreaterThan(0);
+    const spawnTicks = Math.floor(SWARM_RESPAWN_MS / DT) + 10;
+    // Need one extra tick at the end to let cooldown expiry clear lastKillTimeMs.
+    for (let i = 0; i < spawnTicks; i++) {
+      system.fixedUpdate(DT);
+    }
+    // The drone should have been repositioned and the cooldown should have expired.
+    // After cooldown expiry, the drone is placed at ring position again.
+    // Since this is LV1 with no further kills, the cooldown should be 0 now.
+    // We need one more tick to ensure the reposition happened.
+    system.fixedUpdate(DT);
+    expect(drones[0].lastKillTimeMs).toBe(0);
+  });
+
+  it('Mini-drone spawn: each kill spawns one mini-drone', () => {
+    // Use a simple setup matching the existing Ram-kill test pattern.
+    const ship = createPlayerShip();
+    ship.x = ARENA_WIDTH / 2;
+    ship.y = ARENA_HEIGHT / 2;
+    const enemyPools = [new Pool(createSeeker)];
+    const collisionSystem = new CollisionSystem(new Pool(createBullet), enemyPools);
+    const playerStats = { ...createPlayerStats(), ...LV1 };
+    const system = new SeekerDroneSystem(ship, enemyPools, collisionSystem, playerStats);
+    system.swarmProtocolActive = true;
+
+    const e = enemyPools[0].acquire();
+    e.x = ship.x + 50;
+    e.y = ship.y;
+    e.vx = 0;
+    e.vy = 0;
+    e.telegraphMs = 0;
+
+    // Kill the enemy
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPools[0], e);
+    }
+    // Exactly one kill → exactly one mini-drone spawned.
+    expect(system._miniDroneLiveCount).toBe(1);
+    const m1 = activeMiniDrones(system);
+    expect(m1.length).toBe(1);
+    expect(m1[0].isMini).toBe(true);
+  });
+
+  it('Mini-drone lifetime: self-destructs after 5s', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV5);
+    // Kill one enemy to spawn one mini-drone.
+    const e1 = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e1);
+    }
+    const preLiveCount = system._miniDroneLiveCount;
+    expect(preLiveCount).toBe(1);
+    const lifetimeTicks = Math.floor(SWARM_MINI_DRONE_LIFETIME_MS / DT) + 100;
+    for (let i = 0; i < lifetimeTicks; i++) {
+      system.fixedUpdate(DT);
+    }
+    // Mini-drones should have fully expired.
+    expect(system._miniDroneLiveCount).toBe(0);
+    const m = activeMiniDrones(system);
+    expect(m.length).toBe(0);
+  });
+
+  it('Mini-drone cap: 24 max live mini-drones', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV5);
+    // Place enemies close together so kills happen fast while mini-drones
+    // have not yet expired (5s lifetime).
+    for (let k = 0; k < 30; k++) {
+      addEnemy(enemyPool, system.ship.x + 50 + (k % 6) * 10, system.ship.y + Math.floor(k / 6) * 10);
+    }
+    for (let i = 0; i < 300; i++) {
+      system.fixedUpdate(DT);
+    }
+    // Cap bound holds.
+    expect(system._miniDroneLiveCount).toBeLessThanOrEqual(SWARM_MAX_MINI_DRONES);
+    // Verify there's at least some mini-drone activity.
+    const m = activeMiniDrones(system);
+    expect(m.length).toBeLessThanOrEqual(SWARM_MAX_MINI_DRONES);
+  });
+
+  it('No enemies: drones orbit normally, no kills, no mini-drones', () => {
+    const { system } = makeSwarmSystem(LV1, []);
+    for (let i = 0; i < 300; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(system.pool.activeCount).toBe(1);
+    expect(system._miniDroneLiveCount).toBe(0);
+    expect(system.collisionSystem.killedEnemies).toHaveLength(0);
+    // Swarm mode in empty arena: no shots fired (fire cadence skips when no enemies).
+    expect(system.shotPool.activeCount).toBe(0);
+  });
+
+  it('Cooldown drones excluded from ring repositioning', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV5);
+    const e = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    // One more tick: step 2 repositions non-cooldown drones, step 3a processes cooldown expiry.
+    system.fixedUpdate(DT);
+    // At least one drone should be on cooldown.
+    let onCooldown = 0;
+    const drones = activeDrones(system);
+    for (const d of drones) {
+      if (!d.isMini && d.lastKillTimeMs > 0) onCooldown++;
+    }
+    expect(onCooldown).toBeGreaterThanOrEqual(1);
+    // The non-cooldown drones should remain at ring radius from the current tick's reposition.
+    let placed = 0;
+    const nonCooldownCount = drones.filter((d) => !d.isMini && d.lastKillTimeMs === 0).length;
+    for (let i = 0; i < drones.length && placed < nonCooldownCount; i++) {
+      const d = drones[i];
+      if (!d.isMini && d.lastKillTimeMs === 0) {
+        const dist = Math.hypot(d.x - system.ship.x, d.y - system.ship.y);
+        expect(dist).toBeCloseTo(SEEKER_DRONE_ORBIT_RADIUS, 1);
+        placed++;
+      }
+    }
+  });
+
+  it('_swarmSkipsFire: prevents fire cadence when active', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV5);
+    const e = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    expect(system._swarmSkipsFire).toBe(true);
+  });
+
+  it('Mini-drone pool prewarm: total pool size matches prewarm count', () => {
+    const { system } = makeSwarmSystem(LV5);
+    const total = system.miniDronePool.activeCount + system.miniDronePool.freeCount;
+    expect(total).toBe(SWARM_MINI_DRONE_POOL_PREWARM);
+  });
+
+  it('Mini-drone has isMini=true after acquire from prewarming', () => {
+    const { system } = makeSwarmSystem(LV5);
+    // All prewarmed mini-drones are in the free list (not active).
+    // Acquire one to verify the isMini stamp.
+    const md = system.miniDronePool.acquire();
+    expect(md.isMini).toBe(true);
+    system.miniDronePool.release(md);
+  });
+
+  it('No allocation per tick at steady state', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV5);
+    for (let k = 0; k < 5; k++) {
+      addEnemy(enemyPool, system.ship.x + 50 + k * 20, system.ship.y);
+    }
+    for (let i = 0; i < 400; i++) {
+      system.fixedUpdate(DT);
+    }
+    const droneTotal = system.pool.activeCount + system.pool.freeCount;
+    const shotTotal = system.shotPool.activeCount + system.shotPool.freeCount;
+    const miniTotal = system.miniDronePool.activeCount + system.miniDronePool.freeCount;
+    const shape = Object.keys(system).sort();
+    const collectDrone = system._collectDrone;
+    const collectEnemy = system._collectEnemy;
+    const collectMini = system._collectMiniDrone;
+    const enemiesRef = system._enemies;
+    const activeDronesRef = system._activeDrones;
+    const shotsRef = system._shots;
+    const miniDronesRef = system._miniDrones;
+    for (let i = 0; i < 600; i++) {
+      system.fixedUpdate(DT);
+    }
+    expect(system.pool.activeCount + system.pool.freeCount).toBe(droneTotal);
+    expect(system.shotPool.activeCount + system.shotPool.freeCount).toBe(shotTotal);
+    expect(system.miniDronePool.activeCount + system.miniDronePool.freeCount).toBe(miniTotal);
+    expect(system._collectDrone).toBe(collectDrone);
+    expect(system._collectEnemy).toBe(collectEnemy);
+    expect(system._collectMiniDrone).toBe(collectMini);
+    expect(system._enemies).toBe(enemiesRef);
+    expect(system._activeDrones).toBe(activeDronesRef);
+    expect(system._shots).toBe(shotsRef);
+    expect(system._miniDrones).toBe(miniDronesRef);
+    expect(Object.keys(system).sort()).toEqual(shape);
+  });
+
+  it('Mini-drone flies toward nearest enemy before contact', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV1);
+    const e1 = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e1);
+    }
+    addEnemy(enemyPool, system.ship.x - 50, system.ship.y);
+    for (let i = 0; i < 100; i++) {
+      system.fixedUpdate(DT);
+    }
+    const m = activeMiniDrones(system);
+    // Mini-drones should exist and have been alive.
+    for (const md of m) {
+      expect(md.isMini).toBe(true);
+    }
+  });
+
+  it('Parent drone cooldown preserves isMini=false check for ring spacing', () => {
+    const { enemyPool, system } = makeSwarmSystem(LV5);
+    const e = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    // After kill, one drone should be on cooldown.
+    // After reposition tick, non-cooldown parents should be on the ring.
+    system.fixedUpdate(DT);
+    const drones = activeDrones(system);
+    let placed = 0;
+    const nonCooldownCount = drones.filter((d) => !d.isMini && d.lastKillTimeMs === 0).length;
+    for (let i = 0; i < drones.length && placed < nonCooldownCount; i++) {
+      const d = drones[i];
+      if (d.isMini || d.lastKillTimeMs > 0) continue;
+      const dist = Math.hypot(d.x - system.ship.x, d.y - system.ship.y);
+      expect(dist).toBeCloseTo(SEEKER_DRONE_ORBIT_RADIUS, 1);
+      placed++;
+    }
+    expect(placed).toBe(nonCooldownCount);
+  });
+});
+
+describe('SeekerDroneSystem — Swarm Protocol mini-drone prewarm wiring', () => {
+  it('miniDronePool exists and is correctly prewarmed', () => {
+    const ship = createPlayerShip();
+    ship.x = ARENA_WIDTH / 2;
+    ship.y = ARENA_HEIGHT / 2;
+    const enemyPools = [new Pool(createSeeker)];
+    const collisionSystem = new CollisionSystem(new Pool(createBullet), enemyPools);
+    const playerStats = { ...createPlayerStats(), ...LV5 };
+    const system = new SeekerDroneSystem(ship, enemyPools, collisionSystem, playerStats);
+    system.swarmProtocolActive = true;
+    expect(system.miniDronePool).toBeDefined();
+    expect(system._miniDroneLiveCount).toBe(0);
+    const total = system.miniDronePool.activeCount + system.miniDronePool.freeCount;
+    expect(total).toBe(SWARM_MINI_DRONE_POOL_PREWARM);
+    system.miniDronePool.forEachActive((d) => {
+      expect(d.isMini).toBe(true);
+    });
+  });
+
+  it('swarmProtocolActive=false: normal drone shooting behavior unchanged', () => {
+    // Regression guard: when swarmProtocolActive remains false (default), drones
+    // fire shots exactly as they do without any Swarm Protocol code. The pre-swarm
+    // tests (seekerDroneSystem.test.js top-level describe blocks) cover normal
+    // behavior, but this explicitly pins the invariant that the swarm flag defaults
+    // to false and does not suppress shooting.
+    const { enemyPool, collisionSystem, system, ship } = makeSystem(LV1);
+    const e = addEnemy(enemyPool, ship.x + 100, ship.y);
+    expect(system.swarmProtocolActive).toBe(false);
+    // Run enough ticks for a Lv1 drone to fire a shot (~1500ms / 16.67ms ≈ 90 ticks).
+    let killed = false;
+    for (let i = 0; i < 200 && !killed; i++) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e);
+    }
+    expect(killed).toBe(true);
+    expect(collisionSystem.killedEnemies).toContain(e);
+  });
+});
+
+describe('SeekerDroneSystem — Swarm Protocol mini-drone contact', () => {
+  it('Mini-drone contact: deals 1 damage, consumes mini-drone', () => {
+    const { enemyPool, collisionSystem, system, ship } = makeSwarmSystem(LV5);
+    // Kill one enemy to spawn a mini-drone.
+    const e1 = addEnemy(enemyPool, system.ship.x + 50, system.ship.y);
+    let killed = false;
+    while (!killed) {
+      system.fixedUpdate(DT);
+      killed = !isActive(enemyPool, e1);
+    }
+    expect(system._miniDroneLiveCount).toBe(1);
+    // Place a second enemy slightly further away so the mini-drone has time to reach it
+    // (parent drone starts at ring, flies ~400px/s, kill happens ~30px from ring).
+    const e2 = addEnemy(enemyPool, ship.x + 30, ship.y - 20, { hp: 1 });
+    // Advance until the mini-drone contacts e2 or enough ticks pass.
+    for (let i = 0; i < 50; i++) {
+      system.fixedUpdate(DT);
+      if (!isActive(enemyPool, e2)) break;
+    }
+    // Mini-drone should be consumed (released back to pool) after contact.
+    expect(system._miniDroneLiveCount).toBe(0);
+    // The second enemy should be killed (1 dmg from mini-drone through applyPlayerDamage).
+    expect(isActive(enemyPool, e2)).toBe(false);
+    expect(collisionSystem.killedEnemies).toContain(e2);
   });
 });

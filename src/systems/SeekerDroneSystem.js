@@ -16,6 +16,13 @@ import {
   SEEKER_DRONE_MAX_COUNT,
   SEEKER_DRONE_POOL_PREWARM,
   SEEKER_DRONE_SHOT_POOL_PREWARM,
+  SWARM_RAM_DAMAGE,
+  SWARM_RESPAWN_MS,
+  SWARM_DRONE_MOVE_SPEED,
+  SWARM_MINI_DRONE_LIFETIME_MS,
+  SWARM_MAX_MINI_DRONES,
+  SWARM_MINI_DRONE_DAMAGE,
+  SWARM_MINI_DRONE_POOL_PREWARM,
 } from '../config/constants.js';
 
 const TWO_PI = Math.PI * 2;
@@ -161,6 +168,41 @@ export class SeekerDroneSystem extends System {
     // CollisionSystem's `_hitEnemies`). Cleared each tick, so it is still reused (no
     // per-tick allocation).
     this._hitEnemies = new Set();
+
+    // Story 12.7 — Swarm Protocol: active flag set by fusion effect handler.
+    // When true, drones perform ram-kill behavior instead of projectile-firing.
+    this.swarmProtocolActive = false;
+    // Flag used to skip the fire cadence loop when swarm is active (drones
+    // fly melee instead of shooting). A boolean, not a count, so a count of
+    // 0 does not re-enable fire when drone count drops to 0 mid-run.
+    this._swarmSkipsFire = false;
+
+    // Story 12.7 — accumulated simulation time since construction (ms). Used for
+    // cooldown timers and mini-drone lifetimes without a global clock.
+    this._simMs = 0;
+
+    // Mini-drone pool.
+    this.miniDronePool = new Pool(createSeekerDrone);
+    // Track live mini-drones separately from pool.activeCount (which also
+    // includes parent drones). Required because the pool is shared.
+    this._miniDroneLiveCount = 0;
+    // Warming a mini-drone: batch-acquire then batch-release (matching the
+    // existing pool prewarm pattern in this constructor) so the factory is
+    // called for every instance.
+    const warmMines = [];
+    for (let i = 0; i < SWARM_MINI_DRONE_POOL_PREWARM; i++) {
+      warmMines.push(this.miniDronePool.acquire());
+    }
+    for (let i = 0; i < warmMines.length; i++) {
+      const md = warmMines[i];
+      md.isMini = true;
+      md.lastKillTimeMs = 0;
+      this.miniDronePool.release(md);
+    }
+
+    // Reusable scratch for mini-drone lifecycle.
+    this._miniDrones = [];
+    this._collectMiniDrone = (md) => this._miniDrones.push(md);
   }
 
   /**
@@ -271,6 +313,9 @@ export class SeekerDroneSystem extends System {
     const count = this._count();
     const period = this._periodMs();
 
+    // Story 12.7 — track sim time for cooldown / lifetime timers.
+    this._simMs += dt;
+
     // (1) Sync the live drone count to the folded count. Acquire from the prewarmed free
     // list while short (seeding each fresh drone's fire accumulator staggered across
     // [0, period) — index-based, deterministic, no rng — so growing the count never
@@ -289,9 +334,12 @@ export class SeekerDroneSystem extends System {
       for (let i = count; i < drones.length; i++) pool.release(drones[i]);
     }
 
-    // (2) Advance the decorative rotation phase (only when drones are owned — an unowned
-    // build leaves it untouched) and reposition every live drone evenly on the ring. Guard
-    // a null ship defensively (no reposition — the drones keep their prior coords).
+    // (2) — MODIFIED for Swarm Protocol cooldown.
+    // Advance the decorative rotation phase (only when drones are owned — an unowned
+    // build leaves it untouched) and reposition every live drone evenly on the ring.
+    // Guard a null ship defensively (no reposition — the drones keep their prior coords).
+    // When swarmProtocolActive, cooldown drones (lastKillTimeMs > 0) are excluded from
+    // ring spacing so live drones spread evenly among them.
     if (count > 0) {
       this._phaseRad +=
         (TWO_PI / (SEEKER_DRONE_ROTATE_PERIOD_MS / 1000)) * (dt / 1000);
@@ -304,12 +352,22 @@ export class SeekerDroneSystem extends System {
     pool.forEachActive(this._collectDrone);
     if (count > 0 && ship) {
       const r = SEEKER_DRONE_ORBIT_RADIUS;
-      const step = TWO_PI / count;
-      const n = Math.min(count, drones.length);
-      for (let i = 0; i < n; i++) {
-        const a = this._phaseRad + i * step;
+      // Count non-cooldown parent drones to compute even ring spacing.
+      let nonCooldownCount = 0;
+      for (let i = 0; i < drones.length; i++) {
+        const d = drones[i];
+        if (!d.isMini && d.lastKillTimeMs === 0) nonCooldownCount++;
+      }
+      const step = TWO_PI / (nonCooldownCount || 1);
+      let ringIdx = 0;
+      for (let i = 0; i < drones.length && ringIdx < nonCooldownCount; i++) {
+        const d = drones[i];
+        if (d.isMini) continue; // skip mini-drones
+        if (d.lastKillTimeMs > 0) continue; // skip cooldown drones
+        const a = this._phaseRad + ringIdx * step;
         drones[i].x = ship.x + r * Math.cos(a);
         drones[i].y = ship.y + r * Math.sin(a);
+        ringIdx++;
       }
     }
 
@@ -333,6 +391,107 @@ export class SeekerDroneSystem extends System {
     // snapshot array is a separate copy, so releasing while iterating IT is safe. A shot
     // spawned later this tick (step 6) is not in this snapshot, so it is first advanced
     // NEXT tick (the FiringSystem convention — a fresh shot never hits the tick it spawns).
+    //
+    // --- Story 12.7 — Swarm Protocol behavior --------------------------
+    // When active, drones fly toward enemies and ram-kill on contact instead of
+    // spawning shots. Drones on cooldown (lastKillTimeMs > 0) are skipped; each tick
+    // checks for expired cooldowns and resets them.
+    //
+    // Cooldown expiry runs independently of enemy presence (so cooldowns don't stall
+    // indefinitely when the last enemy is killed), but swarm movement/ram-kill only
+    // runs when enemies exist.
+    if (this.swarmProtocolActive && count > 0 && ship) {
+      const swarmSpeedPxPerMs = SWARM_DRONE_MOVE_SPEED / 1000; // px/ms
+      const nowMs = this._simMs;
+
+      // (3a) Expiry check: mark cooldown-expired parent drones as active again.
+      // Runs regardless of enemy presence so cooldowns don't stall when enemies run out.
+      for (let i = 0; i < drones.length; i++) {
+        const d = drones[i];
+        if (!d.isMini && d.lastKillTimeMs > 0) {
+          if (nowMs - d.lastKillTimeMs >= SWARM_RESPAWN_MS) {
+            d.lastKillTimeMs = 0;
+          }
+        }
+      }
+
+      // Swarm movement + ram-kill (only when enemies are present).
+      if (this._enemies.length > 0) {
+        this._swarmSkipsFire = true;
+        const enemies = this._enemies;
+        const owners = this._owners;
+
+        let droneKillX = 0;
+        let droneKillY = 0;
+
+        // (3b) Swarm movement + ram-kill.
+        for (let i = 0; i < drones.length; i++) {
+          const d = drones[i];
+          if (d.isMini || d.lastKillTimeMs > 0) continue; // skip cooldown / mini-drones
+
+          // Find nearest live enemy (non-telegraphing).
+          let nearest = null;
+          let nearestD2 = Infinity;
+          for (let j = 0; j < enemies.length; j++) {
+            const e = enemies[j];
+            const ed2 = (e.x - d.x) ** 2 + (e.y - d.y) ** 2;
+            if (ed2 < nearestD2) {
+              nearestD2 = ed2;
+              nearest = e;
+            }
+          }
+
+          if (!nearest) continue; // no target — drift
+
+          const rr = (nearest.radius + d.radius) ** 2;
+          if (nearestD2 <= rr) {
+            // RAM-KILL: contact with enemy through applyPlayerDamage.
+            // Only set cooldown and spawn mini-drone if the enemy was actually killed.
+            const cs = this.collisionSystem;
+            if (cs) {
+              const enemyIdx = this._enemies.indexOf(nearest);
+              const enemyOwner = this._owners[enemyIdx];
+
+              // For armored enemies (finite hp), ram damage is halved to keep
+              // swarm strong but not one-shot armored (swarm power comes from
+              // volume + mini-drone spawns).
+              const hasArmor = Number.isFinite(nearest.hp);
+              const ramDmg = hasArmor ? Math.ceil(SWARM_RAM_DAMAGE / 2) : SWARM_RAM_DAMAGE;
+              const killed = cs.applyPlayerDamage(nearest, enemyOwner, ramDmg);
+              if (killed) {
+                droneKillX = d.x;
+                droneKillY = d.y;
+                d.lastKillTimeMs = nowMs;
+                // Spawn mini-drone if below cap (use dedicated counter for accuracy).
+                if (this._miniDroneLiveCount < SWARM_MAX_MINI_DRONES) {
+                  const mini = this.miniDronePool.acquire();
+                  mini.x = droneKillX;
+                  mini.y = droneKillY;
+                  mini.miniSpawnTimeMs = nowMs;
+                  mini.isMini = true;
+                  this._miniDroneLiveCount++;
+                }
+              }
+            }
+          } else {
+            // Fly toward enemy.
+            const dx = nearest.x - d.x;
+            const dy = nearest.y - d.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 0) {
+              d.x += (dx / dist) * swarmSpeedPxPerMs * dt;
+              d.y += (dy / dist) * swarmSpeedPxPerMs * dt;
+            }
+          }
+        }
+      } else {
+        this._swarmSkipsFire = false;
+      }
+    } else {
+      this._swarmSkipsFire = false;
+    }
+
+    // Shot pool tracking vars (needed by (4)+(5) below).
     const dtSec = dt / 1000;
     const shots = this._shots;
     shots.length = 0;
@@ -393,13 +552,14 @@ export class SeekerDroneSystem extends System {
       }
     }
 
-    // (6) Fire cadence. Per drone, accumulate dt, then while there is a full period of
-    // banked credit AND a target exists, spawn a pooled shot from the drone toward the
-    // nearest enemy (stamping every field — a recycled shot carries stale values). Clamp
-    // the accumulator to `period` so a target-less drone (empty arena) cannot bank unbounded
-    // credit, then fires ONCE the instant a target appears (responsive, never a backlog
-    // burst).
-    if (count > 0 && ship) {
+    // (6) Fire cadence — SKIPPED when swarm protocol is active (drones
+    // fly melee instead of shooting). Uses a separate boolean flag to
+    // avoid re-enabling fire when drone count drops to 0 mid-run.
+    if (this._swarmSkipsFire) {
+      // Do nothing — drones fly melee during swarm.
+    } else {
+      // (6) Fire cadence. Per drone, accumulate dt, then while there is a
+      // full period of banked credit AND a target exists, spawn a pooled shot.
       const homing = this._homing();
       const damage = this._damage();
       for (let i = 0; i < drones.length; i++) {
@@ -440,6 +600,86 @@ export class SeekerDroneSystem extends System {
           d.fireAccumMs -= period;
         }
         if (d.fireAccumMs > period) d.fireAccumMs = period;
+      }
+    }
+
+    // --- Story 12.7 — Mini-drone lifecycle -------------------------------
+    if (this.swarmProtocolActive) {
+      const nowMs = this._simMs;
+      const mDrones = this._miniDrones;
+      mDrones.length = 0;
+      this.miniDronePool.forEachActive(this._collectMiniDrone);
+
+      if (cs && enemies.length > 0 && mDrones.length > 0) {
+        const swarmSpeedPxPerMs = SWARM_DRONE_MOVE_SPEED / 1000;
+        for (let i = mDrones.length - 1; i >= 0; i--) {
+          const md = mDrones[i];
+          if (!md.isMini) continue; // safety: skip non-mini entries
+
+          // (a) Lifetime expiry.
+          if (nowMs - md.miniSpawnTimeMs >= SWARM_MINI_DRONE_LIFETIME_MS) {
+            this.miniDronePool.release(md);
+            this._miniDroneLiveCount--;
+            // O(1) removal: swap-with-last + pop (reverse iteration safe).
+            mDrones[i] = mDrones[mDrones.length - 1];
+            mDrones.pop();
+            continue;
+          }
+
+          // (b) Spawn guard: skip contact detection for first 20ms of life
+          // to prevent hitting corpses at the spawn position.
+          if (nowMs - md.miniSpawnTimeMs < 20) continue;
+
+          // Fly toward nearest enemy.
+          let nearestMd = null;
+          let nearestD2Md = Infinity;
+          for (let j = 0; j < enemies.length; j++) {
+            const e = enemies[j];
+            const ed2 = (e.x - md.x) ** 2 + (e.y - md.y) ** 2;
+            if (ed2 < nearestD2Md) {
+              nearestD2Md = ed2;
+              nearestMd = e;
+            }
+          }
+
+          if (nearestMd) {
+            const rr = (nearestMd.radius + md.radius) ** 2;
+            if (nearestD2Md <= rr) {
+              // Mini-drone contact: deal damage, consume mini-drone.
+              cs.applyPlayerDamage(
+                nearestMd,
+                this._owners[this._enemies.indexOf(nearestMd)],
+                SWARM_MINI_DRONE_DAMAGE,
+              );
+              this.miniDronePool.release(md);
+              this._miniDroneLiveCount--;
+              // O(1) removal: swap-with-last + pop (reverse iteration safe).
+              mDrones[i] = mDrones[mDrones.length - 1];
+              mDrones.pop();
+            } else {
+              const dx = nearestMd.x - md.x;
+              const dy = nearestMd.y - md.y;
+              const dist = Math.hypot(dx, dy);
+              if (dist > 0) {
+                md.x += (dx / dist) * swarmSpeedPxPerMs * dt;
+                md.y += (dy / dist) * swarmSpeedPxPerMs * dt;
+              }
+            }
+          }
+          // No target — drift (already in array, nothing to do).
+        }
+      } else if (!cs || enemies.length === 0) {
+        // No enemies or no collision system: just check lifetime expiry on all mini-drones.
+        for (let i = mDrones.length - 1; i >= 0; i--) {
+          const md = mDrones[i];
+          if (md.isMini && nowMs - md.miniSpawnTimeMs >= SWARM_MINI_DRONE_LIFETIME_MS) {
+            this.miniDronePool.release(md);
+            this._miniDroneLiveCount--;
+            // O(1) removal: swap-with-last + pop (reverse iteration safe).
+            mDrones[i] = mDrones[mDrones.length - 1];
+            mDrones.pop();
+          }
+        }
       }
     }
   }

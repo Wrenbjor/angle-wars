@@ -622,6 +622,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         firingSystem.sunburstActive = true;
       },
     );
+    // Story 12.7 — Swarm Protocol effect wiring. After fusion resolution sets
+    // 'swarm-protocol' in ownedCards, enable ram-kill + mini-drone behavior on
+    // seekerDroneSystem.
+    FusionSystem.registerEffect(
+      'swarm-protocol',
+      () => {
+        seekerDroneSystem.swarmProtocolActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,
