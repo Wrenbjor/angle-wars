@@ -639,6 +639,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         mineLayerSystem.singularityFieldActive = true;
       },
     );
+    // Story 12.10 — Fragmentation Cascade effect wiring.
+    // After fusion resolution sets 'fragmentation-cascade' in ownedCards,
+    // enable the fragment-kill airburst effect on flakSystem.
+    FusionSystem.registerEffect(
+      'fragmentation-cascade',
+      () => {
+        flakSystem.fragCascadeActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,

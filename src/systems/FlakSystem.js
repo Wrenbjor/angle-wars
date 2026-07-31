@@ -11,6 +11,9 @@ import {
   FLAK_FRAGMENT_BASE_DAMAGE,
   FLAK_MAX_LIVE_FRAGMENTS,
   FLAK_FRAGMENT_POOL_PREWARM,
+  FLAK_CASCADE_KILL_FRAGMENTS,
+  FLAK_MAX_CASCADE_FRAGMENTS,
+  FLAK_MAX_CASCADE_KILLS_PER_TICK,
 } from '../config/constants.js';
 
 /**
@@ -68,6 +71,15 @@ export class FlakSystem extends System {
 
     // Per-tick kill guard so an enemy killed by one fragment isn't double-hit in the same tick
     this._killedThisTick = new Set();
+
+    // Story 12.10 — Fragmentation Cascade: active flag set by fusion effect handler.
+    // When true, primary fragments that KILL an enemy trigger an airburst of 2
+    // cascade sub-fragments at the kill position (in addition to any canAirburst behavior).
+    this.fragCascadeActive = false;
+    // Per-tick kill counter for cascade — resets every fixedUpdate.
+    this._cascadeKillsThisTick = 0;
+    // Counter of currently live cascade sub-fragments for NFR11 bounding.
+    this._liveCascadeFragments = 0;
   }
 
   /**
@@ -128,6 +140,8 @@ export class FlakSystem extends System {
     const cs = this.collisionSystem;
 
     this._killedThisTick.clear();
+    // Story 12.10 — Fragmentation Cascade: reset per-tick kill counter.
+    this._cascadeKillsThisTick = 0;
 
     // Materialize combat enemies
     const enemies = this._enemies;
@@ -166,15 +180,27 @@ export class FlakSystem extends System {
             const wasKilled = cs.applyPlayerDamage(e, owners[j], f.damage);
             if (wasKilled) {
               this._killedThisTick.add(e);
+
+              // Story 12.10 — Fragmentation Cascade:
+              // on kill, spawn 2 cascade sub-fragments (one-level cascade)
+              if (this.fragCascadeActive &&
+                  this._cascadeKillsThisTick < FLAK_MAX_CASCADE_KILLS_PER_TICK &&
+                  this._liveCascadeFragments < FLAK_MAX_CASCADE_FRAGMENTS) {
+                this._spawnCascadeFragments(f.x, f.y, f.vx, f.vy);
+                this._cascadeKillsThisTick += 1;
+              }
             }
+            // On hit: release fragment, optionally secondary airburst
             if (f.canAirburst) {
               const fx = f.x;
               const fy = f.y;
               const subMult = Math.max(0, f.damage / FLAK_FRAGMENT_BASE_DAMAGE - 1);
               this.flakPool.release(f);
+              this._releaseCascade(f);
               this.triggerAirburst(fx, fy, 4, subMult, false);
             } else {
               this.flakPool.release(f);
+              this._releaseCascade(f);
             }
             break;
           }
@@ -188,12 +214,57 @@ export class FlakSystem extends System {
             const fy = f.y;
             const subMult = Math.max(0, f.damage / FLAK_FRAGMENT_BASE_DAMAGE - 1);
             this.flakPool.release(f);
+            this._releaseCascade(f);
             this.triggerAirburst(fx, fy, 4, subMult, false);
           } else {
             this.flakPool.release(f);
+            this._releaseCascade(f);
           }
         }
       }
+    }
+  }
+
+  /**
+   * Story 12.10 — Fragmentation Cascade: spawn 2 cascade sub-fragments at the
+   * given position, launched perpendicular to the parent's velocity to avoid
+   * duplicating the parent's arc. Sub-fragments are marked cascadeSub=true so
+   * they do NOT cascade further, bounding the chain to exactly 2 levels.
+   * @private
+   */
+  _spawnCascadeFragments(x, y, parentVx, parentVy) {
+    for (let i = 0; i < FLAK_CASCADE_KILL_FRAGMENTS; i++) {
+      if (this.flakPool.activeCount >= FLAK_MAX_LIVE_FRAGMENTS ||
+          this._liveCascadeFragments >= FLAK_MAX_CASCADE_FRAGMENTS) {
+        break;
+      }
+      // Launch perpendicular to parent velocity (±90°), alternating sides.
+      const sign = i % 2 === 0 ? 1 : -1;
+      const mag = Math.sqrt(parentVx * parentVx + parentVy * parentVy) || FLAK_FRAGMENT_SPEED;
+      const nx = -parentVy / mag * sign;
+      const ny = parentVx / mag * sign;
+      const f = this.flakPool.acquire();
+      f.x = x;
+      f.y = y;
+      f.vx = nx * FLAK_FRAGMENT_SPEED;
+      f.vy = ny * FLAK_FRAGMENT_SPEED;
+      f.damage = FLAK_FRAGMENT_BASE_DAMAGE;
+      f.lifetimeMs = FLAK_FRAGMENT_LIFETIME_MS;
+      f.canAirburst = false;      // sub-fragments never airburst
+      f.cascadeSub = true;        // sub-fragments never cascade on kill
+      this._liveCascadeFragments += 1;
+    }
+  }
+
+  /**
+   * Story 12.10 — Called when a fragment is released back to pool.
+   * Tracks live cascade count so NFR11 cap is accurate.
+   * @param {Object} f Fragment being released
+   * @private
+   */
+  _releaseCascade(f) {
+    if (f.cascadeSub) {
+      this._liveCascadeFragments = Math.max(0, this._liveCascadeFragments - 1);
     }
   }
 }

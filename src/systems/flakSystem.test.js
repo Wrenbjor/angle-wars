@@ -15,6 +15,9 @@ import {
   FLAK_FRAGMENT_LIFETIME_MS,
   FLAK_FRAGMENT_BASE_DAMAGE,
   FLAK_MAX_LIVE_FRAGMENTS,
+  FLAK_CASCADE_KILL_FRAGMENTS,
+  FLAK_MAX_CASCADE_FRAGMENTS,
+  FLAK_MAX_CASCADE_KILLS_PER_TICK,
   ARMORED_HP,
 } from '../config/constants.js';
 
@@ -377,5 +380,200 @@ describe('FlakSystem & Flak Burst Mechanics (Story 11.6)', () => {
     flakSystem.flakPool.forEachActive((f) => { frag = f; });
     expect(frag.x).toBeGreaterThan(0);
     expect(frag.y).toBeGreaterThan(0);
+  });
+
+  // --- Fragmentation Cascade (Story 12.10) ----------------------------------
+
+  it('fragCascadeActive=false: no cascade on kill', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE; // will be killed
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+    expect(flakSystem.flakPool.activeCount).toBe(1);
+
+    flakSystem.fixedUpdate(16.666);
+
+    // 1 kill, 0 cascade sub-fragments
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+    expect(flakSystem.flakPool.activeCount).toBe(0);
+    expect(flakSystem._liveCascadeFragments).toBe(0);
+  });
+
+  it('fragCascadeActive=true: fragment kill spawns 2 cascade sub-fragments', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+    expect(flakSystem.flakPool.activeCount).toBe(1);
+
+    flakSystem.fragCascadeActive = true;
+    flakSystem.fixedUpdate(16.666);
+
+    // 1 kill, 2 cascade sub-fragments spawned
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+    expect(flakSystem.flakPool.activeCount).toBe(2);
+    expect(flakSystem._liveCascadeFragments).toBe(2);
+
+    // Verify cascade sub-fragment properties
+    const cascadeFrags = [];
+    flakSystem.flakPool.forEachActive((f) => {
+      if (f.cascadeSub) {
+        cascadeFrags.push(f);
+      }
+    });
+    expect(cascadeFrags.length).toBe(2);
+    for (const cf of cascadeFrags) {
+      expect(cf.cascadeSub).toBe(true);
+      expect(cf.canAirburst).toBe(false);
+    }
+  });
+
+  it('fragment kills enemy: damage path is normal through applyPlayerDamage', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    seeker.xp = 5;
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+
+    flakSystem.fragCascadeActive = true;
+    flakSystem.fixedUpdate(16.666);
+
+    // Enemy killed via applyPlayerDamage
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+    expect(collisionSystem.killedEnemies[0]).toBe(seeker);
+    expect(collisionSystem.bulletKillCount).toBe(1);
+    expect(enemyPools[0].activeCount).toBe(0); // released to pool
+  });
+
+  it('fragment damages but does not kill: no cascade', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE + 5; // more than fragment damage
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+
+    flakSystem.fragCascadeActive = true;
+    flakSystem.fixedUpdate(16.666);
+
+    // Enemy damaged but not killed, no cascade fires
+    // Fragment is still released on hit (even non-kill)
+    expect(collisionSystem.killedEnemies.length).toBe(0);
+    expect(flakSystem.flakPool.activeCount).toBe(0); // fragment released on hit
+    expect(seeker.hp).toBe(5); // took 10 damage but survived
+    expect(flakSystem._liveCascadeFragments).toBe(0);
+  });
+
+  it('cascade sub-fragment kills: no further cascade (chain depth=1)', () => {
+    // Spawn a primary fragment that kills an enemy, spawning 2 cascade sub-fragments
+    const seeker1 = seekerPool.acquire();
+    seeker1.x = 400;
+    seeker1.y = 300;
+    seeker1.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+
+    flakSystem.fragCascadeActive = true;
+    flakSystem.fixedUpdate(16.666);
+
+    // After tick 1: 1 kill, 2 cascade sub-fragments spawned
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+    expect(flakSystem._liveCascadeFragments).toBe(2);
+    expect(flakSystem._cascadeKillsThisTick).toBe(1);
+
+    // Verify all cascade sub-fragments have cascadeSub=true (proving they CAN'T cascade)
+    let cascadeSubCount = 0;
+    flakSystem.flakPool.forEachActive((f) => {
+      if (f.cascadeSub) cascadeSubCount++;
+    });
+    expect(cascadeSubCount).toBe(2);
+  });
+
+  it('per-tick kill cap: 8 kills only, 9th does not cascade', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+
+    flakSystem.fragCascadeActive = true;
+    flakSystem.fixedUpdate(16.666);
+
+    // 1 kill → 2 cascade sub-fragments
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+    expect(flakSystem._liveCascadeFragments).toBe(2);
+  });
+
+  it('cascade live fragment cap: 48 max, new spawns skipped', () => {
+    // Spawn enemies at each airburst center so kills trigger cascades
+    for (let i = 0; i < 24; i++) {
+      const seeker = seekerPool.acquire();
+      seeker.x = 400 + i * 4;  // spread so multiple can be hit
+      seeker.y = 300;
+      seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    }
+
+    flakSystem.fragCascadeActive = true;
+    // 24 airbursts, each potentially spawning cascades
+    for (let i = 0; i < 24; i++) {
+      flakSystem.triggerAirburst(400 + i * 4, 300, 1, 0, false);
+      flakSystem.fixedUpdate(16.666);
+    }
+
+    // Now trigger another airburst - should hit the cap
+    const seekerLast = seekerPool.acquire();
+    seekerLast.x = 600;
+    seekerLast.y = 300;
+    seekerLast.hp = 10;
+    flakSystem.triggerAirburst(600, 300, 1, 0, false);
+    const beforeLive = flakSystem._liveCascadeFragments;
+    flakSystem.fixedUpdate(16.666);
+
+    // Live cascade count should still be capped
+    expect(flakSystem._liveCascadeFragments).toBeLessThanOrEqual(FLAK_MAX_CASCADE_FRAGMENTS);
+    expect(beforeLive).toBeLessThanOrEqual(FLAK_MAX_CASCADE_FRAGMENTS);
+  });
+
+  it('canAirburst + cascade: both fire on kill (secondary airburst + cascade)', () => {
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    // Primary fragment with canAirburst=true (Lv5)
+    flakSystem.triggerAirburst(400, 300, 1, 0, true);
+    expect(flakSystem.flakPool.activeCount).toBe(1);
+
+    let primaryFrag = null;
+    flakSystem.flakPool.forEachActive((f) => { primaryFrag = f; });
+    expect(primaryFrag.canAirburst).toBe(true);
+
+    flakSystem.fragCascadeActive = true;
+    flakSystem.fixedUpdate(16.666);
+
+    // Both behaviors fire: 4 secondary + 2 cascade = 6 total
+    expect(collisionSystem.killedEnemies.length).toBe(1);
+    // Cascade sub-fragments are 2 of the 6 (rest are secondary airburst fragments)
+    expect(flakSystem._liveCascadeFragments).toBe(2);
+    // All fragments in pool: primary released, secondary airburst spawns 4, cascade spawns 2
+    expect(flakSystem.flakPool.activeCount).toBe(6);
+  });
+
+  it('cascade sub-fragment expires normally: _liveCascadeFragments decrements', () => {
+    // Need an enemy for the kill that spawns cascade fragments
+    const seeker = seekerPool.acquire();
+    seeker.x = 400;
+    seeker.y = 300;
+    seeker.hp = FLAK_FRAGMENT_BASE_DAMAGE;
+    flakSystem.fragCascadeActive = true;
+    flakSystem.triggerAirburst(400, 300, 1, 0, false);
+    flakSystem.fixedUpdate(16.666);
+    expect(flakSystem._liveCascadeFragments).toBe(2);
+
+    // Let them expire
+    flakSystem.fixedUpdate(FLAK_FRAGMENT_LIFETIME_MS);
+
+    expect(flakSystem._liveCascadeFragments).toBe(0);
+    expect(flakSystem.flakPool.activeCount).toBe(0);
   });
 });

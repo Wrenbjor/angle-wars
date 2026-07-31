@@ -1291,6 +1291,19 @@ export const FLAK_MAX_LIVE_FRAGMENTS = 120;
 export const FLAK_FRAGMENT_POOL_PREWARM = 120;
 export const COLOR_FLAK_FRAGMENT = 0xffaa00;
 
+// Fragmentation Cascade (Story 12.10 / Epic 12 — offense Epic)
+// Number of cascade sub-fragments spawned when a primary fragment kills an enemy.
+export const FLAK_CASCADE_KILL_FRAGMENTS = 2;
+// Maximum concurrent live cascade sub-fragments across the entire run (NFR11 bounding).
+export const FLAK_MAX_CASCADE_FRAGMENTS = 48;
+// Pre-warm count for cascade sub-fragments in the pool.
+export const FLAK_FRAGMENT_POOL_PREWARM_CASCADE = 48;
+// Color for cascade sub-fragments (distinct from primary flak fragment color).
+export const COLOR_FLAK_CASCADE = 0xffcc44;
+// Maximum number of fragment-kill cascades allowed per single fixedUpdate tick.
+// Prevents a single-frame runaway cascade that would kill more than ~80 enemies.
+export const FLAK_MAX_CASCADE_KILLS_PER_TICK = 8;
+
 
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type
