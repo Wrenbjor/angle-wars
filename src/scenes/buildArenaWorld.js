@@ -698,6 +698,14 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         stasisLockSystem.active = true;
       },
     );
+    // Story 12.9 — Kaleidoscope effect wiring. After fusion resolution sets
+    // 'kaleidoscope' in ownedCards, enable bullet-split behavior on firingSystem.
+    FusionSystem.registerEffect(
+      'kaleidoscope',
+      () => {
+        firingSystem.kaleidoscopeActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,

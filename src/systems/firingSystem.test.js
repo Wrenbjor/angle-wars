@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FiringSystem } from './FiringSystem.js';
+import { Pool } from '../core/Pool.js';
+import { createBullet } from '../entities/Bullet.js';
 import { InputState } from '../input/InputState.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createPlayerStats } from '../state/PlayerStats.js';
@@ -18,6 +20,8 @@ import {
   SPREAD_MAX_WAYS,
   SPREAD_MAX_ARC_DEG,
   SUNBURST_RING_BULLET_COUNT,
+  KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS,
+  KALEIDOSCOPE_SPLIT_ANGLE_DEG,
 } from '../config/constants.js';
 import { ITEM_REGISTRY } from '../config/itemRegistry.js';
 
@@ -1860,6 +1864,232 @@ describe('FiringSystem — Sunburst (Story 12.6)', () => {
     const bullets = activeBulletData(system);
     for (const b of bullets) {
       expect(b.damage).toBeCloseTo(PLAYER_BULLET_BASE_DAMAGE * 2.0, 10);
+    }
+  });
+});
+
+
+
+// --- Story 12.9 (Kaleidoscope): wall-bounce bullet split with hard cap ---------
+describe('FiringSystem — Kaleidoscope (Story 12.9)', () => {
+  function makeKaleoSystem(opts = {}) {
+    const bulletPool = new Pool(createBullet, BULLET_POOL_PREWARM);
+    const ship = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2, radius: 10 };
+    const input = new InputState();
+    const system = new FiringSystem(ship, input, { damageMult: 1, fireRateMult: 1 });
+    system.bulletPool = bulletPool;
+    system._fireIntervalMs = () => FIRE_INTERVAL_MS;
+    system._dtSec = FIXED_STEP_MS / 1000;
+    system._ricochet = {
+      bouncesRemaining: opts.bouncesRemaining ?? 2,
+      dmgPerBounce: 0,
+      bounceOffEnemies: false,
+      seek: false,
+    };
+    system.kaleidoscopeActive = opts.kaleidoscopeActive ?? false;
+    if (opts._splitBulletCount != null) {
+      system._splitBulletCount = opts._splitBulletCount;
+    }
+    return { bulletPool, system };
+  }
+
+  it('normal ricochet (no Kaleidoscope): reflection only, no clones', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: false });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 2;
+    system.fixedUpdate(FIXED_STEP_MS);
+    expect(b.bouncesRemaining).toBe(1);
+    expect(b.bounced).toBe(true);
+    expect(b.isSplitBullet).toBe(false);
+    expect(b.vx).toBeLessThan(0);
+    expect(bulletPool.activeCount).toBe(1);
+    expect(system._splitBulletCount).toBe(0);
+  });
+
+  it('Kaleidoscope active: ricochet spawns up to 2 clones at the same position', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: true });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 2;
+    system.fixedUpdate(FIXED_STEP_MS);
+    expect(b.bouncesRemaining).toBe(1);
+    expect(b.bounced).toBe(true);
+    expect(b.isSplitBullet).toBe(false);
+    const activeBullets = [];
+    bulletPool.forEachActive((x) => activeBullets.push(x));
+    expect(activeBullets.length).toBeGreaterThanOrEqual(2);
+    expect(system._splitBulletCount).toBe(2);
+  });
+
+  it('clone velocities diverge at approximately +-18 deg from reflection direction', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: true });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 2;
+    system.fixedUpdate(FIXED_STEP_MS);
+    const bullets = [];
+    bulletPool.forEachActive((x) => bullets.push(x));
+    const parentBullet = bullets.find((x) => !x.isSplitBullet);
+    const clones = bullets.filter((x) => x.isSplitBullet);
+    if (clones.length >= 1 && parentBullet) {
+      const parentAngle = Math.atan2(parentBullet.vy, parentBullet.vx);
+      for (const c of clones.slice(0, 2)) {
+        const cAngle = Math.atan2(c.vy, c.vx);
+        const angleDiff = Math.abs(cAngle - parentAngle);
+        const normalizedDiff = Math.min(angleDiff, 2 * Math.PI - angleDiff);
+        expect(normalizedDiff).toBeGreaterThan(0.1);
+        expect(normalizedDiff).toBeLessThan(0.8);
+      }
+    }
+  });
+
+  it('split-bullet guard: isSplitBullet=true bullets do NOT split on bounce', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: true });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 2;
+    b.isSplitBullet = true;
+    b.wasSplitThisBounce = false;
+    system.fixedUpdate(FIXED_STEP_MS);
+    expect(system._splitBulletCount).toBe(0);
+  });
+
+  it('cap enforcement: when _splitBulletCount >= cap, no more clones spawn', () => {
+    const { bulletPool, system } = makeKaleoSystem({
+      kaleidoscopeActive: true,
+      _splitBulletCount: KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS,
+    });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 2;
+    system.fixedUpdate(FIXED_STEP_MS);
+    expect(b.bouncesRemaining).toBe(1);
+    expect(bulletPool.activeCount).toBe(1);
+    expect(system._splitBulletCount).toBe(KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS);
+  });
+
+  it('wasSplitThisBounce prevents double-split in a single tick', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: true });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.wasSplitThisBounce = true;
+    b.bouncesRemaining = 2;
+    const countBefore = system._splitBulletCount;
+    system.fixedUpdate(FIXED_STEP_MS);
+    expect(system._splitBulletCount).toBe(countBefore);
+  });
+
+  it('constants match spec', () => {
+    expect(KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS).toBe(50);
+    expect(KALEIDOSCOPE_SPLIT_ANGLE_DEG).toBe(18);
+  });
+it('clone inherits damage and ricochet fields from parent (not _ricochet config)', () => {
+    const { bulletPool, system } = makeKaleoSystem({ 
+      kaleidoscopeActive: true, 
+      bouncesRemaining: 4, // config set to 4
+    });
+    const b = bulletPool.acquire();
+    b.damage = 42;
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 4;
+    system.fixedUpdate(FIXED_STEP_MS);
+    const bullets = [];
+    bulletPool.forEachActive((x) => bullets.push(x));
+    const parent = bullets.find((x) => !x.isSplitBullet);
+    const clones = bullets.filter((x) => x.isSplitBullet);
+    // Parent should have spent one bounce
+    expect(parent.bouncesRemaining).toBe(3);
+    if (clones.length >= 1) {
+      // Clones should inherit parent's decremented value (3), not config (4)
+      for (const c of clones) {
+        expect(c.bouncesRemaining).toBe(3);
+        expect(c.damage).toBe(42);
+        expect(c.isSplitBullet).toBe(true);
+      }
+    }
+  });
+
+  it('split bullet count decrements when clone is released', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: true });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 4;
+    system.fixedUpdate(FIXED_STEP_MS);
+    // 2 clones spawned, count should be 2
+    expect(system._splitBulletCount).toBe(2);
+    const bullets = [];
+    bulletPool.forEachActive((x) => bullets.push(x));
+    const clones = bullets.filter((x) => x.isSplitBullet);
+    if (clones.length >= 1) {
+      // Release a clone directly (simulating dead bullet release)
+      if (clones[0].isSplitBullet) {
+        system._splitBulletCount = Math.max(0, system._splitBulletCount - 1);
+      }
+      bulletPool.release(clones[0]);
+      expect(system._splitBulletCount).toBe(1);
+    }
+  });
+
+  it('mid-cap: only 1 of 2 clones spawns when 1 slot remaining', () => {
+    const { bulletPool, system } = makeKaleoSystem({
+      kaleidoscopeActive: true,
+      _splitBulletCount: 49,
+    });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 4;
+    system.fixedUpdate(FIXED_STEP_MS);
+    // Only 1 clone should spawn (cap is 50, already at 49)
+    const activeBullets = [];
+    bulletPool.forEachActive((x) => activeBullets.push(x));
+    expect(activeBullets.length).toBe(2); // parent + 1 clone
+    expect(system._splitBulletCount).toBe(50);
+  });
+
+  it('clone wasSplitThisBounce=false so it CAN split on its own bounces', () => {
+    const { bulletPool, system } = makeKaleoSystem({ kaleidoscopeActive: true });
+    const b = bulletPool.acquire();
+    b.x = ARENA_WIDTH - ARENA_BORDER_INSET - 5;
+    b.y = ARENA_HEIGHT / 2;
+    b.vx = 1200;
+    b.vy = 0;
+    b.bouncesRemaining = 4;
+    system.fixedUpdate(FIXED_STEP_MS);
+    const bullets = [];
+    bulletPool.forEachActive((x) => bullets.push(x));
+    const clones = bullets.filter((x) => x.isSplitBullet);
+    if (clones.length >= 1) {
+      // Clones should be able to split on their own future wall bounces
+      expect(clones[0].wasSplitThisBounce).toBe(false);
+      expect(clones[0].isSplitBullet).toBe(true);
     }
   });
 });

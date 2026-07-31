@@ -20,6 +20,8 @@ import {
   SPREAD_MAX_WAYS,
   SPREAD_MAX_ARC_DEG,
   SUNBURST_RING_BULLET_COUNT,
+  KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS,
+  KALEIDOSCOPE_SPLIT_ANGLE_DEG,
 } from '../config/constants.js';
 
 // Degrees → radians, for the volley cone (Story 10.3). Module-level so the conversion
@@ -243,6 +245,16 @@ export class FiringSystem extends System {
         // bullet with no budget (0 = unowned, or exhausted) despawns exactly as pre-11.5.
         if (b.bouncesRemaining > 0) {
           reflectBulletOffWall(b);
+          // Story 12.9 — Kaleidoscope: split on wall bounce.
+          // After a normal ricochet, if Kaleidoscope is active and this is
+          // not a split-only bullet and hasn't already split this bounce,
+          // spawn up to 2 clone bullets diverging from the reflected angle.
+          if (this.kaleidoscopeActive && !b.isSplitBullet && !b.wasSplitThisBounce) {
+            if (this._splitBulletCount < KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS) {
+              b.wasSplitThisBounce = true;
+              this._spawnSplitClones(b);
+            }
+          }
         } else {
           this._expired.push(b);
         }
@@ -280,6 +292,14 @@ export class FiringSystem extends System {
     // Counter of volleys — advances on each cadence interval when sunburst is active.
     // Resets to 0 before each 4th volley's ring (1, 2, 3, 4=ring, repeat).
     this._sunburstVolleyCounter = 0;
+
+    // --- Story 12.9 — Kaleidoscope: active flag set by fusion effect handler.
+    // When true, ricochet bullets that bounce off arena walls spawn two
+    // clone bullets at the same reflected position with divergent angles.
+    this.kaleidoscopeActive = false;
+    // Total count of currently live split bullets in the arena. Incremented
+    // when a clone is spawned, decremented when a split bullet is released.
+    this._splitBulletCount = 0;
 
     // --- Story 10.3 cached per-bullet rotation table ---------------------------
     // Parallel cos/sin buffers holding each bullet's rotation offset from the aim
@@ -570,6 +590,62 @@ export class FiringSystem extends System {
   }
 
   /**
+   * Spawn up to two clone bullets diverging from a reflected bullet's angle.
+   * Clones are obtained from the existing Bullet pool, stamped with ricochet
+   * params, and initialized at the same position with divergent velocities.
+   * Incrementing `_splitBulletCount` tracks live split bullets against the cap.
+   *
+   * The divergent angle is ±KALEIDOSCOPE_SPLIT_ANGLE_DEG from the reflected
+   * direction. This creates a symmetric V-spread that fills a meaningful
+   * portion of the arena.
+   *
+   * @param {{x:number, y:number, vx:number, vy:number, damage:number,
+   *   bouncesRemaining:number, pierceRemaining:number, isFlak:boolean,
+   *   flakFragments:number, flakDamageMult:number, flakSecondaryAirburst:number}} bullet
+   *   The bullet that just bounced — serves as the parent for clones.
+   * @returns {void}
+   * @private
+   */
+  _spawnSplitClones(bullet) {
+    const speed = Math.hypot(bullet.vx, bullet.vy);
+    const angle = Math.atan2(bullet.vy, bullet.vx);
+    const halfAngle = (KALEIDOSCOPE_SPLIT_ANGLE_DEG * Math.PI) / 180;
+
+    for (let i = 0; i < 2; i++) {
+      if (this._splitBulletCount >= KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS) {
+        break;
+      }
+
+      const clone = this.bulletPool.acquire();
+      clone.x = bullet.x;
+      clone.y = bullet.y;
+
+      const cloneAngle = angle + (i === 0 ? halfAngle : -halfAngle);
+      clone.vx = Math.cos(cloneAngle) * speed;
+      clone.vy = Math.sin(cloneAngle) * speed;
+
+      clone.damage = bullet.damage;
+
+      clone.bouncesRemaining = bullet.bouncesRemaining;
+      clone.dmgPerBounce = bullet.dmgPerBounce;
+      clone.bounceOffEnemies = bullet.bounceOffEnemies;
+      clone.seek = bullet.seek;
+      clone.bounced = true;
+
+      clone.pierceRemaining = bullet.pierceRemaining;
+      clone.isFlak = bullet.isFlak;
+      clone.flakFragments = bullet.flakFragments;
+      clone.flakDamageMult = bullet.flakDamageMult;
+      clone.flakSecondaryAirburst = bullet.flakSecondaryAirburst;
+
+      clone.isSplitBullet = true;
+      clone.wasSplitThisBounce = false;
+
+      this._splitBulletCount += 1;
+    }
+  }
+
+  /**
    * Advance one fixed step: integrate + despawn bullets, then spawn at cadence.
    * @param {number} dt Constant fixed-step delta, in milliseconds.
    */
@@ -608,7 +684,11 @@ export class FiringSystem extends System {
     pool.forEachActive(this._collectExpired);
     // Deferred release (second pass — safe to mutate the active set now).
     for (let i = 0; i < this._expired.length; i++) {
-      pool.release(this._expired[i]);
+      const b = this._expired[i];
+      if (b.isSplitBullet) {
+        this._splitBulletCount = Math.max(0, this._splitBulletCount - 1);
+      }
+      pool.release(b);
     }
 
     // 2. Spawn at a fixed cadence while aiming; bullet velocity derives ONLY

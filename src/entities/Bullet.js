@@ -89,6 +89,16 @@ export function createBullet() {
     // >0 means the bullet pierces through enemies, decrementing on each hit.
     // Consumed only when pierceRemaining reaches 0 or it exits the arena.
     pierceRemaining: 0,
+    // Kaleidoscope (Story 12.9): split-bullet tracking
+    // isSplitBullet: true when this bullet was spawned as a clone by
+    //   Kaleidoscope split. Split bullets DO NOT split again (primary
+    //   exponential-growth guard).
+    isSplitBullet: false,
+    // wasSplitThisBounce: true when this bullet was already split as a
+    //   result of its CURRENT bounce off the arena wall. Prevents
+    //   multi-split on corner bounces or grazing reflections that
+    //   trigger the wall handler multiple times.
+    wasSplitThisBounce: false,
   };
 }
 

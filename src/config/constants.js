@@ -1302,6 +1302,20 @@ export const RICOCHET_MAX_BOUNCES = 16;
 // (+25%), so no authored build reaches it. Not a balance lever.
 export const RICOCHET_DMG_PER_BOUNCE_MAX = 4;
 
+// --- Kaleidoscope (Story 12.9 / Epic 12 — offense Epic) ---------------------
+// Maximum number of live split bullets that can exist simultaneously.
+// Enforces NFR11 bounding on the exponential split mechanic. Without a
+// cap this could grow unbounded via recursive wall bounces: each ricochet
+// of an original bullet can spawn up to 2 clones, and if clones could also
+// split that would be 2^n exponential growth. 50 is generous while keeping
+// the framerate budget.
+export const KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS = 50;
+
+// Divergence angle for each split clone in degrees relative to the reflected
+// velocity direction. ±18° creates a symmetric V-spread that fills a
+// meaningful portion of the arena without being purely random.
+export const KALEIDOSCOPE_SPLIT_ANGLE_DEG = 18;
+
 // --- Flak Burst (Story 11.6) ------------------------------------------------
 // Flak Burst turns every Nth bullet into an airburst shell that detonates on enemy impact
 // or wall contact into a radial cluster of fragments. Active live fragments are capped at
