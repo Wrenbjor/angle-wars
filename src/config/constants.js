@@ -1304,6 +1304,15 @@ export const COLOR_FLAK_CASCADE = 0xffcc44;
 // Prevents a single-frame runaway cascade that would kill more than ~80 enemies.
 export const FLAK_MAX_CASCADE_KILLS_PER_TICK = 8;
 
+// --- Critical Resonance (Story 12.11 / Epic 12 — offense Epic) ---------------
+// Fusion: Overcharge Lv5 + any 2 offense Lv5.
+// Per-hit crit chance for Critical Resonance bullets.
+export const CRITICAL_RESONANCE_CRIT_CHANCE = 0.20;
+// Critical damage multiplier: dmg × this on a crit.
+export const CRITICAL_RESONANCE_CRIT_MULT = 3.0;
+// XP refunded per crit kill (applied to scoreState.xp).
+export const CRITICAL_RESONANCE_XP_REFUND = 1;
+
 
 // --- Scoring / run economy --------------------------------------------------
 // Base score awarded per Blue Seeker kill. This is the enemy's own per-type

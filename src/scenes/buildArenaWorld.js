@@ -119,15 +119,21 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   world.addEntity(ship);
   const inputState = new InputState();
 
-  // Runtime player-stat modifier store (Story 10.1): folded from the owned build on
-  // each card pick (LevelUpSystem, wired far below), read by the item gameplay seams
-  // (Epic 10.2–10.5). Plain data with NO dependencies, so it is created here — above
-  // the movement + firing systems — purely so the ONE instance can be threaded into
-  // their constructors (Story 10.2: fire cadence + per-bullet damage; Story 10.5:
-  // Afterburner's moveSpeedMult). The fold mutates this object IN PLACE, so every
-  // consumer holding this reference sees an upgrade with no system reconstruction.
-  // Run-scoped, never touched by death.
-  const playerStats = createPlayerStats();
+   // Runtime player-stat modifier store (Story 10.1): folded from the owned build on
+   // each card pick (LevelUpSystem, wired far below), read by the item gameplay seams
+   // (Epic 10.2–10.5). Plain data with NO dependencies, so it is created here — above
+   // the movement + firing systems — purely so the ONE instance can be threaded into
+   // their constructors (Story 10.2: fire cadence + per-bullet damage; Story 10.5:
+   // Afterburner's moveSpeedMult). The fold mutates this object IN PLACE, so every
+   // consumer holding this reference sees an upgrade with no system reconstruction.
+   // Run-scoped, never touched by death.
+   const playerStats = createPlayerStats();
+   // Run-scoped card-progression state (Story 8.3): card ownership + the placeholder
+   // debug stat. Also needed EARLY so FiringSystem can stamp Critical Resonance
+   // resonance flags on bullets (Story 12.11). Plain-data object with no dependencies;
+   // the LevelUpSystem (below) mutates it on a card selection. Never touched by the
+   // death path, so it resets on a fresh run and survives a non-final death.
+   const progressionState = createProgressionState();
 
   const playerMovementSystem = new PlayerMovementSystem(
     ship,
@@ -144,7 +150,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // Added after movement so bullets spawn from the ship's post-move position
   // this tick. Owns its own bullet pool (not world.entities). Reads the SHARED
   // playerStats store (Story 10.2) for its effective cadence + stamped bullet damage.
-  const firingSystem = new FiringSystem(ship, inputState, playerStats);
+  // Story 12.11: fusionState (progressionState) is passed so the FiringSystem can
+  // stamp resinanceActive on each bullet when Critical Resonance is fused.
+  const firingSystem = new FiringSystem(ship, inputState, playerStats, progressionState);
   world.addSystem(firingSystem);
 
   // --- Enemies ------------------------------------------------------------
@@ -178,22 +186,16 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // where a segment was destroyed the prior tick.
   const snakeSystem = new SnakeSystem(playerStats, _rng);
   world.addSystem(snakeSystem);
-  // The shared run-economy and player-lifecycle states are created HERE (Story 6.3),
-  // before the enemy-section systems that need them. Both are plain-data objects with
-  // no dependencies; nothing reads them until later systems run. The MirrorReflector
-  // needs BOTH (a center-destroy credits scoreState.score; a weight-kill sets
-  // playerState.pendingDeath), so their creation moved up from the Scoring/Black-Hole
-  // sections to keep the one shared instance flowing into every consumer.
-  const scoreState = createScoreState();
-  const playerState = createPlayerState();
-  // Run-scoped card-progression state (Story 8.3): card ownership + the placeholder
-  // debug stat. Built beside scoreState/playerState — a plain-data object with no
-  // dependencies; the LevelUpSystem (below) mutates it on a card selection. Never
-  // touched by the death path, so it resets on a fresh run and survives a non-final
-  // death (mirrors scoreState.xp).
-  const progressionState = createProgressionState();
-  // (playerStats — the runtime modifier store that used to be created here — now
-  // lives above the Firing section so the ONE instance can be passed into
+   // The shared run-economy and player-lifecycle states are created HERE (Story 6.3),
+   // before the enemy-section systems that need them. Both are plain-data objects with
+   // no dependencies; nothing reads them until later systems run. The MirrorReflector
+   // needs BOTH (a center-destroy credits scoreState.score; a weight-kill sets
+   // playerState.pendingDeath), so their creation moved up from the Scoring/Black-Hole
+   // sections to keep the one shared instance flowing into every consumer.
+   const scoreState = createScoreState();
+   const playerState = createPlayerState();
+   // (playerStats — the runtime modifier store that used to be created here — now
+   // lives above the Firing section so the ONE instance can be passed into
   // FiringSystem's constructor. Same object, same lifetime; only the creation point
   // moved. LevelUpSystem still folds into it below.)
   // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
@@ -303,6 +305,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   const collisionSystem = new CollisionSystem(
     firingSystem.bulletPool,
     enemyPools,
+    scoreState, // Story 12.11: for XP refund on crit kills
   );
   world.addSystem(collisionSystem);
   // Late-bind the collision system into the SnakeSystem now that it exists (the
@@ -648,6 +651,16 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         flakSystem.fragCascadeActive = true;
       },
     );
+    // Story 12.11 — Critical Resonance effect wiring.
+    // After fusion resolution sets 'critical-resonance' in ownedCards,
+    // the FiringSystem reads fusionState directly (no handler state needed).
+    FusionSystem.registerEffect(
+      'critical-resonance',
+      () => {
+        // The FiringSystem already checks fusionState.ownedCards['critical-resonance']
+        // on each bullet spawn, so no additional flag-setting is required here.
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,
@@ -732,6 +745,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // Story 12.8 — wire gridFieldSystem into mineLayerSystem for singularity field
   // implosion ripple emission.
   mineLayerSystem.gridFieldSystem = gridFieldSystem;
+  // Story 12.11 — wire gridFieldSystem into collisionSystem for Critical Resonance
+  // ripple emission.
+  collisionSystem.gridFieldSystem = gridFieldSystem;
 
   // --- Pooled particle system (Story 4.3) ---------------------------------
   // Registered LAST — after GridFieldSystem — so within every fixed tick each

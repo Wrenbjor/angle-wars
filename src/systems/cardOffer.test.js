@@ -337,7 +337,8 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
     // banished (Stories 11.1–11.5 added orbit-blade, seeker-drones, mine-layer,
     // piercing-lance, ricochet-rounds; Story 11.10 added chrono-field — so banishing 12
     // leaves 2), the offer must be the 2 remaining ELIGIBLE cards — never a banished card
-    // padded back in.
+    // padded back in. Story 12.11 added critical-resonance (Fusion Epic); banishing
+    // it keeps the eligible count at exactly 2.
     const banishedIds = new Set([
       'overcharge',
       'nanite-shield',
@@ -347,6 +348,7 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
       'piercing-lance',
       'ricochet-rounds',
       'flak-burst',
+      'critical-resonance',
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',

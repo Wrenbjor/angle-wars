@@ -100,15 +100,17 @@ function describeBadStore(v) {
 // guards in the same shape as FIRE_INTERVAL_FLOOR_MS, never balance levers.
 export class FiringSystem extends System {
   /**
-   * @param {{x:number,y:number,radius:number}} ship Aim origin (fire from nose).
-   * @param {import('../input/InputState.js').InputState} inputState Aim channel.
-   * @param {Object<string, number>} [playerStats] The shared runtime modifier store
-   *   (Story 10.1). Optional: OMITTED (undefined/null) keeps the exact pre-10.2 base
-   *   behavior, so a two-arg caller is unchanged. A PRESENT argument that is not a
-   *   plain object throws.
-   * @throws {TypeError} when `playerStats` is present but not a plain object.
-   */
-  constructor(ship, inputState, playerStats = null) {
+    * @param {{x:number,y:number,radius:number}} ship Aim origin (fire from nose).
+    * @param {import('../input/InputState.js').InputState} inputState Aim channel.
+    * @param {Object<string, number>} [playerStats] The shared runtime modifier store
+    *   (Story 10.1). Optional: OMITTED (undefined/null) keeps the exact pre-10.2 base
+    *   behavior, so a two-arg caller is unchanged. A PRESENT argument that is not a
+    *   plain object throws.
+    * @param {Object} [fusionState] Optional fusion state (Story 12.11) — read to stamp
+    *   the resonanceActive flag on bullets. Passed by buildArenaWorld as progressionState.
+    * @throws {TypeError} when `playerStats` is present but not a plain object.
+    */
+   constructor(ship, inputState, playerStats = null, fusionState = null) {
     super();
     this.ship = ship;
     this.input = inputState;
@@ -146,6 +148,9 @@ export class FiringSystem extends System {
     // holding the reference is what makes a mid-run upgrade visible here with no
     // reconstruction.
     this.playerStats = playerStats != null ? playerStats : null;
+    // Story 12.11 — fusion state: read to check if critical-resonance is owned,
+    // which determines whether to stamp resonanceActive on each bullet at spawn.
+    this.fusionState = fusionState != null ? fusionState : null;
 
     /** Pool of bullets — the single source of active/free truth (public for
      *  Story 1.4 collision). */
@@ -505,6 +510,10 @@ export class FiringSystem extends System {
       stampRicochet(b, this._ricochet);
       this._stampFlak(b);
       b.pierceRemaining = 2;
+      // Story 12.11 — Critical Resonance: stamp resonance flag on ring bullets.
+      if (this.fusionState && this.fusionState.ownedCards['critical-resonance']) {
+        b.resonanceActive = true;
+      }
       this.shotsFiredCount++;
     }
   }
@@ -671,9 +680,14 @@ export class FiringSystem extends System {
           b.vx = input.aimX * BULLET_SPEED;
           b.vy = input.aimY * BULLET_SPEED;
           b.damage = damage; // Story 10.2 — stamped ONCE, at spawn
-          stampRicochet(b, this._ricochet); // Story 11.5 — stamped from the LIVE fold
-          this._stampFlak(b); // Story 11.6 — stamped from the LIVE fold
-          this.shotsFiredCount++; // Story 4.5 read-only bullet counter
+            stampRicochet(b, this._ricochet); // Story 11.5 — stamped from the LIVE fold
+            this._stampFlak(b); // Story 11.6 — stamped from the LIVE fold
+            // Story 12.11 — Critical Resonance: stamp resonance flag on the bullet.
+            // When fused, CollisionSystem will roll for crit on every hit.
+            if (this.fusionState && this.fusionState.ownedCards['critical-resonance']) {
+              b.resonanceActive = true;
+            }
+            this.shotsFiredCount++; // Story 4.5 read-only bullet counter
         } else {
           // SPREAD VOLLEY — fan `ways` bullets across the cached cone. Each bullet's
           // direction is the LIVE aim unit vector rotated by its own cached offset (the
@@ -698,6 +712,11 @@ export class FiringSystem extends System {
             // the volley, or a recycled instance leaks the previous shot's bounce state.
             stampRicochet(b, this._ricochet);
             this._stampFlak(b);
+            // Story 12.11 — Critical Resonance: stamp resonance flag on the bullet.
+            // When fused, CollisionSystem will roll for crit on every hit.
+            if (this.fusionState && this.fusionState.ownedCards['critical-resonance']) {
+              b.resonanceActive = true;
+            }
             this.shotsFiredCount++;
           }
         }

@@ -705,6 +705,25 @@ export const ITEM_REGISTRY = Object.freeze([
     // actual fusion consumption; this only registers the metadata.
     fusion: Object.freeze({ partner: 'overcharge', epic: 'fragmentation-cascade' }),
   }),
+  Object.freeze({
+    id: 'critical-resonance',
+    name: 'Critical Resonance',
+    title: 'Critical Resonance',
+    track: 'offense',
+    rarity: 1,
+    maxLevel: 1,
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: '20% crit for 3× damage; crits emit a shockwave and refund 1 XP',
+        stats: Object.freeze({}),
+      }),
+    ]),
+    // Not fusable itself.
+    fusion: null,
+    // No offer guarantee — Critical Resonance is drawn purely via fusion.
+    guaranteeFromLevel: null,
+  }),
 
   // --- Defense ---
   Object.freeze({

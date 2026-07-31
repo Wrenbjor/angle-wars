@@ -4,6 +4,9 @@ import {
   PLAYER_BULLET_BASE_DAMAGE,
   PLAYER_BULLET_MIN_DAMAGE,
   HP_EPSILON,
+  CRITICAL_RESONANCE_CRIT_CHANCE,
+  CRITICAL_RESONANCE_CRIT_MULT,
+  CRITICAL_RESONANCE_XP_REFUND,
 } from '../config/constants.js';
 
 // CollisionSystem — bullet↔enemy destruction across all archetype pools (Phaser-free).
@@ -47,6 +50,15 @@ export class CollisionSystem extends System {
     this.bulletPool = bulletPool;
     this.enemyPools = enemyPools;
     this.flakSystem = null;
+
+    // Story 12.11 — late-bound references for Critical Resonance.
+    // scoreState: for XP refund on crit kills.
+    this.scoreState = null;
+    // gridFieldSystem: for ripple emission on crit hits.
+    this.gridFieldSystem = null;
+    // _critHits: parallel Map from enemy → {x, y} for crit kills that need ripple + XP.
+    // Carries hit-position info from pass 1 into pass 2's kill handling.
+    this._critHits = new Map();
 
 
     // Reusable scratch: materialized active sets, refilled each tick. `_owners`
@@ -213,14 +225,19 @@ export class CollisionSystem extends System {
           // one-hit-one-unit contract is preserved for every such bullet. CLAMP: a
           // finite, positive but TINY damage is floored at PLAYER_BULLET_MIN_DAMAGE,
           // because `hp -= dmg` makes no progress at all once dmg falls below
-          // ulp(hp) — an unclamped 1e-12 leaves an armored enemy alive after every
+          // ulp(hp) — an unclampable 1e-12 leaves an armored enemy alive after every
           // hit, forever, while still crediting the DPS governor a hit per tick.
-          hitEnemies.set(
-            s,
-            Number.isFinite(b.damage) && b.damage > 0
-              ? Math.max(PLAYER_BULLET_MIN_DAMAGE, b.damage)
-              : PLAYER_BULLET_BASE_DAMAGE,
-          );
+          let hitDmg = Number.isFinite(b.damage) && b.damage > 0
+            ? Math.max(PLAYER_BULLET_MIN_DAMAGE, b.damage)
+            : PLAYER_BULLET_BASE_DAMAGE;
+          // Story 12.11 — Critical Resonance: on hit, check for crit.
+          // If the bullet has resonanceActive and the roll succeeds, apply 3× damage
+          // and track the hit position for ripple emission in pass 2.
+          if (b.resonanceActive && Math.random() < CRITICAL_RESONANCE_CRIT_CHANCE) {
+            hitDmg *= CRITICAL_RESONANCE_CRIT_MULT;
+            this._critHits.set(s, { x: s.x, y: s.y });
+          }
+          hitEnemies.set(s, hitDmg);
           // Flak Burst (Story 11.6): airburst on enemy hit
           if (b.isFlak) {
             b.isFlak = false;
@@ -305,7 +322,22 @@ export class CollisionSystem extends System {
       if (hitEnemies.has(s)) {
         // The hitting bullet's damage (Story 10.2), routed through the SHARED helper
         // so a bullet and a dash resolve armor identically (Story 10.5).
-        this.applyPlayerDamage(s, owners[j], hitEnemies.get(s));
+        const wasKilled = this.applyPlayerDamage(s, owners[j], hitEnemies.get(s));
+        // Story 12.11 — Critical Resonance: emit grid ripple and refund XP for crit kills.
+        if (wasKilled) {
+          const critInfo = this._critHits.get(s);
+          if (critInfo) {
+            // Emit a grid ripple at the crit hit position.
+            if (this.gridFieldSystem) {
+              this.gridFieldSystem._emit(critInfo.x, critInfo.y);
+            }
+            // Refund XP for the crit kill.
+            if (this.scoreState) {
+              this.scoreState.xp += CRITICAL_RESONANCE_XP_REFUND;
+            }
+            this._critHits.delete(s);
+          }
+        }
       }
     }
     for (const b of hitBullets) {

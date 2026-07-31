@@ -28,6 +28,7 @@ const EXPECTED_IDS = [
   'piercing-lance',
   'ricochet-rounds',
   'flak-burst',
+  'critical-resonance',
   'nanite-shield',
   'afterburner',
   'gravity-well',
@@ -47,6 +48,8 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
   });
 
   it('every entry carries the full definition shape', () => {
+    // Fusion Epics (maxLevel: 1) are excluded from the maxLevel check.
+    const fusionEpicIds = new Set(['critical-resonance']);
     for (const item of ITEM_REGISTRY) {
       expect(typeof item.id).toBe('string');
       expect(item.id.length).toBeGreaterThan(0);
@@ -62,7 +65,9 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
       expect(['offense', 'defense']).toContain(item.track);
       expect(typeof item.rarity).toBe('number');
       expect(item.rarity).toBeGreaterThan(0);
-      expect(item.maxLevel).toBe(ITEM_MAX_LEVEL);
+      if (!fusionEpicIds.has(item.id)) {
+        expect(item.maxLevel).toBe(ITEM_MAX_LEVEL);
+      }
     }
   });
 
@@ -72,7 +77,10 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     // every stats map is a FROZEN PLAIN object whose every value is a finite number.
     // A per-item numbers pin lives in each item's own story suite; this is the shape
     // contract the fold depends on for ALL of them, Overcharge included.
+    // Fusion Epics (maxLevel: 1) are excluded — they have only one level.
+    const fusionEpicIds = new Set(['critical-resonance']);
     for (const item of ITEM_REGISTRY) {
+      if (fusionEpicIds.has(item.id)) continue;
       expect(item.levels).toHaveLength(ITEM_MAX_LEVEL);
       item.levels.forEach((lvl, i) => {
         expect(lvl.level).toBe(i + 1);
@@ -101,7 +109,11 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     // Afterburner still carried `{}`; its replacement is the complement — nothing in
     // the registry contributes nothing to the fold any more. An item re-emptied by a
     // bad merge would be silently inert in play, and this catches it.
+    // Fusion Epics (critical-resonance) are excluded — they don't modify stats, they add
+    // gameplay behavior via system wiring.
+    const fusionEpicIds = new Set(['critical-resonance']);
     for (const item of ITEM_REGISTRY) {
+      if (fusionEpicIds.has(item.id)) continue;
       for (const lvl of item.levels) {
         expect(
           Object.keys(lvl.stats).length,
@@ -134,7 +146,12 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
   });
 
   it('carries fusion metadata ({partner, epic}) on every Epic-10 item', () => {
+    // Epic-10 items are the first four entries in the registry.
+    // Epic-12 Fusion Epics (critical-resonance) have fusion: null and are excluded.
+    const epic10Ids = ['overcharge', 'spread-cannon', 'orbit-blade', 'seeker-drones',
+      'mine-layer', 'piercing-lance', 'ricochet-rounds', 'flak-burst'];
     for (const item of ITEM_REGISTRY) {
+      if (!epic10Ids.includes(item.id)) continue;
       expect(item.fusion).not.toBeNull();
       expect(typeof item.fusion.partner).toBe('string');
       expect(typeof item.fusion.epic).toBe('string');
@@ -236,6 +253,7 @@ describe('getItem / getItemsByTrack', () => {
       'piercing-lance',
       'ricochet-rounds',
       'flak-burst',
+      'critical-resonance',
     ]);
 
     expect(defense.map((i) => i.id)).toEqual([
