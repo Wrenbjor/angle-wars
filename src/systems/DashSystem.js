@@ -3,6 +3,10 @@ import {
   DASH_DURATION_MS,
   DASH_COOLDOWN_FLOOR_MS,
   DASH_CONTACT_DAMAGE,
+  SLIPSTREAM_DECOY_DURATION_MS,
+  SLIPSTREAM_DECOY_PULL_RADIUS,
+  SLIPSTREAM_DECOY_PULL_STRENGTH,
+  SLIPSTREAM_DECOY_EXPLODE_RADIUS,
 } from '../config/constants.js';
 
 // DashSystem — the Afterburner dash's RUNTIME state (Story 10.5 / PRD §13.4),
@@ -115,6 +119,20 @@ export class DashSystem extends System {
      * sweep below), so the two uses share one monotonic counter.
      */
     this.dashSeq = 0;
+
+    // Story 12.12 — Slipstream: true when the fusion has been resolved.
+    // Controls whether the dash spawns a taunting decoy on completion.
+    this.slipstreamActive = false;
+
+    // Decoy state (all private; zero-allocation).
+    /** True while a decoy is alive. */
+    this._decoyActive = false;
+    /** Decoy center X, set when decoy spawns. */
+    this._decoyX = 0;
+    /** Decoy center Y, set when decoy spawns. */
+    this._decoyY = 0;
+    /** Milliseconds remaining in the decoy lifecycle. */
+    this._decoyRemainingMs = 0;
 
     // Reusable sweep scratch so the damage path allocates nothing: the materialized
     // active enemies and a parallel array of each one's owning pool (so a kill's
@@ -266,6 +284,38 @@ export class DashSystem extends System {
       }
     }
 
+    // (2.5) Story 12.12 — Slipstream: decoy lifecycle. Spawn decoy right when
+    // the dash window closes (active → false transition), then tick down the
+    // decoy timer, apply gravity pull to nearby enemies, and explode on expiry.
+    if (this.slipstreamActive) {
+      // Check for the dash → closed transition to spawn or replace the decoy.
+      if (this.active === false) {
+        if (this._decoyActive) {
+          // Replace existing decoy: update position and reset timer.
+          this._decoyX = this.ship.x;
+          this._decoyY = this.ship.y;
+          this._decoyRemainingMs = SLIPSTREAM_DECOY_DURATION_MS;
+        } else {
+          // Spawn decoy at ship position.
+          this._decoyActive = true;
+          this._decoyX = this.ship.x;
+          this._decoyY = this.ship.y;
+          this._decoyRemainingMs = SLIPSTREAM_DECOY_DURATION_MS;
+        }
+      }
+
+      if (this._decoyActive) {
+        this._decoyRemainingMs -= dt;
+        if (this._decoyRemainingMs <= 0) {
+          this._decoyExplode();
+          this._decoyActive = false;
+          this._decoyRemainingMs = 0;
+        } else {
+          this._decoyPull(dt);
+        }
+      }
+    }
+
     // (3) Lv4+ contact sweep, over the window's ticks only.
     if (this.movementActive && this._damageEnabled()) {
       this._sweep();
@@ -355,6 +405,91 @@ export class DashSystem extends System {
       if (dx * dx + dy * dy <= r * r) {
         e._dashHitSeq = seq;
         cs.applyPlayerDamage(e, owners[i], DASH_CONTACT_DAMAGE);
+      }
+    }
+  }
+
+  /**
+   * Decoy pull: nearby enemies within SLIPSTREAM_DECOY_PULL_RADIUS are nudged
+   * toward the decoy position using an inverse-distance falloff (same formula
+   * as BlackHoleSystem._pull, but scaled for the weaker decoy effect).
+   *
+   * Telegraphing enemies (telegraphMs > 0) are inert — they are not pulled.
+   * Allocates nothing; uses the existing _enemies scratch array.
+   * @param {number} dt Fixed-step delta in milliseconds (required for dtSec).
+   * @private
+   */
+  _decoyPull(dt) {
+    if (this._decoyRemainingMs <= 0) return;
+    const pools = this.enemyPools;
+    if (!pools) return;
+    const enemies = this._enemies;
+    enemies.length = 0;
+    for (let p = 0; p < pools.length; p++) {
+      this._currentPool = pools[p];
+      pools[p].forEachActive(this._collectEnemy);
+    }
+    const decoyX = this._decoyX;
+    const decoyY = this._decoyY;
+    const radius = SLIPSTREAM_DECOY_PULL_RADIUS;
+    const strength = SLIPSTREAM_DECOY_PULL_STRENGTH;
+    const dtSec = dt / 1000;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      // Telegraphing enemies are inert to decoy pull (same guard as BlackHole).
+      if (e.telegraphMs > 0) continue;
+      const dx = decoyX - e.x;
+      const dy = decoyY - e.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 0 && d < radius) {
+        const pull = strength * (1 - d / radius) * dtSec;
+        e.x += dx * (pull / d);
+        e.y += dy * (pull / d);
+      }
+    }
+  }
+
+  /**
+   * Decoy explosion: when the decoy timer expires, release all non-telegraphing
+   * enemies within SLIPSTREAM_DECOY_EXPLODE_RADIUS to their pools and append
+   * them to collisionSystem.killedEnemies, so scoring / XP / orbs fire
+   * identically to any other kill.
+   *
+   * Telegraphing enemies (telegraphMs > 0) are immune — they survive the
+   * explosion.
+   *
+   * Allocates nothing; follows the BombSystem.detonateAt pattern for enemy
+   * release and kill registration.
+   * @private
+   */
+  _decoyExplode() {
+    const cs = this.collisionSystem;
+    if (!cs) return;
+    const pools = this.enemyPools;
+    if (!pools) return;
+    const enemies = this._enemies;
+    const owners = this._owners;
+    enemies.length = 0;
+    owners.length = 0;
+    for (let p = 0; p < pools.length; p++) {
+      this._currentPool = pools[p];
+      pools[p].forEachActive(this._collectEnemy);
+    }
+    const explosionX = this._decoyX;
+    const explosionY = this._decoyY;
+    const radius = SLIPSTREAM_DECOY_EXPLODE_RADIUS;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      // Telegraphing enemies are immune to the explosion.
+      if (e.telegraphMs > 0) continue;
+      const dx = explosionX - e.x;
+      const dy = explosionY - e.y;
+      if (dx * dx + dy * dy <= radius * radius) {
+        const owner = owners[i];
+        if (owner) {
+          owner.release(e);
+        }
+        cs.killedEnemies.push(e);
       }
     }
   }

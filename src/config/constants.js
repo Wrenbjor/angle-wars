@@ -837,6 +837,22 @@ export const PHASE_INTEGRITY_DURATION_MS = 2000;
 // 1 per fixed step, routed through applyPlayerDamage for armor/scoring consistency.
 export const PHASE_CONTACT_DAMAGE = 1;
 
+// --- Slipstream (Story 12.12 / Epic 12 — defense Epic) --------------------------
+// When Slipstream is fused (Afterburner Lv5 + Nanite Shield Lv3), each dash
+// spawns a taunting decoy at the dash end position. The decoy persists for
+// SLIPSTREAM_DECOY_DURATION_MS, pulls nearby enemies, then explodes clearing
+// all enemies in SLIPSTREAM_DECOY_EXPLODE_RADIUS.
+export const SLIPSTREAM_DECOY_DURATION_MS = 3000;
+// Radius (px) within which the decoy pulls enemies toward it.
+export const SLIPSTREAM_DECOY_PULL_RADIUS = 180;
+// Pull strength (px/s) at the center of the decoy range, scaling down to zero
+// at SLIPSTREAM_DECOY_PULL_RADIUS. Weaker than the Black Hole (300) because
+// the decoy is temporary and should not overwhelm the player's own movement.
+export const SLIPSTREAM_DECOY_PULL_STRENGTH = 180;
+// Radius (px) of the explosion at decoy expiry. Enemies within this radius
+// are one-shot (released from their pool + killedEnemies).
+export const SLIPSTREAM_DECOY_EXPLODE_RADIUS = 220;
+
 // --- Afterburner (Story 10.5 / PRD §13.4) -----------------------------------
 // The defense item that makes the ship FASTER (a `moveSpeedMult` the movement
 // system applies to BOTH its thrust acceleration and its speed cap) and, from Lv2,

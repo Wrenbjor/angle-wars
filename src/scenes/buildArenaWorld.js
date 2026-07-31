@@ -661,6 +661,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         // on each bullet spawn, so no additional flag-setting is required here.
       },
     );
+    // Story 12.12 — Slipstream effect wiring.
+    // After fusion resolution sets 'slipstream' in ownedCards,
+    // enable the decoy-spawning behavior on dashSystem.
+    FusionSystem.registerEffect(
+      'slipstream',
+      () => {
+        dashSystem.slipstreamActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,
