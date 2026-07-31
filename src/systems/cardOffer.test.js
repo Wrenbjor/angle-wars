@@ -349,6 +349,7 @@ describe('drawCardOffer — Story 10.1 exclusion purity (maxed / remnant / short
       'ricochet-rounds',
       'flak-burst',
       'critical-resonance',
+      'revenant',
       'gravity-well',
       'reinforced-hull',
       'bomb-capacitor',

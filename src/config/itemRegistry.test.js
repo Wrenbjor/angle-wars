@@ -29,6 +29,7 @@ const EXPECTED_IDS = [
   'ricochet-rounds',
   'flak-burst',
   'critical-resonance',
+  'revenant',
   'nanite-shield',
   'afterburner',
   'gravity-well',
@@ -49,7 +50,7 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
 
   it('every entry carries the full definition shape', () => {
     // Fusion Epics (maxLevel: 1) are excluded from the maxLevel check.
-    const fusionEpicIds = new Set(['critical-resonance']);
+    const fusionEpicIds = new Set(['critical-resonance', 'revenant']);
     for (const item of ITEM_REGISTRY) {
       expect(typeof item.id).toBe('string');
       expect(item.id.length).toBeGreaterThan(0);
@@ -78,7 +79,7 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     // A per-item numbers pin lives in each item's own story suite; this is the shape
     // contract the fold depends on for ALL of them, Overcharge included.
     // Fusion Epics (maxLevel: 1) are excluded — they have only one level.
-    const fusionEpicIds = new Set(['critical-resonance']);
+    const fusionEpicIds = new Set(['critical-resonance', 'revenant']);
     for (const item of ITEM_REGISTRY) {
       if (fusionEpicIds.has(item.id)) continue;
       expect(item.levels).toHaveLength(ITEM_MAX_LEVEL);
@@ -109,9 +110,9 @@ describe('ITEM_REGISTRY — the four Epic-10 item definitions', () => {
     // Afterburner still carried `{}`; its replacement is the complement — nothing in
     // the registry contributes nothing to the fold any more. An item re-emptied by a
     // bad merge would be silently inert in play, and this catches it.
-    // Fusion Epics (critical-resonance) are excluded — they don't modify stats, they add
+    // Fusion Epics (critical-resonance, revenant) are excluded — they don't modify stats, they add
     // gameplay behavior via system wiring.
-    const fusionEpicIds = new Set(['critical-resonance']);
+    const fusionEpicIds = new Set(['critical-resonance', 'revenant']);
     for (const item of ITEM_REGISTRY) {
       if (fusionEpicIds.has(item.id)) continue;
       for (const lvl of item.levels) {
@@ -257,6 +258,7 @@ describe('getItem / getItemsByTrack', () => {
     ]);
 
     expect(defense.map((i) => i.id)).toEqual([
+      'revenant',
       'nanite-shield',
       'afterburner',
       'gravity-well',

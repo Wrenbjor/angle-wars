@@ -724,6 +724,24 @@ export const ITEM_REGISTRY = Object.freeze([
     // No offer guarantee — Critical Resonance is drawn purely via fusion.
     guaranteeFromLevel: null,
   }),
+  Object.freeze({
+    id: 'revenant',
+    name: 'Revenant',
+    title: 'Revenant',
+    track: 'defense',
+    rarity: 1,
+    maxLevel: 1,
+    levels: Object.freeze([
+      Object.freeze({
+        level: 1,
+        desc: 'On death: 900-radius smart-bomb detonates and multiplier is kept',
+        stats: Object.freeze({}),
+      }),
+    ]),
+    fusion: null,
+    // No offer guarantee — Revenant is drawn purely via fusion.
+    guaranteeFromLevel: null,
+  }),
 
   // --- Defense ---
   Object.freeze({

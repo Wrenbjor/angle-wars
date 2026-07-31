@@ -85,19 +85,24 @@ export class PlayerDeathSystem extends System {
    *   existing caller and test stub is unchanged and a build with no dash behaves
    *   byte-for-byte as it did pre-10.5.
    * @param {{extraLives?:number, respawnIFramesMs?:number, softenMultiplierReset?:number}|null} [playerStats=null]
-   *   Optional runtime player-stat modifier store (Story 11.8 — Reinforced Hull).
-   *   When provided, extra lives delta is synced on level up, respawn i-frames scale by
-   *   `respawnIFramesMs`, and `resetMultiplier` receives `playerStats` to soften reset.
-   */
-  constructor(
-    ship,
-    enemyPools,
-    playerState,
-    scoreState = null,
-    shieldSystem = null,
-    dashSystem = null,
-    playerStats = null,
-  ) {
+    *   Optional runtime player-stat modifier store (Story 11.8 — Reinforced Hull).
+    *   When provided, extra lives delta is synced on level up, respawn i-frames scale by
+    *   `respawnIFramesMs`, and `resetMultiplier` receives `playerStats` to soften reset.
+    * @param {Object|null} [bombSystem=null]
+    *   Optional BombSystem reference (Story 12.14 — Revenant). When Revenant is fused,
+    *   this is used to detonate a smart-bomb at the death point. Optional (slot 8) so
+    *   every existing caller and test stub is unchanged.
+    */
+   constructor(
+     ship,
+     enemyPools,
+     playerState,
+     scoreState = null,
+     shieldSystem = null,
+     dashSystem = null,
+     playerStats = null,
+     bombSystem = null,
+   ) {
     super();
     this.ship = ship;
     this.enemyPools = enemyPools;
@@ -106,6 +111,10 @@ export class PlayerDeathSystem extends System {
     this.shieldSystem = shieldSystem;
     this.dashSystem = dashSystem;
     this.playerStats = playerStats;
+    // Story 12.14 — Revenant: references BombSystem to fire death-bomb on death.
+    this.bombSystem = bombSystem;
+    // Story 12.14 — Revenant: true when fused. Triggers a 900-radius bomb on death.
+    this.revenantActive = false;
 
     const rawInit = playerStats?.extraLives;
     this._syncedExtraLives = Number.isFinite(rawInit) ? Math.max(0, Math.min(3, Math.floor(rawInit))) : 0;
@@ -321,8 +330,16 @@ export class PlayerDeathSystem extends System {
     // dies — both a respawning death and the final game-over death. Guarded
     // so a system built without a score surface still runs the death flow
     // unchanged. Score itself is untouched: you keep the points, lose the streak.
+    // Story 12.14 (Revenant): if active, skip multiplier reset and keep the
+    // full streak — the player "accepts death" and gets a 900-radius bomb
+    // as the payoff. Only multiplierKills is cleared (streak counter restarts).
     if (this.scoreState) {
-      resetMultiplier(this.scoreState, this.playerStats);
+      if (this.revenantActive) {
+        this.scoreState.multiplierKills = 0;
+        this.bombSystem?.detonateAt(this.deathX, this.deathY);
+      } else {
+        resetMultiplier(this.scoreState, this.playerStats);
+      }
     }
   }
 }

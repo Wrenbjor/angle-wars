@@ -837,6 +837,13 @@ export const PHASE_INTEGRITY_DURATION_MS = 2000;
 // 1 per fixed step, routed through applyPlayerDamage for armor/scoring consistency.
 export const PHASE_CONTACT_DAMAGE = 1;
 
+// --- Revenant (Story 12.14 / Epic 12 — defense Epic) ----------------------------
+// Effective radius of the Revenant death-bomb detonation.
+// The re-use of BOMB_SHOCKWAVE_MAX_RADIUS means the radius IS the standard
+// smart-bomb radius (scaled by Bomb Capacitor's bombRadiusMult if owned).
+// This constant is documented for readability and future tuning hooks.
+export const REVENANT_EXPLODE_RADIUS = 900;
+
 // --- Slipstream (Story 12.12 / Epic 12 — defense Epic) --------------------------
 // When Slipstream is fused (Afterburner Lv5 + Nanite Shield Lv3), each dash
 // spawns a taunting decoy at the dash end position. The decoy persists for

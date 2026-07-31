@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { PlayerDeathSystem } from './PlayerDeathSystem.js';
 import { NaniteShieldSystem } from './NaniteShieldSystem.js';
 import { DashSystem } from './DashSystem.js';
@@ -1451,5 +1451,192 @@ describe('PlayerDeathSystem — Phase Armor (Story 12.5)', () => {
     // Normal death: life deducted.
     expect(h.playerState.lives).toBe(PLAYER_START_LIVES - 1);
     expect(h.system.deathSeq).toBe(1);
+  });
+});
+
+// --- Revenant (Story 12.14 / Epic 12 — defense Epic) ------------------------
+
+describe('PlayerDeathSystem — Revenant (Story 12.14)', () => {
+  // Build a ship, seeker pool, player state, score state, bombSystem stub,
+  // and a death system with revenantActive and bombSystem wired in.
+  function makeRevenantSystem() {
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const playerState = createPlayerState();
+    const scoreState = createScoreState();
+    const bombSystem = {
+      detonateAt: vi.fn(),
+    };
+    const system = new PlayerDeathSystem(
+      ship,
+      [enemyPool],
+      playerState,
+      scoreState,
+      null, // shieldSystem
+      null, // dashSystem
+      null, // playerStats
+      bombSystem, // bombSystem (Story 12.14)
+    );
+    return { ship, enemyPool, playerState, scoreState, bombSystem, system };
+  }
+
+  it('revenantActive=false: no bomb fires on death', () => {
+    const { ship, enemyPool, scoreState, bombSystem, system } = makeRevenantSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // overlapping → death
+    scoreState.multiplier = 5;
+
+    system.fixedUpdate(DT);
+
+    // Normal death: life lost, multiplier reset, no bomb.
+    expect(bombSystem.detonateAt).not.toHaveBeenCalled();
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+  });
+
+  it('revenantActive=true: bomb fires at death point on death', () => {
+    const { ship, enemyPool, playerState, scoreState, bombSystem, system } =
+      makeRevenantSystem();
+    ship.x = 250;
+    ship.y = 175;
+    addSeeker(enemyPool, 250, 175); // overlapping → death
+    system.revenantActive = true;
+
+    system.fixedUpdate(DT);
+
+    // Bomb detonates at the death point (ship position BEFORE respawn).
+    expect(bombSystem.detonateAt).toHaveBeenCalledWith(250, 175);
+  });
+
+  it('revenantActive=true: multiplier is kept (not reset to 1×)', () => {
+    const { ship, enemyPool, playerState, scoreState, bombSystem, system } =
+      makeRevenantSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // overlapping → death
+    system.revenantActive = true;
+    scoreState.multiplier = 8;
+    scoreState.multiplierKills = 3;
+
+    system.fixedUpdate(DT);
+
+    // Multiplier stays at 8×, multiplierKills reset to 0.
+    expect(scoreState.multiplier).toBe(8);
+    expect(scoreState.multiplierKills).toBe(0);
+    // Life lost, respawn occurs.
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+  });
+
+  it('revenantActive=false: multiplier resets to 1× (regression check)', () => {
+    const { ship, enemyPool, scoreState, system } = makeRevenantSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100); // overlapping → death
+    scoreState.multiplier = 6;
+    scoreState.multiplierKills = 4;
+
+    system.fixedUpdate(DT);
+
+    // Standard death: full multiplier reset.
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.multiplierKills).toBe(0);
+  });
+
+  it('revenantActive=true + game-over: bomb fires and game-over still sets', () => {
+    const { ship, enemyPool, playerState, scoreState, bombSystem, system } =
+      makeRevenantSystem();
+    playerState.lives = 1; // last life
+    ship.x = 90;
+    ship.y = 610;
+    addSeeker(enemyPool, 90, 610);
+    system.revenantActive = true;
+    scoreState.multiplier = 10;
+
+    system.fixedUpdate(DT);
+
+    // Bomb fires even on game-over.
+    expect(bombSystem.detonateAt).toHaveBeenCalledWith(90, 610);
+    expect(playerState.lives).toBe(0);
+    expect(playerState.gameOver).toBe(true);
+    // Multiplier technically kept (not reset), but run is over.
+    expect(scoreState.multiplier).toBe(10);
+  });
+
+  it('bombSystem=null: no crash when revenantActive=true', () => {
+    const ship = createPlayerShip();
+    const enemyPool = new Pool(createSeeker);
+    const playerState = createPlayerState();
+    const scoreState = createScoreState();
+    // No bombSystem (null).
+    const system = new PlayerDeathSystem(
+      ship,
+      [enemyPool],
+      playerState,
+      scoreState,
+      null,
+      null,
+      null,
+      null, // bombSystem = null
+    );
+    system.revenantActive = true;
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+
+    // Should not throw even though bombSystem is null (optional chaining handles it).
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+  });
+
+  it('existing contact-death behavior unchanged (negative control)', () => {
+    const { ship, enemyPool, playerState, scoreState, system } = makeRevenantSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+    scoreState.multiplier = 7;
+    scoreState.multiplierKills = 3;
+
+    system.fixedUpdate(DT);
+
+    expect(playerState.lives).toBe(PLAYER_START_LIVES - 1);
+    expect(playerState.gameOver).toBe(false);
+    expect(playerState.invulnMs).toBe(PLAYER_INVULN_MS);
+    expect(ship.x).toBe(CENTER_X);
+    expect(ship.y).toBe(CENTER_Y);
+    expect(scoreState.multiplier).toBe(SCORE_MULTIPLIER_START);
+    expect(scoreState.multiplierKills).toBe(0);
+  });
+
+  it('revenantActive=true: death point latched correctly for bomb origin', () => {
+    const { ship, enemyPool, playerState, scoreState, bombSystem, system } =
+      makeRevenantSystem();
+    ship.x = 400;
+    ship.y = 200;
+    addSeeker(enemyPool, 400, 200); // overlapping → death
+    system.revenantActive = true;
+
+    system.fixedUpdate(DT);
+
+    // Death point latches the ship position at contact, BEFORE respawn.
+    expect(system.deathX).toBe(400);
+    expect(system.deathY).toBe(200);
+    // Bomb fires at that same point.
+    expect(bombSystem.detonateAt).toHaveBeenCalledWith(400, 200);
+  });
+
+  it('revenantActive=true at multiplier 1×: no-op multiplier, bomb still fires', () => {
+    const { ship, enemyPool, scoreState, bombSystem, system } = makeRevenantSystem();
+    ship.x = 100;
+    ship.y = 100;
+    addSeeker(enemyPool, 100, 100);
+    system.revenantActive = true;
+    scoreState.multiplier = 1;
+
+    system.fixedUpdate(DT);
+
+    expect(bombSystem.detonateAt).toHaveBeenCalled();
+    expect(scoreState.multiplier).toBe(1); // no change to make
   });
 });

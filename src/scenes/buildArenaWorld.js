@@ -670,6 +670,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         dashSystem.slipstreamActive = true;
       },
     );
+    // Story 12.14 — Revenant effect wiring.
+    // After fusion resolution sets 'revenant' in ownedCards,
+    // enable the death-bomb + multiplier-kept behavior on playerDeathSystem.
+    FusionSystem.registerEffect(
+      'revenant',
+      () => {
+        playerDeathSystem.revenantActive = true;
+      },
+    );
     const levelUpSystem = new LevelUpSystem(
       levelSystem,
       playerState,
@@ -724,6 +733,8 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     dashSystem,
     // Story 11.8: Reinforced Hull stats (extra lives, respawn i-frames, multiplier softening).
     playerStats,
+    // Story 12.14 — Revenant.
+    bombSystem,
   );
   world.addSystem(playerDeathSystem);
 

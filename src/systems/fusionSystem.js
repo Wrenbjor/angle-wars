@@ -175,7 +175,7 @@ export const FUSION_RECIPES = Object.freeze([
     requiredLevel: 3,
     epicType: 'revenant',
     name: 'Revenant',
-    effect: () => {}, // Stub — Epic 12.15 wires death-armor-fuse effect
+    effect: () => {}, // Story 12.14 — wires revenantActive on playerDeathSystem
   }),
   Object.freeze({
     id: 'chain-reaction',
