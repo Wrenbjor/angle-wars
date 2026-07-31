@@ -13,6 +13,8 @@ import {
   SHIP_RADIUS,
   XP_MULTIPLIER_DIVISOR,
   ARENA_BORDER_INSET,
+  EVENT_HORIZON_PULL_STRENGTH,
+  EVENT_HORIZON_PULL_RADIUS,
 } from '../config/constants.js';
 
 const DT = FIXED_STEP_MS;
@@ -508,5 +510,263 @@ describe('XpOrbSystem — Gravity Well mechanics (Story 11.7)', () => {
     collision.bulletKillCount = 0;
     system.fixedUpdate(DT);
     expect(enemy.y).toBeLessThan(550);
+  });
+});
+
+// --- Story 12.13 — Event Horizon: passive gravity pull toward ship ---
+describe('XpOrbSystem — Event Horizon (Story 12.13)', () => {
+  it('eventHorizonActive pulls enemies toward ship', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 300, y: 300, telegraphMs: 0 }]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    const dtSec = DT / 1000;
+    const d = 100;
+    const expectedPull = EVENT_HORIZON_PULL_STRENGTH * (1 - d / EVENT_HORIZON_PULL_RADIUS) * dtSec;
+
+    system.fixedUpdate(DT);
+
+    expect(enemy.x).toBeCloseTo(300 + expectedPull, 6);
+    expect(enemy.y).toBe(300);
+  });
+
+  it('eventHorizonActive does not pull telegraphing enemies', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 300, y: 300, telegraphMs: 500 }]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    system.fixedUpdate(DT);
+
+    expect(enemy.x).toBe(300);
+    expect(enemy.y).toBe(300);
+  });
+
+  it('eventHorizonActive does not pull enemies outside radius', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 700, y: 300, telegraphMs: 0 }]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    system.fixedUpdate(DT);
+
+    expect(enemy.x).toBe(700);
+    expect(enemy.y).toBe(300);
+  });
+
+  it('eventHorizonActive does not pull the ship', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 300, y: 300, telegraphMs: 0 }]);
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    const shipX = ship.x;
+    const shipY = ship.y;
+    system.fixedUpdate(DT);
+
+    expect(ship.x).toBe(shipX);
+    expect(ship.y).toBe(shipY);
+  });
+
+  it('eventHorizonActive + Gravity Well pull coexist', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 2.5,
+      gravityWellHoming: 1,
+      xpValueMult: 1.25,
+      gravityWellPullEnemies: 1,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 350, y: 350, telegraphMs: 0 }]);
+    const enemy = enemies[0];
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    // Place an orbital orb so Gravity Well orb-pull is active.
+    const orb = seedOrb(system, 350, 300, 1);
+
+    system.fixedUpdate(DT);
+
+    // Enemy was pulled by both: Event Horizon toward ship (400, 300) AND
+    // Gravity Well toward orb (350, 300). Both act together.
+    // Event Horizon: dx=50, dy=-50 from enemy, distance ~70.7, pull ~12*(1-70.7/200)*dt
+    // Gravity Well: dx=0, dy=-50 from enemy to orb, distance 50, pull ~40*(1-50/100)*dt
+    // Both should contribute to movement — enemy.x and enemy.y both change.
+    expect(enemy.x).toBeGreaterThan(350); // pulled right by EH toward ship
+    expect(enemy.y).toBeLessThan(350); // pulled down by both EH and GW toward ship/orb
+  });
+
+  it('null ship guard: does not throw', () => {
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 300, y: 300, telegraphMs: 0 }]);
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      null,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
+    expect(enemies[0].x).toBe(300);
+    expect(enemies[0].y).toBe(300);
+  });
+
+  it('null enemyPools guard: does not throw', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      null,
+    );
+    system.eventHorizonActive = true;
+
+    expect(() => system.fixedUpdate(DT)).not.toThrow();
+  });
+
+  it('NaN dt guard: no NaN propagates into enemy coordinates', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 300, y: 300, telegraphMs: 0 }]);
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    system.fixedUpdate(NaN);
+
+    expect(Number.isFinite(enemies[0].x)).toBe(true);
+    expect(Number.isFinite(enemies[0].y)).toBe(true);
+  });
+
+  it('negative/invalid dt: does not modify enemy positions', () => {
+    const ship = fakeShip(400, 300);
+    const playerStats = {
+      xpPickupRadiusMult: 1,
+      gravityWellHoming: 0,
+      xpValueMult: 1,
+      gravityWellPullEnemies: 0,
+    };
+    const { pool: enemyPool, enemies } = createFakeEnemyPool([{ x: 300, y: 300, telegraphMs: 0 }]);
+    const system = new XpOrbSystem(
+      fakeCollision(),
+      fakeBlackHole(),
+      fakeMirror(),
+      ship,
+      fakeScore(),
+      XP_ORB_MAX,
+      playerStats,
+      [enemyPool],
+    );
+    system.eventHorizonActive = true;
+
+    system.fixedUpdate(-1);
+
+    expect(enemies[0].x).toBe(300);
+    expect(enemies[0].y).toBe(300);
   });
 });

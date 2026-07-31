@@ -860,6 +860,26 @@ export const SLIPSTREAM_DECOY_PULL_STRENGTH = 180;
 // are one-shot (released from their pool + killedEnemies).
 export const SLIPSTREAM_DECOY_EXPLODE_RADIUS = 220;
 
+// --- Event Horizon (Story 12.13 / Epic 12 — defense Epic) ------------------------
+// Strength (px/s) of the permanent weak gravity field that passively pulls
+// enemies toward the ship. Weaker than Gravity Well Lv5 active pull because
+// this is ambient — it should draw enemies in gently, not overwhelm the arena.
+// Gravity Well Lv5 active pull (with orbs active) can be as high as 40 px/s;
+// this sits at 12 px/s so coexistence is additive not explosive.
+export const EVENT_HORIZON_PULL_STRENGTH = 12;
+// Radius (px) of the passive gravity field. Enemies within this radius are
+// pulled toward the ship each tick. Sized large enough to consistently influence
+// enemy positioning but small enough that the strength remains feel at max range.
+export const EVENT_HORIZON_PULL_RADIUS = 200;
+// Bullet curvature: the maximum velocity rotation angle (radians) per tick toward
+// the nearest combat enemy. At 0.03 rad (~1.7°) per fixed step, a bullet's path
+// curves gradually over ~30ms — enough to nudge a slightly-missed shot toward a
+// nearby enemy without making the weapon homing. This is a nudge, not a snap.
+export const EVENT_HORIZON_BULLET_CURVE_STRENGTH = 1;
+// The actual rotation magnitude is `min(angle_to_nearest, EVENT_HORIZON_BULLET_CURVE_ANGLE_MAX_RAD)`
+// so the nudge is always bounded.
+export const EVENT_HORIZON_BULLET_CURVE_ANGLE_MAX_RAD = 0.03;
+
 // --- Afterburner (Story 10.5 / PRD §13.4) -----------------------------------
 // The defense item that makes the ship FASTER (a `moveSpeedMult` the movement
 // system applies to BOTH its thrust acceleration and its speed cap) and, from Lv2,

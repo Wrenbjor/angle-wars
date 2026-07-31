@@ -22,6 +22,7 @@ import {
   SUNBURST_RING_BULLET_COUNT,
   KALEIDOSCOPE_MAX_LIVE_SPLIT_BULLETS,
   KALEIDOSCOPE_SPLIT_ANGLE_DEG,
+  EVENT_HORIZON_BULLET_CURVE_ANGLE_MAX_RAD,
 } from '../config/constants.js';
 
 // Degrees → radians, for the volley cone (Story 10.3). Module-level so the conversion
@@ -218,6 +219,36 @@ export class FiringSystem extends System {
       if (this._seekActive && b.seek && b.bounced) {
         this._steerSeek(b);
       }
+      // Story 12.13 — Event Horizon: curvature. Small velocity rotation toward
+      // the nearest combat enemy, preserving bullet speed.
+      if (this._eventHorizonActive && this.enemyPools && this._enemies.length > 0) {
+        const target = this._nearestEnemy(b.x, b.y);
+        if (target) {
+          const dx = target.x - b.x;
+          const dy = target.y - b.y;
+          const d = Math.hypot(dx, dy);
+          if (d > 0) {
+            // Rotation angle toward target, capped at EVENT_HORIZON_BULLET_CURVE_ANGLE_MAX_RAD.
+            const targetAngle = Math.atan2(dy, dx);
+            const bulletAngle = Math.atan2(b.vy, b.vx);
+            let angleDiff = targetAngle - bulletAngle;
+            // Normalize angleDiff to [-π, π].
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            const nudge = Math.max(-EVENT_HORIZON_BULLET_CURVE_ANGLE_MAX_RAD,
+                   Math.min(EVENT_HORIZON_BULLET_CURVE_ANGLE_MAX_RAD, angleDiff));
+            if (Math.abs(nudge) > 1e-9) {
+              // Rotate velocity by nudge radians.
+              const cosN = Math.cos(nudge);
+              const sinN = Math.sin(nudge);
+              const vx = b.vx * cosN - b.vy * sinN;
+              const vy = b.vx * sinN + b.vy * cosN;
+              b.vx = vx;
+              b.vy = vy;
+            }
+          }
+        }
+      }
       b.x += b.vx * this._dtSec;
       b.y += b.vy * this._dtSec;
       if (isOutsideArena(b.x, b.y)) {
@@ -300,6 +331,10 @@ export class FiringSystem extends System {
     // Total count of currently live split bullets in the arena. Incremented
     // when a clone is spawned, decremented when a split bullet is released.
     this._splitBulletCount = 0;
+
+    // Story 12.13 — Event Horizon: true when fused. Bullets curve slightly
+    // toward the nearest combat enemy during integration.
+    this._eventHorizonActive = false;
 
     // --- Story 10.3 cached per-bullet rotation table ---------------------------
     // Parallel cos/sin buffers holding each bullet's rotation offset from the aim
@@ -673,6 +708,18 @@ export class FiringSystem extends System {
       const pools = this.enemyPools;
       for (let p = 0; p < pools.length; p++) {
         pools[p].forEachActive(this._collectEnemy);
+      }
+    }
+
+    // Story 12.13 — Event Horizon: bullet curvature. Collect the nearest
+    // non-telegraphing combat enemy so each bullet can query it during
+    // integration. Only materialize when Event Horizon is active.
+    if (this._eventHorizonActive && this.enemyPools) {
+      const enemies = this._enemies;
+      enemies.length = 0;
+      for (let p = 0; p < this.enemyPools.length; p++) {
+        const pool = this.enemyPools[p];
+        if (pool) pool.forEachActive(this._collectEnemy);
       }
     }
 

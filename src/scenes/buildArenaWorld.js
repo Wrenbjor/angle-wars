@@ -671,6 +671,16 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
         // on each bullet spawn, so no additional flag-setting is required here.
       },
     );
+    // Story 12.13 — Event Horizon: passive gravity pull + bullet curvature.
+    FusionSystem.registerEffect(
+      'event-horizon',
+      () => {
+        // Enable the passive gravity field on XpOrbSystem.
+        if (xpOrbSystem) xpOrbSystem.eventHorizonActive = true;
+        // Enable bullet curvature on FiringSystem.
+        if (firingSystem) firingSystem._eventHorizonActive = true;
+      },
+    );
     // Story 12.12 — Slipstream effect wiring.
     // After fusion resolution sets 'slipstream' in ownedCards,
     // enable the decoy-spawning behavior on dashSystem.

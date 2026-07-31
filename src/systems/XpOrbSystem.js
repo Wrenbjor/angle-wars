@@ -13,6 +13,8 @@ import {
   GRAVITY_WELL_HOMING_SPEED,
   GRAVITY_WELL_PULL_RADIUS,
   GRAVITY_WELL_PULL_STRENGTH,
+  EVENT_HORIZON_PULL_STRENGTH,
+  EVENT_HORIZON_PULL_RADIUS,
   ARENA_WIDTH,
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
@@ -140,6 +142,10 @@ export class XpOrbSystem extends System {
       if (e == null || e.telegraphMs > 0) return;
       this._enemies.push(e);
     };
+
+    // Story 12.13 — Event Horizon: true when fused. The gravity field always
+    // pulls enemies toward the ship, independent of active XP orbs.
+    this.eventHorizonActive = false;
   }
 
   /**
@@ -294,6 +300,40 @@ export class XpOrbSystem extends System {
         if (pool) pool.forEachActive(this._collectEnemy);
       }
       if (enemies.length > 0) this._applyPull(active, dtSec);
+    }
+
+    // (1b) Story 12.13 — Event Horizon: passive gravity field pulls non-telegraphing
+    //      enemies toward the ship regardless of active XP orbs. Additive to the
+    //      existing Gravity Well pull-towards-orbs, so Lv5 Gravity Well + Event
+    //      Horizon creates a double-attraction field.
+    if (this.eventHorizonActive && this.enemyPools && ship && dtSec > 0) {
+      const enemies = this._enemies;
+      enemies.length = 0;
+      for (let p = 0; p < this.enemyPools.length; p++) {
+        const pool = this.enemyPools[p];
+        if (pool) pool.forEachActive(this._collectEnemy);
+      }
+      const pullStrength = EVENT_HORIZON_PULL_STRENGTH;
+      const radius = EVENT_HORIZON_PULL_RADIUS;
+      const px = ship.x;
+      const py = ship.y;
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        // Telegraphing enemies are inert to the gravity field.
+        if (e.telegraphMs > 0) continue;
+        const dx = px - e.x;
+        const dy = py - e.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 0 && d < radius) {
+          const pull = pullStrength * (1 - d / radius) * dtSec;
+          const clampedPull = Math.min(pull, GRAVITY_WELL_PULL_STRENGTH * dtSec);
+          e.x += (dx / d) * clampedPull;
+          e.y += (dy / d) * clampedPull;
+          // Boundary clamp (mirror the orb-pull guard).
+          e.x = Math.max(ARENA_BORDER_INSET + 0.1, Math.min(ARENA_WIDTH - ARENA_BORDER_INSET - 0.1, e.x));
+          e.y = Math.max(ARENA_BORDER_INSET + 0.1, Math.min(ARENA_HEIGHT - ARENA_BORDER_INSET - 0.1, e.y));
+        }
+      }
     }
 
     if (ship && active.length > 0) {

@@ -165,7 +165,7 @@ export const FUSION_RECIPES = Object.freeze([
     requiredLevel: 3,
     epicType: 'event-horizon',
     name: 'Event Horizon',
-    effect: () => {}, // Stub — Epic 12.13 wires gravity field effect
+    effect: () => {}, // Story 12.13 — wires passive gravity + bullet curvature
   }),
   Object.freeze({
     id: 'revenant',
