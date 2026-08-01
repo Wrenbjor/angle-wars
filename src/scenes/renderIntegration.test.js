@@ -290,6 +290,14 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     expect(arenaSrc).toMatch(/'Combine mastered items into an Epic power\.'/);
   });
 
+  it('VG1d: queries fusion readiness through the exported module API', () => {
+    expect(arenaSrc).toMatch(
+      /import\s*\{\s*getReadyFusion\s*\}\s*from\s*['"]\.\.\/systems\/fusionSystem\.js['"]/,
+    );
+    expect(arenaSrc).toMatch(/\?\s*getReadyFusion\(this\.progressionState,/);
+    expect(arenaSrc).not.toMatch(/this\.fusionSystem\.getReadyFusion\(/);
+  });
+
   it('VG5: hides the whole level-up overlay on the paused early-return (no stacked modal)', () => {
     // A forced pause can fire mid-selection; without this hide the card modal renders
     // stacked UNDER the PAUSED overlay. Dropping the sequence re-introduces that stack.

@@ -175,6 +175,7 @@ import {
   AUDIO_SFX_KILL_MAX_PER_FRAME,
   AUDIO_SFX_SPAWN_MAX_PER_FRAME,
 } from '../config/constants.js';
+import { getReadyFusion } from '../systems/fusionSystem.js';
 
 // ArenaScene — the playable stage (shell version).
 //
@@ -1786,7 +1787,7 @@ export class ArenaScene extends Phaser.Scene {
     // Check if a fusion condition is satisfied; if so, show the badge.
     // Edge-detect so the audio sting fires once when the condition becomes true.
     const readyFusion = this.fusionSystem
-      ? this.fusionSystem.getReadyFusion(this.progressionState, undefined, this.levelUpSystem.registry)
+      ? getReadyFusion(this.progressionState, undefined, this.levelUpSystem.registry)
       : null;
     this._prevFusionReady = readyFusion !== null;
 
