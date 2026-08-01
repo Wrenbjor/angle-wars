@@ -207,15 +207,19 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.enemyPools).not.toContain(ctx.blackHoleSystem.holePool);
   });
 
-  it('wires the Mirror Reflector (Story 6.3): 5th spawnable, pool absent from enemyPools/deathPools, shared state', () => {
+  it('wires the Mirror Reflector as a queued-bomb-only target outside collision/death pools', () => {
     const ctx = buildArenaWorld();
     // Returned as its own handle.
     expect(ctx.mirrorReflectorSystem).toBeDefined();
-    // The reflector pool is deliberately in NEITHER shared circle-collision list — it
-    // is immune to gunfire (CollisionSystem), bombs (BombSystem clears enemyPools), and
-    // black-hole absorption, and its lethal region is the weights, not a uniform circle.
+    // The reflector remains outside ordinary circle seams while the queued player-bomb
+    // composition alone includes it.
     expect(ctx.enemyPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
     expect(ctx.deathPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
+    expect(ctx.bombSystem.enemyPools).toBe(ctx.enemyPools);
+    expect(ctx.bombSystem.bombEnemyPools).toEqual([
+      ...ctx.enemyPools,
+      ctx.mirrorReflectorSystem.enemyPool,
+    ]);
     // The reflector is the FIFTH governed SpawnDirector spawnable, so it spawns through
     // the same director + telegraph and counts toward the global cap.
     const spawnables = ctx.spawnDirector._spawnables;
@@ -232,6 +236,30 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.mirrorReflectorSystem.bulletPool).toBe(ctx.firingSystem.bulletPool);
     expect(ctx.mirrorReflectorSystem.playerState).toBe(ctx.playerState);
     expect(ctx.mirrorReflectorSystem.scoreState).toBe(ctx.scoreState);
+  });
+
+  it('a real queued smart bomb clears an ordinary enemy and reflector exactly once', () => {
+    const ctx = buildArenaWorld({ rng: () => 0.5 });
+    const ordinary = ctx.enemySystem.enemyPool.acquire();
+    ordinary.x = 100;
+    ordinary.y = 100;
+    ordinary.telegraphMs = Number.MAX_SAFE_INTEGER;
+    const reflector = ctx.mirrorReflectorSystem.enemyPool.acquire();
+    reflector.x = 200;
+    reflector.y = 200;
+    reflector.telegraphMs = Number.MAX_SAFE_INTEGER;
+    const bombsBefore = ctx.scoreState.bombs;
+
+    ctx.inputState.queueBomb();
+    ctx.world.fixedUpdate(FIXED_STEP_MS);
+
+    expect(ctx.enemySystem.enemyPool.activeCount).toBe(0);
+    expect(ctx.mirrorReflectorSystem.enemyPool.activeCount).toBe(0);
+    expect(ctx.collisionSystem.killedEnemies.filter((e) => e === ordinary)).toHaveLength(1);
+    expect(ctx.collisionSystem.killedEnemies.filter((e) => e === reflector)).toHaveLength(1);
+    expect(ctx.scoreState.bombs).toBe(bombsBefore - 1);
+    expect(ctx.enemyPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
+    expect(ctx.deathPools).not.toContain(ctx.mirrorReflectorSystem.enemyPool);
   });
 
   it('wires the DpsTelemetrySystem (Story 9.1) over the shared collisionSystem, dps starting at 0', () => {

@@ -14,7 +14,9 @@
 //
 // Unlike the one-hit archetypes it carries NO uniform `radius`/`score` field: it is
 // deliberately kept OUT of the shared {x,y,radius} circle seams (CollisionSystem,
-// BombSystem, BlackHole absorb, PlayerDeathSystem). Its geometry (bar half-length,
+// BlackHole absorb, PlayerDeathSystem). Queued player smart bombs target its pool
+// through a separate composition; reused clears and lingering bomb effects do not.
+// Its geometry (bar half-length,
 // weight radius, center-kill radius) and its score payout are centralized constants
 // the MirrorReflectorSystem reads directly — the reflector owns its own bullet/ship
 // collision tests.

@@ -201,8 +201,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // moved. LevelUpSystem still folds into it below.)
   // MirrorReflectorSystem (Story 6.3) owns its own reflector pool (never merged into
   // another enemy pool, and deliberately NOT shared into the CollisionSystem /
-  // BombSystem / BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire,
-  // bombs, and black-hole absorption, and its lethal region is the weights). It runs
+  // BlackHole / PlayerDeathSystem circle seams — it is immune to gunfire and
+  // black-hole absorption, and its lethal region is the weights). Only queued player
+  // smart bombs receive its pool through a separate target extension below. It runs
   // after SnakeSystem and BEFORE the SpawnDirector (so it is a spawnable) and BEFORE
   // CollisionSystem/PlayerDeathSystem (so a weight-kill's pendingDeath is consumed the
   // SAME tick). It reads the ship + bullet pool for its reflect/ship tests but is
@@ -290,7 +291,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // The shared collision seam sees ALL archetype pools as an array, so a bullet
   // can destroy any enemy through one path (no per-type duplicate). The armored pool
   // joins the list too (Story 9.3): this single addition wires it into the collision
-  // seam, the bomb clear, the black-hole absorption, and the deathPools below.
+  // seam, ordinary/reused clears, black-hole absorption, and deathPools below.
   const enemyPools = [
     enemySystem.enemyPool,
     greenSquareSystem.enemyPool,
@@ -298,6 +299,11 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     snakeSystem.enemyPool,
     armoredSystem.enemyPool,
   ];
+  // Player smart bombs alone also clear Mirror Reflectors. Keep this preassembled
+  // composition out of enemyPools: bullets, contact checks, Black Hole absorption,
+  // Revenant's reused detonateAt clear, bomb stun, and the lingering field all retain
+  // the reflector's bespoke-geometry immunity.
+  const bombEnemyPools = [...enemyPools, mirrorReflectorSystem.enemyPool];
   // Late-bind the combat enemy pools onto the FiringSystem for Ricochet Rounds Lv5 seek
   // steering (Story 11.5): enemyPools is assembled HERE, after FiringSystem was constructed,
   // the same late-bind pattern snakeSystem.collisionSystem uses below. Until this is set the
@@ -535,8 +541,9 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // --- Smart bombs (Story 3.2) --------------------------------------------
   // BombSystem runs AFTER ScoringSystem + BlackHoleSystem and BEFORE
   // PlayerDeathSystem. It consumes the latched bomb request from the shared
-  // InputState, clears the four archetype pools (never the Black Hole), and
-  // drives the placeholder shockwave.
+  // InputState, clears the ordinary archetypes plus Mirror Reflectors (never the
+  // Black Hole), and drives the placeholder shockwave. Reused detonateAt calls use
+  // enemyPools only and therefore do not inherit this queued-bomb-only extension.
   const bombSystem = new BombSystem(
     inputState,
     enemyPools,
@@ -544,6 +551,8 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     scoreState,
     ship,
     playerStats,
+    null,
+    bombEnemyPools,
   );
   world.addSystem(bombSystem);
   // Late-bind the bomb system into the BlackHoleSystem (constructed earlier, so it

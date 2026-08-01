@@ -29,11 +29,17 @@ export class BombSystem extends System {
    * @param {{x:number,y:number}} ship The player ship — the shockwave origin.
    * @param {Object<string, number>|null} [playerStats=null] Shared player stats store.
    * @param {Object|null} [xpOrbSystem=null] Shared XP orb system for orb drops.
+   * @param {import('../core/Pool.js').Pool[]} [bombEnemyPools=enemyPools] Target
+   *   extension used only for queued player smart bombs.
    */
-  constructor(inputState, enemyPools, collisionSystem, scoreState, ship, playerStats = null, xpOrbSystem = null) {
+  constructor(inputState, enemyPools, collisionSystem, scoreState, ship, playerStats = null, xpOrbSystem = null, bombEnemyPools = enemyPools) {
     super();
     this.inputState = inputState;
     this.enemyPools = enemyPools;
+    // Kept separate from enemyPools because detonateAt is also reused by the
+    // unstable Black Hole and Revenant clears. Only a queued player bomb opts
+    // into this preassembled extension (which may include special hazards).
+    this.bombEnemyPools = bombEnemyPools;
     this.collisionSystem = collisionSystem;
     this.scoreState = scoreState;
     this.ship = ship;
@@ -110,7 +116,7 @@ export class BombSystem extends System {
     // (2) Detonation: consume latch
     const requested = this.inputState.consumeBomb();
     if (requested && ss.bombs > 0) {
-      this.detonateAt(this.ship.x, this.ship.y);
+      this.detonateAt(this.ship.x, this.ship.y, this.bombEnemyPools);
       ss.bombs -= 1;
     }
 
@@ -166,8 +172,10 @@ export class BombSystem extends System {
    * The reusable smart-bomb screen clear, originated at (x, y).
    * @param {number} x Shockwave origin x (px).
    * @param {number} y Shockwave origin y (px).
+   * @param {import('../core/Pool.js').Pool[]} [pools=this.enemyPools] Pools cleared;
+   *   external/reused clears default to ordinary enemies.
    */
-  detonateAt(x, y) {
+  detonateAt(x, y, pools = this.enemyPools) {
     const rawMult = this.playerStats?.bombRadiusMult;
     const mult = Number.isFinite(rawMult) && rawMult >= 1 ? rawMult : 1;
     const effectiveRadius = BOMB_SHOCKWAVE_MAX_RADIUS * mult;
@@ -177,7 +185,6 @@ export class BombSystem extends System {
     const owners = this._owners;
     enemies.length = 0;
     owners.length = 0;
-    const pools = this.enemyPools;
     for (let p = 0; p < pools.length; p++) {
       this._currentPool = pools[p];
       pools[p].forEachActive(this._collectEnemy);

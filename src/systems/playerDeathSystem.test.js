@@ -1505,6 +1505,8 @@ describe('PlayerDeathSystem — Revenant (Story 12.14)', () => {
     system.fixedUpdate(DT);
 
     // Bomb detonates at the death point (ship position BEFORE respawn).
+    // Exactly two args: Revenant reuses the ordinary clear and must not opt into
+    // queued-player-bomb-only targets such as Mirror Reflectors.
     expect(bombSystem.detonateAt).toHaveBeenCalledWith(250, 175);
   });
 

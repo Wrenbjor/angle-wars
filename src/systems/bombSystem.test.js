@@ -9,6 +9,7 @@ import { createSeeker } from '../entities/Seeker.js';
 import { createGreenSquare } from '../entities/GreenSquare.js';
 import { createPinwheel } from '../entities/Pinwheel.js';
 import { createArmored } from '../entities/Armored.js';
+import { createMirrorReflector } from '../entities/MirrorReflector.js';
 import { createBullet } from '../entities/Bullet.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createScoreState } from '../state/ScoreState.js';
@@ -46,6 +47,7 @@ function makeSystem({
   collisionSystem = { killedEnemies: [] },
   scoreState = createScoreState(),
   ship = createPlayerShip(),
+  bombEnemyPools = enemyPools,
 } = {}) {
   const system = new BombSystem(
     inputState,
@@ -53,6 +55,9 @@ function makeSystem({
     collisionSystem,
     scoreState,
     ship,
+    null,
+    null,
+    bombEnemyPools,
   );
   return { system, inputState, enemyPools, collisionSystem, scoreState, ship };
 }
@@ -66,6 +71,59 @@ describe('createScoreState — bombs field (Story 3.2 / FR9)', () => {
 });
 
 describe('BombSystem — detonation clears active enemies (unscored)', () => {
+  it('queued bombs clear ordinary enemies and reflectors through their owning pools exactly once', () => {
+    const seekerPool = new Pool(createSeeker);
+    const reflectorPool = new Pool(createMirrorReflector);
+    const collision = { killedEnemies: [] };
+    const inputState = new InputState();
+    const { system } = makeSystem({
+      inputState,
+      enemyPools: [seekerPool],
+      bombEnemyPools: [seekerPool, reflectorPool],
+      collisionSystem: collision,
+    });
+    const seeker = seekerPool.acquire();
+    const reflector = reflectorPool.acquire();
+
+    inputState.queueBomb();
+    system.fixedUpdate(DT);
+
+    expect(seekerPool.activeCount).toBe(0);
+    expect(reflectorPool.activeCount).toBe(0);
+    expect(collision.killedEnemies).toEqual([seeker, reflector]);
+  });
+
+  it('recycles reflector instances across repeated queued bombs without changing total membership', () => {
+    const ordinaryPool = new Pool(createSeeker);
+    const reflectorPool = new Pool(createMirrorReflector);
+    const collision = { killedEnemies: [] };
+    const inputState = new InputState();
+    const scoreState = createScoreState();
+    scoreState.bombs = 10;
+    const { system } = makeSystem({
+      inputState,
+      enemyPools: [ordinaryPool],
+      bombEnemyPools: [ordinaryPool, reflectorPool],
+      collisionSystem: collision,
+      scoreState,
+    });
+    const first = reflectorPool.acquire();
+
+    inputState.queueBomb();
+    system.fixedUpdate(DT);
+    expect(reflectorPool.activeCount + reflectorPool.freeCount).toBe(1);
+
+    const recycled = reflectorPool.acquire();
+    expect(recycled).toBe(first);
+    collision.killedEnemies.length = 0;
+    inputState.queueBomb();
+    system.fixedUpdate(DT);
+
+    expect(reflectorPool.activeCount).toBe(0);
+    expect(reflectorPool.freeCount).toBe(1);
+    expect(collision.killedEnemies).toEqual([recycled]);
+  });
+
   it('releases every active enemy across all pools, appends to killedEnemies, and decrements bombs by one', () => {
     const seekerPool = new Pool(createSeeker);
     const greenPool = new Pool(createGreenSquare);
@@ -216,6 +274,26 @@ describe('BombSystem — detonation clears active enemies (unscored)', () => {
 });
 
 describe('BombSystem — detonateAt(x,y) reuse seam (Story 6.2)', () => {
+  it('external detonateAt excludes the queued-bomb-only reflector pool', () => {
+    const seekerPool = new Pool(createSeeker);
+    const reflectorPool = new Pool(createMirrorReflector);
+    const collision = { killedEnemies: [] };
+    const { system } = makeSystem({
+      enemyPools: [seekerPool],
+      bombEnemyPools: [seekerPool, reflectorPool],
+      collisionSystem: collision,
+    });
+    const seeker = seekerPool.acquire();
+    const reflector = reflectorPool.acquire();
+
+    system.detonateAt(10, 20);
+
+    expect(seekerPool.activeCount).toBe(0);
+    expect(reflectorPool.activeCount).toBe(1);
+    expect(activeOf(reflectorPool)).toContain(reflector);
+    expect(collision.killedEnemies).toEqual([seeker]);
+  });
+
   it('clears every active enemy + arms the shockwave at (x,y) WITHOUT decrementing bombs or consuming the latch', () => {
     const seekerPool = new Pool(createSeeker);
     const greenPool = new Pool(createGreenSquare);

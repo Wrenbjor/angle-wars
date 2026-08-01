@@ -495,8 +495,9 @@ export const REFLECTOR_SCORE = 500;
 // allocates (grows lazily beyond it, only on spawn events — mirrors the other pools).
 export const REFLECTOR_POOL_PREWARM = 4;
 // Per-type active cap enforced in spawn(): spawn() is a no-op at/above this. Because
-// the reflector is UNKILLABLE by fire/bombs, without a self-cap it would pile up (the
-// SpawnDirector has only a GLOBAL cap). Bounds the O(reflectors × bullets) reflect scan.
+// the reflector is unkillable by fire and player bombs are scarce, without a self-cap
+// it could pile up between clears (the SpawnDirector has only a GLOBAL cap). Bounds the
+// O(reflectors × bullets) reflect scan.
 export const REFLECTOR_MAX_ACTIVE = 3;
 // Documented deferred tunable (Story 6.3): whether a reflected bullet can harm the
 // player. Defaults false — reflected bullets stay the same pooled PLAYER bullets and
@@ -1705,7 +1706,9 @@ export const COLOR_SNAKE = 0xffaa33;
 export const COLOR_RICOCHET = 0xff5533;
 // Mirror Reflector (Story 6.3): a pale chrome/steel hue that reads as a polished
 // mirror-metal dumbbell under additive blending — distinct from the pink
-// Pinwheel and the purple Black Hole. Used for both the bar line and the two weights.
+// Pinwheel and the purple Black Hole. Reflectors remain outside ordinary circle
+// damage/contact seams, but queued player smart bombs clear their dedicated pool.
+// Used for both the bar line and the two weights.
 export const COLOR_MIRROR_REFLECTOR = 0xccddff;
 // Armored enemy (Story 9.3): a cold steel-grey that reads as heavy plate armor once
 // additive blending brightens it — distinct from the blue Seeker and chrome Reflector.

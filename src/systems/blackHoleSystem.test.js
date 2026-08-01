@@ -11,6 +11,7 @@ import { createBullet } from '../entities/Bullet.js';
 import { createSeeker } from '../entities/Seeker.js';
 import { createPinwheel } from '../entities/Pinwheel.js';
 import { createArmored } from '../entities/Armored.js';
+import { createMirrorReflector } from '../entities/MirrorReflector.js';
 import { createPlayerShip } from '../entities/PlayerShip.js';
 import { createScoreState } from '../state/ScoreState.js';
 import { createPlayerState } from '../state/PlayerState.js';
@@ -424,12 +425,16 @@ describe('BlackHoleSystem — detonation at the unstable threshold (AC — deton
     });
     const collision = new CollisionSystem(bulletPool, [enemyPool]);
     system.collisionSystem = collision;
+    const reflectorPool = new Pool(createMirrorReflector);
     const bombSystem = new BombSystem(
       new InputState(),
       [enemyPool],
       collision,
       scoreState,
       ship,
+      null,
+      null,
+      [enemyPool, reflectorPool],
     );
     system.bombSystem = bombSystem;
 
@@ -445,7 +450,7 @@ describe('BlackHoleSystem — detonation at the unstable threshold (AC — deton
       e.y = y;
       return e;
     });
-    return { system, collision, bombSystem, scoreState, playerState, hole, enemyPool, tipEnemy, others };
+    return { system, collision, bombSystem, scoreState, playerState, hole, enemyPool, reflectorPool, tipEnemy, others };
   }
 
   it('crossing the threshold fires the screen clear, sets pendingDeath, releases the hole, pays NO score', () => {
@@ -485,6 +490,19 @@ describe('BlackHoleSystem — detonation at the unstable threshold (AC — deton
     expect(new Set(killed).size).toBe(3);
     expect(killed).toContain(tipEnemy);
     for (const e of others) expect(killed).toContain(e);
+  });
+
+  it('an unstable-hole reused clear leaves queued-bomb-only reflectors untouched', () => {
+    const ctx = makeDetonable({
+      holeRadius: BLACKHOLE_UNSTABLE_RADIUS - BLACKHOLE_GROWTH_PER_ABSORB,
+    });
+    const reflector = ctx.reflectorPool.acquire();
+
+    ctx.collision.fixedUpdate(DT);
+    ctx.system.fixedUpdate(DT);
+
+    expect(ctx.reflectorPool.activeCount).toBe(1);
+    expect(ctx.collision.killedEnemies).not.toContain(reflector);
   });
 
   it('detonation with an UNSET bombSystem still costs the life + releases the hole (screen clear skipped)', () => {
