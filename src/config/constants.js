@@ -2007,6 +2007,12 @@ export const AUDIO_SFX_SPAWN_MAX_PER_FRAME = 3;
 // all movement. Not a balance lever.
 export const CHRONO_SLOW_FACTOR_MAX = 0.99;
 
+// --- Stasis Lock (Story 12.16 / Epic 12 — defense Epic) -------------------
+// Duration (ms) of each global freeze triggered by Stasis Lock.
+export const STASIS_LOCK_FREEZE_MS = 1500;
+// Cooldown (ms) between Stasis Lock freeze triggers.
+export const STASIS_LOCK_COOLDOWN_MS = 12000;
+
 // --- Debug readout ----------------------------------------------------------
 export const COLOR_DEBUG_TEXT = '#88ffcc';
 export const DEBUG_FONT = '14px monospace';

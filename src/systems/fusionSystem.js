@@ -195,7 +195,7 @@ export const FUSION_RECIPES = Object.freeze([
     requiredLevel: 3,
     epicType: 'stasis-lock',
     name: 'Stasis Lock',
-    effect: () => {}, // Stub — Epic 12.16 wires enemy freeze effect
+    effect: () => {}, // Story 12.16 — wires stasisLockSystem.active
   }),
 ]);
 

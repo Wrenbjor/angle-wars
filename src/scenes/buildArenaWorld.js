@@ -32,6 +32,7 @@ import { SeekerDroneSystem } from '../systems/SeekerDroneSystem.js';
 import { MineLayerSystem } from '../systems/MineLayerSystem.js';
 import { PiercingLanceSystem } from '../systems/PiercingLanceSystem.js';
 import { FlakSystem } from '../systems/FlakSystem.js';
+import { StasisLockSystem } from '../systems/StasisLockSystem.js';
 
 import { ScoringSystem } from '../systems/ScoringSystem.js';
 import { DpsTelemetrySystem } from '../systems/DpsTelemetrySystem.js';
@@ -313,6 +314,13 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // reference it). Until this is set the snake's split reap is a guarded no-op.
   snakeSystem.collisionSystem = collisionSystem;
 
+  // --- Stasis Lock (Story 12.16 / Epic 12) ----------------------------------
+  // Constructed before xpOrbSystem exists; wired after it (see XP orbs section below).
+  const stasisLockSystem = new StasisLockSystem(enemyPools, null);
+  world.addSystem(stasisLockSystem);
+  collisionSystem.stasisLockXpOrbSystem = stasisLockSystem;
+  stasisLockSystem.collisionSystem = collisionSystem;
+
   // --- Afterburner dash (Story 10.5) --------------------------------------
   // Registered IMMEDIATELY after CollisionSystem and BEFORE ScoringSystem. That slot is
   // load-bearing in THREE directions:
@@ -565,6 +573,8 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   );
   world.addSystem(xpOrbSystem);
   bombSystem.xpOrbSystem = xpOrbSystem;
+  // Story 12.16 — Stasis Lock: wire xpOrbSystem into stasisLockSystem (constructed earlier, null passed).
+  stasisLockSystem.xpOrbSystem = xpOrbSystem;
 
   // --- Leveling (Story 8.2 / Epic 8 progression) --------------------------
   // The leveling spine: derives the player's current level + in-level progress
@@ -677,6 +687,15 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
       'revenant',
       () => {
         playerDeathSystem.revenantActive = true;
+      },
+    );
+    // Story 12.16 — Stasis Lock effect wiring.
+    // After fusion resolution sets 'stasis-lock' in ownedCards,
+    // enable the periodic 12s/1.5s freeze on stasisLockSystem.
+    FusionSystem.registerEffect(
+      'stasis-lock',
+      () => {
+        stasisLockSystem.active = true;
       },
     );
     const levelUpSystem = new LevelUpSystem(
@@ -861,5 +880,6 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     screenFeedbackSystem,
     audioDirector,
     fusionSystem,
+    stasisLockSystem,
   };
 }

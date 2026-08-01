@@ -1458,6 +1458,122 @@ describe('CollisionSystem — bullet piercing (Story 12.6)', () => {
   });
 });
 
+describe('CollisionSystem — Stasis Lock frozen combat (Story 12.16)', () => {
+  it('applies 2× damage when stasisFreezeActive (matrix: frozen damage double)', () => {
+    const { system, enemyPool } = makeSystem();
+    const e = enemyPool.acquire();
+    e.xp = 5;
+
+    // Normal hit: 1 damage, killed.
+    system.applyPlayerDamage(e, enemyPool, 1);
+    expect(enemyPool.activeCount).toBe(0);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletKillXp[0]).toBe(5);
+
+    // New enemy, frozen.
+    const e2 = enemyPool.acquire();
+    e2.xp = 5;
+    system.stasisFreezeActive = true;
+    system.applyPlayerDamage(e2, enemyPool, 1);
+    expect(enemyPool.activeCount).toBe(0);
+    expect(system.bulletKillCount).toBe(2);
+    expect(system.bulletKillXp[1]).toBe(5);
+    system.stasisFreezeActive = false;
+  });
+
+  it('armored enemy dies when 2× damage exceeds hp during freeze (matrix: frozen kills armored)', () => {
+    const armoredPool = new Pool(createArmored);
+    const bulletPool = new Pool(createBullet);
+    const system = new CollisionSystem(bulletPool, [armoredPool]);
+
+    // Use hp=2: survives 1 normal hit, dies on one 2× frozen hit.
+    const e = armoredPool.acquire();
+    e.hp = 2;
+    e.xp = ARMORED_XP;
+
+    // Normal hit: 1 damage, survives (2-1=1)
+    system.stasisFreezeActive = false;
+    const survived = system.applyPlayerDamage(e, armoredPool, 1);
+    expect(survived).toBe(false);
+    expect(e.hp).toBe(1);
+
+    // Frozen hit: 2× damage, dies.
+    system.stasisFreezeActive = true;
+    const killed = system.applyPlayerDamage(e, armoredPool, 1);
+    expect(killed).toBe(true); // 2 damage > 1 remaining hp
+    expect(armoredPool.activeCount).toBe(0);
+    expect(system.bulletKillCount).toBe(1);
+    expect(system.bulletKillXp[0]).toBe(ARMORED_XP);
+  });
+
+  it('spawns extra XP orb when enemy killed while stasisFreezeActive (matrix: extra XP)', () => {
+    const { system, enemyPool } = makeSystem();
+    const e = enemyPool.acquire();
+    e.x = 100;
+    e.y = 200;
+    e.xp = 15;
+
+    const xpSpawns = [];
+    system.stasisLockXpOrbSystem = {
+      spawnExtraXpOrb(x, y, xp) {
+        xpSpawns.push({ x, y, xp });
+      },
+    };
+
+    // Non-frozen kill: no extra XP.
+    system.stasisFreezeActive = false;
+    system.applyPlayerDamage(e, enemyPool, 1);
+    expect(system.bulletKillCount).toBe(1);
+    expect(xpSpawns).toHaveLength(0);
+
+    // Frozen kill: extra XP.
+    const e2 = enemyPool.acquire();
+    e2.x = 300; e2.y = 400; e2.xp = 20;
+    system.stasisFreezeActive = true;
+    system.applyPlayerDamage(e2, enemyPool, 1);
+    expect(system.bulletKillCount).toBe(2);
+    expect(xpSpawns).toHaveLength(1);
+    expect(xpSpawns[0].x).toBe(e2.x);
+    expect(xpSpawns[0].y).toBe(e2.y);
+    expect(xpSpawns[0].xp).toBe(20);
+  });
+
+  it('armored enemy takes 2× damage while frozen but survives if 2× < hp (matrix: frozen killed by AoE)', () => {
+    // Armor at hp=3: survives 1 damage, survives 2 damage, dies on 3rd.
+    const armoredPool = new Pool(createArmored);
+    const bulletPool = new Pool(createBullet);
+    const system = new CollisionSystem(bulletPool, [armoredPool]);
+
+    const e = armoredPool.acquire();
+    e.hp = 3;
+
+    system.stasisFreezeActive = true;
+
+    // First frozen hit: 2 damage, survives (3-2=1)
+    const survived1 = system.applyPlayerDamage(e, armoredPool, 1);
+    expect(survived1).toBe(false);
+    expect(e.hp).toBe(1);
+
+    // Second frozen hit: 2 damage, dies (1 < 2)
+    const survived2 = system.applyPlayerDamage(e, armoredPool, 1);
+    expect(survived2).toBe(true);
+    expect(armoredPool.activeCount).toBe(0);
+  });
+
+  it('does not double damage when not frozen (negative control)', () => {
+    const { system, enemyPool } = makeSystem();
+    const e = enemyPool.acquire();
+    e.xp = 10;
+
+    system.stasisFreezeActive = false;
+    system.applyPlayerDamage(e, enemyPool, 1);
+
+    expect(enemyPool.activeCount).toBe(0);
+    expect(system.bulletKillCount).toBe(1);
+    // Normal kill: 1 damage = 1x XP (no extra)
+  });
+});
+
 function addSeekerAt(pool, x, y) {
   const s = pool.acquire();
   s.x = x;

@@ -68,6 +68,7 @@ const CANONICAL_ORDER = [
   'ArmoredSystem',
   'SpawnDirector',
   'CollisionSystem',
+  'StasisLockSystem',
   'DashSystem',
   'OrbitBladeSystem',
   'SeekerDroneSystem',
@@ -123,6 +124,7 @@ const RETURN_HANDLES = [
   'armoredSystem',
   'spawnDirector',
   'collisionSystem',
+  'stasisLockSystem',
   'dashSystem',
   'orbitBladeSystem',
   'seekerDroneSystem',
@@ -570,8 +572,8 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     expect(ctx.playerMovementSystem.playerStats).toBe(ctx.playerStats);
   });
 
-  it('pins the DashSystem slot: immediately AFTER CollisionSystem and BEFORE ScoringSystem', () => {
-    // Load-bearing in three directions. After CollisionSystem, so a dash kill appends to
+  it('pins the DashSystem slot: AFTER StasisLockSystem (Story 12.16) and BEFORE ScoringSystem', () => {
+    // Load-bearing in three directions. After StasisLockSystem+CollisionSystem, so a dash kill appends to
     // latches that system has already RESET this tick; before ScoringSystem (and so
     // before DpsTelemetry / XpOrb / GridField / Particle), so the kill is scored and
     // produces its full feedback; and later than PlayerMovementSystem, which is why
@@ -579,7 +581,10 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     const ctx = buildArenaWorld();
     const order = ctx.world.systems.map((s) => s.constructor.name);
     const dash = order.indexOf('DashSystem');
-    expect(dash).toBe(order.indexOf('CollisionSystem') + 1);
+    // Story 12.16 wired StasisLockSystem between CollisionSystem and DashSystem.
+    expect(dash).toBe(order.indexOf('CollisionSystem') + 2);
+    // Story 12.16: StasisLockSystem is index CollisionSystem + 1.
+    expect(order.indexOf('StasisLockSystem')).toBe(order.indexOf('CollisionSystem') + 1);
     // Story 11.1 inserted OrbitBladeSystem immediately after DashSystem (mirroring the
     // dash's load-bearing slot); Story 11.2 inserted SeekerDroneSystem right after it; Story
     // 11.3 inserted MineLayerSystem right after that; Story 11.4 inserted PiercingLanceSystem

@@ -60,6 +60,12 @@ export class CollisionSystem extends System {
     // Carries hit-position info from pass 1 into pass 2's kill handling.
     this._critHits = new Map();
 
+    // Story 12.16 — late-bound Stasis Lock references (set from buildArenaWorld.js).
+    // stasisLockXpOrbSystem: the StasisLockSystem instance for spawning extra XP orbs on frozen kills.
+    this.stasisLockXpOrbSystem = null;
+    // stasisFreezeActive: true while Stasis Lock freeze window is active (frozen enemies take 2× damage).
+    this.stasisFreezeActive = false;
+
 
     // Reusable scratch: materialized active sets, refilled each tick. `_owners`
     // is parallel to `_enemies` — `_owners[i]` is the pool that owns `_enemies[i]`
@@ -377,11 +383,13 @@ export class CollisionSystem extends System {
   applyPlayerDamage(enemy, ownerPool, damage) {
     // every hit = 1 integer damage-unit (armor survivor OR kill)
     this.bulletDamageCount += 1;
-    if (Number.isFinite(enemy.hp) && enemy.hp > damage + HP_EPSILON) {
+    // Story 12.16 — Stasis Lock: double damage while frozen.
+    const effectiveDamage = this.stasisFreezeActive ? damage * 2 : damage;
+    if (Number.isFinite(enemy.hp) && enemy.hp > effectiveDamage + HP_EPSILON) {
       // Armored survivor: absorb this hit's damage and live. NOT released, NOT a
       // kill. At the base damage unit (1) this is byte-for-byte the pre-10.2
       // `hp > 1` / `hp -= 1` branch.
-      enemy.hp -= damage;
+      enemy.hp -= effectiveDamage;
       return false;
     }
     this.killedEnemies.push(enemy);
@@ -395,6 +403,13 @@ export class CollisionSystem extends System {
     this.bulletKillXp.push(Number.isFinite(enemy.xp) ? enemy.xp : 0);
     ownerPool.release(enemy);
     this.bulletKillCount += 1;
+    // Story 12.16 — Stasis Lock: spawn extra XP orb for frozen kill.
+    const isFrozen = this.stasisFreezeActive;
+    if (isFrozen && this.stasisLockXpOrbSystem) {
+      this.stasisLockXpOrbSystem.spawnExtraXpOrb(
+        enemy.x, enemy.y, Number.isFinite(enemy.xp) ? enemy.xp : 0,
+      );
+    }
     return true;
   }
 }
