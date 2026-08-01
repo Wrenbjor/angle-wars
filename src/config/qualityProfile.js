@@ -1,8 +1,8 @@
 // qualityProfile — pure, Phaser-free device-quality seam (Story 7.4).
 //
 // The game ships one binary presentation-cost profile chosen at ArenaScene.create():
-// the DESKTOP defaults, or a MOBILE profile that scales the particle cap, the camera
-// bloom fill cost, and the grid line density DOWN so a mid-range mobile GPU inside the
+// the DESKTOP defaults, or a MOBILE profile that scales the particle cap and grid
+// line density DOWN so a mid-range mobile GPU inside the
 // Capacitor WebView holds the 60 FPS target under peak load (NFR9, NFR1). This module
 // owns that decision as three small pieces, isolated from Phaser and from any
 // @capacitor/* package so it runs headlessly in the node vitest env:
@@ -10,25 +10,21 @@
 //   - detectMobile(env)         a PURE predicate over an injected env shape,
 //   - readMobileEnv(win)        a thin, fail-safe browser boundary that builds that
 //                               env from the runtime-injected `window` globals,
-//   - resolveQualityProfile(m)  maps the boolean to a FROZEN { particleMax, bloom,
-//                               gridSpacing } profile.
+//   - resolveQualityProfile(m)  maps the boolean to a FROZEN
+//                               { particleMax, gridSpacing } profile.
 //
 // The split mirrors mobileLayout.js (readSafeAreaInsetsCss / lockLandscape): the pure
 // math is exhaustively unit-testable, and the boundary try/catch-degrades to a
 // desktop-shaped env on any missing/throwing host global, so a resolve at create()
 // can NEVER crash. The DESKTOP branch returns values byte-identical to today's
-// PARTICLE_MAX / NEON_BLOOM / GRID_SPACING, so non-mobile play is a zero regression.
+// PARTICLE_MAX / GRID_SPACING, so non-mobile play is a zero regression.
 
 import {
   PARTICLE_MAX,
   GRID_SPACING,
   MOBILE_PARTICLE_MAX,
-  MOBILE_NEON_BLOOM_BLUR_STRENGTH,
-  MOBILE_NEON_BLOOM_STRENGTH,
-  MOBILE_NEON_BLOOM_STEPS,
   MOBILE_GRID_SPACING,
 } from './constants.js';
-import { NEON_BLOOM } from '../scenes/neonStyle.js';
 
 // The desktop-shaped env every fail-safe path degrades to: no Capacitor, a fine
 // (non-coarse) primary pointer, no touch, and an empty UA — detectMobile → false.
@@ -125,36 +121,24 @@ export function readMobileEnv(win) {
 
 /**
  * Resolve the frozen quality profile from the mobile boolean. DESKTOP returns the
- * canonical desktop tunables verbatim (byte-identical to PARTICLE_MAX / NEON_BLOOM /
- * GRID_SPACING — the reused, already-frozen NEON_BLOOM object). MOBILE returns the
- * scaled-down profile sourced from the MOBILE_* constants: a smaller particle cap, a
- * cheaper bloom (fewer steps + lower blur/strength, SAME color/offsets), and a coarser
- * grid spacing. Both the profile and its nested bloom are frozen so no downstream
- * consumer can mutate the shared config. Introduces zero per-frame allocation — it is
+ * canonical desktop tunables verbatim (byte-identical to PARTICLE_MAX / GRID_SPACING).
+ * MOBILE returns the scaled-down profile sourced from the MOBILE_* constants: a smaller
+ * particle cap and a coarser grid spacing. The profile is frozen so no downstream
+ * consumer can mutate shared config. Introduces zero per-frame allocation — it is
  * called ONCE per create().
  * @param {boolean} mobile
- * @returns {Readonly<{particleMax:number, bloom:Readonly<{color:number, offsetX:number, offsetY:number, blurStrength:number, strength:number, steps:number}>, gridSpacing:number}>}
+ * @returns {Readonly<{particleMax:number, gridSpacing:number}>}
  */
 export function resolveQualityProfile(mobile) {
   if (mobile) {
     return Object.freeze({
       particleMax: MOBILE_PARTICLE_MAX,
-      // Keep the desktop bloom color + offsets (they carry no fill cost); scale only
-      // the load-bearing fill knobs (blur/strength/steps) down.
-      bloom: Object.freeze({
-        ...NEON_BLOOM,
-        blurStrength: MOBILE_NEON_BLOOM_BLUR_STRENGTH,
-        strength: MOBILE_NEON_BLOOM_STRENGTH,
-        steps: MOBILE_NEON_BLOOM_STEPS,
-      }),
       gridSpacing: MOBILE_GRID_SPACING,
     });
   }
-  // DESKTOP: the verbatim desktop constants. NEON_BLOOM is reused directly (already
-  // frozen) so the desktop bloom is byte-identical to today's registration.
+  // DESKTOP: the verbatim desktop constants.
   return Object.freeze({
     particleMax: PARTICLE_MAX,
-    bloom: NEON_BLOOM,
     gridSpacing: GRID_SPACING,
   });
 }

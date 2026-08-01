@@ -135,7 +135,7 @@ import {
   blackHolePulseColor,
   blackHolePulseAlpha,
 } from './blackHoleRender.js';
-import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
+import { applyAdditiveBlend } from './neonStyle.js';
 import {
   detectMobile,
   readMobileEnv,
@@ -195,9 +195,9 @@ export class ArenaScene extends Phaser.Scene {
     // Resolve the presentation-cost profile ONCE per create() (device-derived, never
     // per frame): detect mobile / the Capacitor WebView through the fail-safe boundary
     // (any missing/throwing host global degrades to the DESKTOP profile — create never
-    // crashes), then map it to a frozen { particleMax, bloom, gridSpacing }. On desktop
+    // crashes), then map it to a frozen { particleMax, gridSpacing }. On desktop
     // every field equals today's constant, so the wiring below is byte-identical; on a
-    // phone it scales the particle cap, the bloom fill cost, and the grid density DOWN
+    // phone it scales the particle cap and grid density DOWN
     // (NFR9, NFR1). It COMPOSES with — never replaces — Reduced Motion (read separately
     // below). Introduces zero new per-frame allocation.
     this._qualityProfile = resolveQualityProfile(
@@ -532,18 +532,14 @@ export class ArenaScene extends Phaser.Scene {
     this.shipSprite.setPosition(this.ship.x, this.ship.y);
     this.shipSprite.rotation = this.ship.angle;
 
-    // --- Neon aesthetic: additive blend + camera bloom (Story 4.1) ----------
+    // --- Neon aesthetic: saturated additive layers (Story 4.1) --------------
     // View-only. Put every neon vector layer into additive blend so bright
     // shapes accumulate light over the near-black background (the Geometry Wars
-    // glow), then register ONE camera-level Bloom post-FX pass so bright
-    // elements bleed light across the whole frame. Both are configured ONCE here
-    // (never per frame in update()), preserving the zero-per-frame render
-    // discipline. The gameOverOverlay (a black dimming rect — additive black is
-    // a no-op) and all text objects deliberately stay in NORMAL blend; the
-    // camera bloom still gives text a subtle on-theme glow. Bloom at the camera
-    // is a single screen-space pass whose cost is independent of entity count —
-    // the load-bearing choice for holding 60 FPS in a busy arena (NFR1). The
-    // Phaser.BlendModes.ADD value is injected so neonStyle.js stays Phaser-free.
+    // glow). The gameOverOverlay (a black dimming rect — additive black is a
+    // no-op) and all text objects deliberately stay in NORMAL blend so UI colors
+    // remain crisp and legible. No camera-wide bloom is registered: local additive
+    // overlap preserves the neon language without bleaching the finished frame.
+    // Phaser.BlendModes.ADD is injected so neonStyle.js stays Phaser-free.
     applyAdditiveBlend(
       [
         this.shipSprite,
@@ -569,8 +565,6 @@ export class ArenaScene extends Phaser.Scene {
       ],
       Phaser.BlendModes.ADD,
     );
-
-    addNeonBloom(this.cameras.main, this._qualityProfile.bloom);
 
     // --- Touch controls overlay (Story 7.1) ---------------------------------
     // The floating move/aim sticks + smart-bomb button, drawn each active render
@@ -1653,7 +1647,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // Redraw active particles from the pool: clear once, then a filled neon dot per
     // live particle at its own color, size, and age-derived alpha (particleAlpha).
-    // Additive blend + camera bloom make each dot glow. Rendering reads the sim
+    // Additive blending keeps each dot vivid. Rendering reads the sim
     // state; it never advances it. Zero per-frame allocation (mirrors the bullet
     // render). (Story 4.3)
     const ptg = this.particleGraphics;
@@ -1664,7 +1658,7 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     // Redraw active XP orbs from the pool: clear once, then a filled teal dot of
-    // XP_ORB_RADIUS per live orb. Additive blend + camera bloom make each orb glow.
+    // XP_ORB_RADIUS per live orb. Additive blending keeps each orb vivid.
     // Rendering reads the sim state; it never advances it. Zero per-frame allocation
     // (mirrors the particle/bullet render). (Story 8.1)
     const xog = this.xpOrbGraphics;
@@ -1676,7 +1670,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // Redraw active Orbit Blades from the pool: clear once, then a filled neon dot of
     // ORBIT_BLADE_RADIUS per live blade at its synced ring position. Additive blend +
-    // camera bloom make each blade glow. Rendering reads the sim state; it never advances
+    // additive blending keeps each blade vivid. Rendering reads the sim state; it never advances
     // it. Zero per-frame allocation (mirrors the xp-orb/particle render). (Story 11.1)
     const obg = this.orbitBladeGraphics;
     obg.clear();
@@ -1687,7 +1681,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // Redraw active Seeker Drones + their shots from the two pools: clear once each, then a
     // filled neon dot per live drone at its synced ring position and per live shot at its
-    // in-flight position. Additive blend + camera bloom make each glow. Rendering reads the
+    // in-flight position. Additive blending keeps each vivid. Rendering reads the
     // sim state; it never advances it. Zero per-frame allocation (mirrors the orbit-blade
     // render). (Story 11.2)
     const sdg = this.seekerDroneGraphics;
@@ -1706,7 +1700,7 @@ export class ArenaScene extends Phaser.Scene {
     // Redraw active Mines from the pool: clear once, then a filled MINE_RADIUS dot per live
     // mine, coloured COLOR_MINE_ARMED once armed (ageMs >= armMs) else COLOR_MINE_UNARMED — so
     // armed-vs-unarmed reads at a glance (the epic UX note). fillStyle is re-set per mine so
-    // the two colours can interleave in one pass. Additive blend + camera bloom make each mine
+    // the two colours can interleave in one pass. Additive blending keeps each mine
     // glow. Rendering reads the sim state; it never advances it. Zero per-frame allocation
     // (mirrors the orbit-blade/drone render). (Story 11.3)
     const mg = this.mineGraphics;
@@ -1719,7 +1713,7 @@ export class ArenaScene extends Phaser.Scene {
     // Redraw active Piercing Lance bolts + trail nodes from the two pools: clear each once, then
     // a dimmer wider COLOR_LANCE_TRAIL dot per live trail node (drawn under the bolts, as the
     // fading wake) and a hot-violet COLOR_LANCE_BOLT dot per live bolt. Additive blend + camera
-    // bloom make each glow. Rendering reads the sim state; it never advances it. Zero per-frame
+    // additive blending keeps each vivid. Rendering reads the sim state; it never advances it. Zero per-frame
     // allocation (mirrors the mine/drone render). (Story 11.4)
     const ltg = this.lanceTrailGraphics;
     ltg.clear();
@@ -1735,7 +1729,7 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     // Redraw active Flak fragments from the pool: clear once, then a filled dot per live
-    // fragment in COLOR_FLAK_FRAGMENT. Additive blend + camera bloom make each fragment glow.
+    // fragment in COLOR_FLAK_FRAGMENT. Additive blending keeps each fragment vivid.
     // (Story 11.6)
     const flg = this.flakGraphics;
     flg.clear();
@@ -1953,7 +1947,9 @@ export class ArenaScene extends Phaser.Scene {
           desc.setVisible(true);
         }
       } else {
-        // Normal green styling (existing behavior).
+        // Accessible ordinary-card styling: both surfaces stay dark enough for
+        // body copy, while a vivid border carries the neon accent. Focus never
+        // depends on hue alone because the selected outline is also thicker.
         cpg.fillStyle(
           focused ? COLOR_LEVELUP_PANEL_FOCUS : COLOR_LEVELUP_PANEL,
           focused ? LEVELUP_PANEL_FOCUS_ALPHA : LEVELUP_PANEL_ALPHA,

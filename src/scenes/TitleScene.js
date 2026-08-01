@@ -12,7 +12,7 @@ import {
   TITLE_CONTROLS_FONT,
 } from '../config/constants.js';
 import { createHighScoreStorage } from '../persistence/highScoreStorage.js';
-import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
+import { applyAdditiveBlend } from './neonStyle.js';
 import {
   TITLE_TEXT,
   START_PROMPT,
@@ -105,13 +105,11 @@ export class TitleScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     // --- Neon aesthetic -----------------------------------------------------
-    // Mirror ArenaScene's neon wiring: put the hero title into additive blend so
-    // it glows as a neon sign, then register ONE camera-level Bloom pass so every
-    // bright element (including the other text) gets an on-theme halo. Both are
-    // configured once here. Phaser.BlendModes.ADD is injected so neonStyle.js
-    // stays Phaser-free.
+    // Mirror ArenaScene's neon wiring: the hero title uses additive blend so
+    // saturated strokes accumulate like a neon sign. Normal-blend supporting text
+    // stays crisp; no camera-wide bloom washes the finished frame toward white.
+    // Phaser.BlendModes.ADD is injected so neonStyle.js stays Phaser-free.
     applyAdditiveBlend([this.titleText], Phaser.BlendModes.ADD);
-    addNeonBloom(this.cameras.main);
 
     // --- Start input --------------------------------------------------------
     // Any start gesture launches a fresh ArenaScene run — scene.start('ArenaScene')

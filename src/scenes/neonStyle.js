@@ -1,45 +1,14 @@
 // neonStyle — Phaser-free config/apply seam for the neon aesthetic (Story 4.1).
 //
-// The signature neon look is two view-only render-wiring changes: put the neon
-// vector layers into additive blend, and register ONE camera-level Bloom post-FX
-// pass. Both are expressed here as small, side-effect-only functions over the
-// minimal shapes they touch, so the wiring has automated coverage — a dropped or
-// reordered bloom parameter, or a missed layer, is caught by neonStyle.test.js
-// rather than shipping silently.
+// The signature neon look comes from saturated source colors accumulating on
+// selected vector layers through additive blending. It deliberately does not use a
+// camera-wide post-FX pass: a full-frame bloom composites white light over gameplay
+// and UI together, washing out the palette and reducing text contrast.
 //
 // This module imports Phaser NOTHING (mirrors constants.js / telegraphCue.js):
 // the additive blend-mode value (Phaser.BlendModes.ADD) is INJECTED by the caller
-// so the helper stays headless-testable in vitest/jsdom, and the bloom is applied
-// by forwarding the config tuple to a camera the caller passes in. Configuration
-// happens once in ArenaScene.create(); nothing here runs per frame.
-
-import {
-  NEON_BLOOM_COLOR,
-  NEON_BLOOM_OFFSET_X,
-  NEON_BLOOM_OFFSET_Y,
-  NEON_BLOOM_BLUR_STRENGTH,
-  NEON_BLOOM_STRENGTH,
-  NEON_BLOOM_STEPS,
-} from '../config/constants.js';
-
-/**
- * The camera Bloom configuration, built from the centralized NEON_BLOOM_*
- * constants. Field order mirrors the Phaser
- * addBloom(color, offsetX, offsetY, blurStrength, strength, steps) signature so
- * addNeonBloom can forward it positionally with no re-ordering.
- * @type {{color: number, offsetX: number, offsetY: number, blurStrength: number, strength: number, steps: number}}
- */
-// Frozen: NEON_BLOOM is immutable config read live by addNeonBloom on every
-// create()/scene.restart(); freezing prevents a stray mutation elsewhere from
-// leaking into a later run's bloom registration.
-export const NEON_BLOOM = Object.freeze({
-  color: NEON_BLOOM_COLOR,
-  offsetX: NEON_BLOOM_OFFSET_X,
-  offsetY: NEON_BLOOM_OFFSET_Y,
-  blurStrength: NEON_BLOOM_BLUR_STRENGTH,
-  strength: NEON_BLOOM_STRENGTH,
-  steps: NEON_BLOOM_STEPS,
-});
+// so the helper stays headless-testable in vitest/jsdom. Configuration happens once
+// in each scene's create(); nothing here runs per frame.
 
 /**
  * Put every neon vector layer into additive blend so bright shapes accumulate
@@ -55,30 +24,4 @@ export function applyAdditiveBlend(layers, blendAdd) {
     layer.setBlendMode(blendAdd);
   }
   return layers;
-}
-
-/**
- * Register ONE Bloom post-FX pass on the given camera from a bloom config. Cost is a
- * single screen-space pass independent of entity count (this is why it holds
- * 60 FPS in a busy arena). Forwards the config's fields positionally in the
- * documented addBloom order.
- *
- * `bloomConfig` defaults to the desktop NEON_BLOOM, so an omitted arg is byte-identical
- * to today's registration. ArenaScene injects the resolved quality profile's bloom
- * (Story 7.4) — the mobile variant lowers the blur/strength and step count so the
- * screen-space fill pass is cheaper on a phone GPU.
- * @param {{postFX: {addBloom: function}}} camera The camera (cameras.main).
- * @param {{color:number, offsetX:number, offsetY:number, blurStrength:number, strength:number, steps:number}} [bloomConfig]
- *   The bloom tuple (defaults to NEON_BLOOM).
- * @returns {*} The Bloom FX controller returned by addBloom.
- */
-export function addNeonBloom(camera, bloomConfig = NEON_BLOOM) {
-  return camera.postFX.addBloom(
-    bloomConfig.color,
-    bloomConfig.offsetX,
-    bloomConfig.offsetY,
-    bloomConfig.blurStrength,
-    bloomConfig.strength,
-    bloomConfig.steps,
-  );
 }

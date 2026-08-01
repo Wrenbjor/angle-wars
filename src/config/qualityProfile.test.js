@@ -4,7 +4,6 @@ import {
   readMobileEnv,
   resolveQualityProfile,
 } from './qualityProfile.js';
-import { NEON_BLOOM } from '../scenes/neonStyle.js';
 import { PARTICLE_MAX, GRID_SPACING } from './constants.js';
 
 // qualityProfile — pure device-quality seam (Story 7.4). Covers every I/O-matrix
@@ -216,30 +215,12 @@ describe('resolveQualityProfile — mobile profile', () => {
     expect(mobile.particleMax).toBeLessThan(PARTICLE_MAX);
   });
 
-  it('lowers the bloom cost: fewer steps, blur/strength no higher', () => {
-    expect(mobile.bloom.steps).toBeLessThan(NEON_BLOOM.steps);
-    // STRICTLY less costly (the documented MOBILE_* invariant), not merely ≤.
-    expect(mobile.bloom.blurStrength).toBeLessThan(NEON_BLOOM.blurStrength);
-    expect(mobile.bloom.strength).toBeLessThan(NEON_BLOOM.strength);
-    // Color + offsets carry no fill cost, so they are kept identical to desktop.
-    expect(mobile.bloom.color).toBe(NEON_BLOOM.color);
-    expect(mobile.bloom.offsetX).toBe(NEON_BLOOM.offsetX);
-    expect(mobile.bloom.offsetY).toBe(NEON_BLOOM.offsetY);
-  });
-
   it('coarsens the grid (spacing exceeds the desktop GRID_SPACING)', () => {
     expect(mobile.gridSpacing).toBeGreaterThan(GRID_SPACING);
   });
 
-  it('freezes the profile and its nested bloom', () => {
+  it('freezes the profile', () => {
     expect(Object.isFrozen(mobile)).toBe(true);
-    expect(Object.isFrozen(mobile.bloom)).toBe(true);
-  });
-
-  it('exposes the same six bloom fields as NEON_BLOOM (a complete addBloom tuple)', () => {
-    expect(Object.keys(mobile.bloom).sort()).toEqual(
-      Object.keys(NEON_BLOOM).sort(),
-    );
   });
 });
 
@@ -248,10 +229,6 @@ describe('resolveQualityProfile — desktop profile (zero regression)', () => {
 
   it('particleMax equals the desktop PARTICLE_MAX', () => {
     expect(desktop.particleMax).toBe(PARTICLE_MAX);
-  });
-
-  it('bloom deep-equals NEON_BLOOM', () => {
-    expect(desktop.bloom).toEqual(NEON_BLOOM);
   });
 
   it('gridSpacing equals the desktop GRID_SPACING', () => {

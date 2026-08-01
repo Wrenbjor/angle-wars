@@ -13,7 +13,7 @@ import {
 import { createSettingsStorage } from '../persistence/settingsStorage.js';
 import { AudioEngine } from '../audio/audioEngine.js';
 import { effectiveVolume, adjustVolume } from '../audio/audioMix.js';
-import { applyAdditiveBlend, addNeonBloom } from './neonStyle.js';
+import { applyAdditiveBlend } from './neonStyle.js';
 import {
   SETTINGS_TITLE,
   SETTINGS_HINT,
@@ -86,8 +86,8 @@ export class SettingsScene extends Phaser.Scene {
     });
 
     // --- Neon hero title ----------------------------------------------------
-    // Additive blend (like TitleScene / ArenaScene neon layers) so it reads as a
-    // bright neon sign, plus one camera-level Bloom pass for the on-theme halo.
+    // Additive blend (like TitleScene / ArenaScene neon layers) keeps the title
+    // saturated without applying a camera-wide haze to the settings text.
     this.titleText = this.add
       .text(cx, cy - 140, SETTINGS_TITLE, {
         font: SETTINGS_TITLE_FONT,
@@ -139,7 +139,6 @@ export class SettingsScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     applyAdditiveBlend([this.titleText], Phaser.BlendModes.ADD);
-    addNeonBloom(this.cameras.main);
 
     // --- Apply + persist helper --------------------------------------------
     // Re-apply the effective master gain, play a short confirmation blip at the new

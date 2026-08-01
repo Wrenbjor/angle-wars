@@ -1478,7 +1478,7 @@ export const XP_ORB_DRIFT_SPEED = 320;
 // value × (1 + multiplier / this), using the multiplier at collect time.
 export const XP_MULTIPLIER_DIVISOR = 20;
 // Orb fill color (0xRRGGBB): a teal/green neon that reads as XP once the camera
-// bloom bleeds it — distinct from the warm particle sparks and the enemy hues.
+// additive blending brightens it — distinct from warm sparks and enemy hues.
 export const COLOR_XP_ORB = 0x00ffaa;
 
 // --- Gravity Well defense item (Story 11.7 / Epic 11) -----------------------
@@ -1531,18 +1531,20 @@ export const LEVELUP_CONFIRM_GRACE_MS = 180;
 // real card content). Mirrors the PAUSE_* / GAMEOVER_* overlay style blocks.
 // Overlay dim alpha (0..1) for the dimming rectangle (fill reuses COLOR_PAUSE_OVERLAY).
 export const LEVELUP_OVERLAY_ALPHA = 0.6;
-// Card panel fill color + alpha at rest, and the brighter/thicker focused variant
-// (the selected card, the bomb-pressed idiom).
-export const COLOR_LEVELUP_PANEL = 0x113322;
-export const LEVELUP_PANEL_ALPHA = 0.5;
-export const COLOR_LEVELUP_PANEL_FOCUS = 0x33ff99;
-export const LEVELUP_PANEL_FOCUS_ALPHA = 0.85;
-// Panel border color + line widths (the focused panel strokes thicker/brighter).
+// Dark, high-opacity card surfaces keep normal-sized copy readable. Focus shifts
+// the surface toward teal but remains dark; the selected card is communicated by
+// the thicker outline as well as color, so it survives monochrome perception.
+export const COLOR_LEVELUP_PANEL = 0x08131f;
+export const LEVELUP_PANEL_ALPHA = 0.96;
+export const COLOR_LEVELUP_PANEL_FOCUS = 0x10313b;
+export const LEVELUP_PANEL_FOCUS_ALPHA = 0.96;
+// Vivid neon accent belongs on the outline, not beneath paragraph text.
 export const COLOR_LEVELUP_PANEL_BORDER = 0x33ff99;
 export const LEVELUP_PANEL_BORDER_WIDTH = 2;
 export const LEVELUP_PANEL_FOCUS_BORDER_WIDTH = 5;
-// Text color shared by the heading, card titles, and prompt.
-export const COLOR_LEVELUP_TEXT = '#e6fff2';
+// Near-white mint shared by the heading, card titles, levels, descriptions, and
+// prompt. visualContrast.test.js verifies >= WCAG AA 4.5:1 on both surfaces.
+export const COLOR_LEVELUP_TEXT = '#f2fff8';
 // Fonts for the heading, each card's title, and the prompt line.
 export const LEVELUP_HEADING_FONT = '48px monospace';
 export const LEVELUP_CARD_TITLE_FONT = '22px monospace';
@@ -1650,7 +1652,7 @@ export const REROLL_LEVEL_GRANTS = Object.freeze([10, 15, 20]);
 // depleted (count 0) look. Placeholder styling only (Epic 4 owns the real aesthetic;
 // Epic 10 owns the real draft UX). Mirrors the LEVELUP_* card-panel style block.
 // Enabled button fill color + alpha (a warm amber that reads as an actionable tool
-// distinct from the green card panels once bloom bleeds it).
+// distinct from the green card accents under additive blending).
 export const COLOR_LEVELUP_ACTION = 0x332211;
 export const LEVELUP_ACTION_ALPHA = 0.6;
 // Depleted (count 0) fill color + alpha: dimmer/greyer so a spent action reads as
@@ -1663,7 +1665,7 @@ export const COLOR_LEVELUP_ACTION_BORDER = 0xffaa55;
 export const LEVELUP_ACTION_BORDER_WIDTH = 2;
 // Button label color: bright when enabled, dimmed grey when depleted.
 export const COLOR_LEVELUP_ACTION_TEXT = '#ffddaa';
-export const COLOR_LEVELUP_ACTION_TEXT_DEPLETED = '#666666';
+export const COLOR_LEVELUP_ACTION_TEXT_DEPLETED = '#bbbbbb';
 // Button label font.
 export const LEVELUP_ACTION_FONT = '18px monospace';
 // Button rect geometry (px, logical): each control's width/height, the gap between
@@ -1683,7 +1685,7 @@ export const LEVELUP_ACTION_Y_OFFSET = 90;
 export const LEVELUP_CARD_BANISH_SIZE = 40;
 export const LEVELUP_CARD_BANISH_MARGIN = 10;
 export const LEVELUP_CARD_BANISH_FONT = '20px monospace';
-// The banish glyph label (kept ASCII so it renders reliably under the bloom pass).
+// The banish glyph label (kept ASCII so it renders reliably across platforms).
 export const LEVELUP_CARD_BANISH_GLYPH = 'X';
 
 // --- Colors (0xRRGGBB) ------------------------------------------------------
@@ -1702,11 +1704,11 @@ export const COLOR_SNAKE = 0xffaa33;
 // bullet still draws in COLOR_BULLET.
 export const COLOR_RICOCHET = 0xff5533;
 // Mirror Reflector (Story 6.3): a pale chrome/steel hue that reads as a polished
-// mirror-metal dumbbell once the camera bloom bleeds it — distinct from the pink
+// mirror-metal dumbbell under additive blending — distinct from the pink
 // Pinwheel and the purple Black Hole. Used for both the bar line and the two weights.
 export const COLOR_MIRROR_REFLECTOR = 0xccddff;
 // Armored enemy (Story 9.3): a cold steel-grey that reads as heavy plate armor once
-// the camera bloom bleeds it — distinct from the blue Seeker and chrome Reflector.
+// additive blending brightens it — distinct from the blue Seeker and chrome Reflector.
 // The render draws a remaining-durability cue on top of this base fill.
 export const COLOR_ARMORED = 0x9aa4b2;
 // Placeholder fill for the Black Hole body at rest (instability 0). The grid-warp
@@ -1728,33 +1730,10 @@ export const BLACKHOLE_PULSE_ALPHA_DEPTH = 0.35;
 // real shockwave aesthetic is Epic 4 — this is a plain stroked circle only.
 export const COLOR_BOMB_SHOCKWAVE = 0xffffff;
 
-// --- Neon aesthetic / bloom (Story 4.1) -------------------------------------
-// The signature Geometry Wars "everything glows and bleeds light" look (NFR4).
-// It is produced two ways, both wired in ArenaScene.create() once (never per
-// frame): (1) the neon vector layers are put into additive blend so bright
-// shapes accumulate light over the near-black COLOR_BACKGROUND, and (2) ONE
-// camera-level Bloom post-FX pass (cameras.main.postFX.addBloom) bleeds that
-// light across the whole frame. Registering bloom once at the camera makes its
-// cost a single screen-space pass independent of entity count — the load-bearing
-// performance decision for the busy-arena 60 FPS target (NFR1). These six values
-// are the addBloom(color, offsetX, offsetY, blurStrength, strength, steps) tuple
-// in that exact order. All are tunable placeholders (tuned post-launch); no
-// inline magic numbers live at the ArenaScene call site.
-// Bloom tint (0xRRGGBB): white keeps every neon hue's own color while adding a
-// bright halo around it.
-export const NEON_BLOOM_COLOR = 0xffffff;
-// Horizontal / vertical bloom offset (Phaser defaults 1). How far the sampled
-// bright pixels are spread when the glow is composited.
-export const NEON_BLOOM_OFFSET_X = 1;
-export const NEON_BLOOM_OFFSET_Y = 1;
-// Blur strength of the bloom pass (Phaser default 1): how soft/wide the halo is.
-export const NEON_BLOOM_BLUR_STRENGTH = 1.2;
-// Blend strength of the bloom pass (Phaser default 1): how intensely the glow is
-// added back over the frame. Slightly above 1 for a visible neon bleed.
-export const NEON_BLOOM_STRENGTH = 1.2;
-// Number of bloom steps (Phaser default 4, must be an integer): more steps = a
-// smoother, wider glow at a higher fill cost. Kept modest to protect NFR1.
-export const NEON_BLOOM_STEPS = 4;
+// --- Neon aesthetic (Story 4.1) ---------------------------------------------
+// Saturated vector layers use additive blending over the near-black background.
+// Camera-wide bloom is intentionally absent because processing the completed frame
+// washed distinct hues toward white and reduced UI contrast.
 
 // --- Deforming grid field (Story 4.2) ---------------------------------------
 // The signature Geometry Wars "living grid": a neon floor grid that fills the
@@ -1765,7 +1744,7 @@ export const NEON_BLOOM_STEPS = 4;
 // the CPU never walks vertices. GridFieldSystem (the Phaser-free sim seam) owns a
 // bounded ripple pool and a single warp target and only writes uniforms. Every
 // value here is a documented post-launch placeholder (tuned later), mirroring the
-// NEON_BLOOM_* discipline — no inline magic numbers in the GLSL or at the call site.
+// centralized-style discipline — no inline magic numbers in the GLSL or call site.
 
 // Grid line spacing (px, arena space): the gap between adjacent grid lines.
 export const GRID_SPACING = 48;
@@ -1773,7 +1752,7 @@ export const GRID_SPACING = 48;
 // softer lines. The camera Bloom (Story 4.1) turns these into glowing neon lines.
 export const GRID_LINE_WIDTH = 1.5;
 // Grid line color (0xRRGGBB). Converted to a normalized vec3 in the pure seam and
-// passed to the shader; a dim blue that reads as neon once bloom bleeds it.
+// passed to the shader; a saturated blue that reads clearly on the dark arena.
 export const GRID_COLOR = 0x1b3f7a;
 // Ripple pool size: the fixed number of concurrent ripple slots (a bounded uniform
 // array => bounded GPU cost, independent of how many explosions occur). Emitting
@@ -1811,10 +1790,10 @@ export const GRID_WARP_RADIUS = BLACKHOLE_GRAVITY_RADIUS;
 // sim seam) owns a Pool of plain particle objects, advances/expires them each
 // fixed step with zero steady-state allocation, and is bounded by PARTICLE_MAX so
 // "thousands live" is supported by the cap + pool reuse (never unbounded growth).
-// ArenaScene renders every live particle as an additive-blend neon dot glowing
-// under the single Story 4.1 camera Bloom. Every value here is a documented
-// post-launch placeholder (tuned later), mirroring the GRID_* / NEON_BLOOM_*
-// discipline — no inline magic numbers in the system or at the render call site.
+// ArenaScene renders every live particle as a saturated additive-blend neon dot.
+// Every value here is a documented post-launch placeholder (tuned later), mirroring
+// the centralized GRID_* discipline — no inline magic numbers in the system or at
+// the render call site.
 
 // Hard cap on simultaneously-live particles. Emission that would exceed this is
 // skipped, so the pool (and per-frame render cost) is bounded — this is what
@@ -1832,7 +1811,7 @@ export const PARTICLE_BURST_LIFETIME_MS = 620;
 // Burst particle draw radius (px) for the additive neon dot.
 export const PARTICLE_BURST_SIZE = 2.5;
 // Burst particle color (0xRRGGBB): a warm neon that reads as an explosion spark
-// once the camera bloom bleeds it.
+// against the dark arena under additive blending.
 export const PARTICLE_BURST_COLOR = 0xffdd55;
 // Velocity retained after one second of drift (0..1): particle velocity decays by
 // this factor per second (exponential drag, interpolated per fixed step), so a
@@ -2156,28 +2135,20 @@ export const SETTINGS_REDUCED_MOTION_DEFAULT = false;
 // The mobile-scaled counterparts of the desktop presentation-cost tunables. When
 // the game detects it is running on a phone / inside the Capacitor WebView (see
 // src/config/qualityProfile.js), resolveQualityProfile() sources these values
-// instead of the desktop PARTICLE_MAX / NEON_BLOOM_* / GRID_SPACING, scaling the
-// particle cap, the bloom fill cost, and the grid line density DOWN so a mid-range
+// instead of the desktop PARTICLE_MAX / GRID_SPACING, scaling the particle cap and
+// grid line density DOWN so a mid-range
 // mobile GPU under peak load holds the 60 FPS target (NFR9, NFR1). The profile is
 // resolved ONCE per ArenaScene.create() (device-derived, never per frame) and
-// threaded into the three existing consumption seams, each of which defaults to its
+// threaded into the two existing consumption seams, each of which defaults to its
 // desktop constant so non-mobile play is byte-identical. Every value here is a
 // documented post-launch placeholder (tuned on-device post-launch — this Linux host
-// has no phone GPU to measure), mirroring the NEON_BLOOM_* / GRID_* / PARTICLE_*
-// discipline. INVARIANT: each MOBILE_* value MUST be strictly less costly than its
-// desktop counterpart — a smaller particle cap, fewer bloom steps + lower blur/
-// strength, and a larger/coarser grid spacing.
+// has no phone GPU to measure), mirroring the GRID_* / PARTICLE_* discipline.
+// INVARIANT: each MOBILE_* value is less costly than its desktop counterpart — a
+// smaller particle cap and a larger/coarser grid spacing.
 
 // Mobile hard cap on simultaneously-live particles (< PARTICLE_MAX): a smaller pool
 // and per-frame render cost for the weaker mobile fill rate.
 export const MOBILE_PARTICLE_MAX = 800;
-// Mobile bloom blur strength (<= NEON_BLOOM_BLUR_STRENGTH): a tighter, cheaper halo.
-export const MOBILE_NEON_BLOOM_BLUR_STRENGTH = 0.8;
-// Mobile bloom blend strength (<= NEON_BLOOM_STRENGTH): a slightly dimmer bleed.
-export const MOBILE_NEON_BLOOM_STRENGTH = 0.9;
-// Mobile bloom steps (< NEON_BLOOM_STEPS, integer): the load-bearing GPU win — the
-// bloom fill pass is screen-space, so halving the step count roughly halves its cost.
-export const MOBILE_NEON_BLOOM_STEPS = 2;
 // Mobile grid line spacing (> GRID_SPACING): a coarser grid draws fewer neon lines
 // (less smoothstep fill) — the honest "grid resolution down" knob, without touching
 // the shader's compiled GRID_MAX_RIPPLES #define.

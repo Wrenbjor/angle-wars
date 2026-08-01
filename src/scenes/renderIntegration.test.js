@@ -45,6 +45,23 @@ describe('render-integration — Boot→Preload→Title handoffs', () => {
   });
 });
 
+describe('render-integration — vibrant primary scenes without camera haze', () => {
+  const primaryScenes = [
+    ['ArenaScene', readSrc('./ArenaScene.js')],
+    ['TitleScene', readSrc('./TitleScene.js')],
+    ['SettingsScene', readSrc('./SettingsScene.js')],
+  ];
+
+  it.each(primaryScenes)('%s does not register camera-wide bloom', (_name, source) => {
+    expect(source).not.toContain('addNeonBloom');
+    expect(source).not.toMatch(/\.postFX\.addBloom\s*\(/);
+  });
+
+  it.each(primaryScenes)('%s preserves local additive neon layers', (_name, source) => {
+    expect(source).toMatch(/applyAdditiveBlend\s*\(/);
+  });
+});
+
 describe('render-integration — sim-rate sampler wiring (ArenaScene)', () => {
   // Pins that ArenaScene is actually WIRED to the extracted SimRateSampler with
   // the correct arg order and a per-frame update() call. The SimRateSampler unit
@@ -179,7 +196,7 @@ describe('render-integration — mirror-reflector render wiring (ArenaScene, Sto
 
   it('joins the reflector graphics to the additive/bloom neon layer list', () => {
     // The reflectorGraphics object must be in the applyAdditiveBlend list so the
-    // dumbbell glows under the single camera bloom like every other neon layer.
+    // dumbbell stays vivid through the same additive blend as every other neon layer.
     expect(arenaSrc).toMatch(
       /applyAdditiveBlend\(\s*\[[\s\S]*?this\.reflectorGraphics[\s\S]*?\]/,
     );
@@ -455,6 +472,28 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     expect(arenaSrc).toMatch(
       /const shown = cardsOpen && i < offer\.length;[\s\S]{0,160}?if \(!shown\) continue;/,
     );
+  });
+
+  it('VG18: ordinary card states use dark palette constants and a non-color focus cue', () => {
+    expect(arenaSrc).toMatch(
+      /focused\s*\?\s*COLOR_LEVELUP_PANEL_FOCUS\s*:\s*COLOR_LEVELUP_PANEL/,
+    );
+    expect(arenaSrc).toMatch(
+      /focused\s*\?\s*LEVELUP_PANEL_FOCUS_ALPHA\s*:\s*LEVELUP_PANEL_ALPHA/,
+    );
+    expect(arenaSrc).toMatch(
+      /focused\s*\?\s*LEVELUP_PANEL_FOCUS_BORDER_WIDTH\s*:\s*LEVELUP_PANEL_BORDER_WIDTH/,
+    );
+    expect(arenaSrc).toMatch(/title\.setColor\(COLOR_LEVELUP_TEXT\)/);
+    expect(arenaSrc).toMatch(/levelText\.setColor\(COLOR_LEVELUP_TEXT\)/);
+    expect(arenaSrc).toMatch(/desc\.setColor\(COLOR_LEVELUP_TEXT\)/);
+  });
+
+  it('VG19: Fusion cards retain gold fill, wider border, Epic label, and fallback copy', () => {
+    expect(arenaSrc).toMatch(/if\s*\(isFusion\)[\s\S]{0,180}?fillStyle\(COLOR_FUSION_GOLD,\s*0\.25\)/);
+    expect(arenaSrc).toMatch(/const borderW = focused \? 5 : 3/);
+    expect(arenaSrc).toContain("levelText.setText('EPIC FUSION')");
+    expect(arenaSrc).toContain("'Combine mastered items into an Epic power.'");
   });
 });
 
