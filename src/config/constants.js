@@ -1503,19 +1503,11 @@ export const XP_CURVE_QUAD = 0.55;
 
 // --- Level-up moment & card UI (Story 8.3 / Epic 8 progression) --------------
 // When the derived level crosses a threshold (LevelSystem.levelsGainedThisTick),
-// the run enters a level-up moment: world time DILATES to a slow crawl (not a
-// freeze — the swarm stays visible), the player is held invulnerable, and a
-// modal three-card overlay opens. The sim-side state machine lives in the
-// Phaser-free LevelUpSystem; ArenaScene owns the overlay render + dilation +
-// input. All values are tunable placeholders (tuned post-launch), mirroring the
-// SCORE_* / overlay-style discipline — no inline magic numbers.
-
-// World time-scale while a selection is pending: the render delta fed to
-// fixedTimestep.advance is scaled by this, so the whole world advances at 0.15×
-// real time (a slow-mo, NOT a hard pause — the swarm keeps crawling). The
-// per-step dt stays FIXED_STEP_MS, so every system integrates a bit-identical
-// slice; only the STEP RATE slows.
-export const LEVELUP_TIME_SCALE = 0.15;
+// the run enters a level-up moment: gameplay simulation freezes while the player
+// reads and chooses from a modal card offer. The Phaser-free LevelUpSystem owns
+// modal/progression state; ArenaScene owns the hard world gate, overlay, and input.
+// Remaining values mirror the SCORE_* / overlay-style discipline — no inline
+// tuning numbers.
 // Invuln floor (ms) re-armed each pending tick so the player is unhittable for the
 // whole (indefinite) selection. Comfortably above FIXED_STEP_MS (one tick's drain
 // in PlayerDeathSystem) so a re-arm always survives a tick, with a small residual

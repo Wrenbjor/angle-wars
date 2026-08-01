@@ -364,6 +364,67 @@ describe('LevelUpSystem — level-up moment state machine', () => {
   });
 });
 
+describe('LevelUpSystem — frozen-overlay modal processing', () => {
+  it('applies a final pick without re-ingesting the stale crossing edge', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    const picked = sys.currentOffer[0];
+    // LevelSystem is frozen, so its edge intentionally remains stale here.
+    sys.queueSelection(0);
+    sys.processModalActions();
+    expect(prog.ownedCards[picked.id]).toBe(1);
+    expect(sys.pendingSelections).toBe(0);
+    expect(sys.selectionActive).toBe(false);
+  });
+
+  it('rebuilds the next offer after a frozen multi-pick selection', () => {
+    const { sys, levelStub } = build();
+    levelStub.levelsGainedThisTick = 2;
+    sys.fixedUpdate();
+    const firstOffer = sys.currentOffer;
+    sys.queueSelection(0);
+    sys.processModalActions();
+    expect(sys.pendingSelections).toBe(1);
+    expect(sys.selectionActive).toBe(true);
+    expect(sys.currentOffer).not.toBe(firstOffer);
+    expect(sys.currentOffer.length).toBeGreaterThan(0);
+  });
+
+  it('consumes reroll and banish while frozen, preserving their guarded economy', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    const rerolls = prog.rerollCharges;
+    sys.queueReroll();
+    sys.processModalActions();
+    expect(prog.rerollCharges).toBe(rerolls - 1);
+    const banished = sys.currentOffer[0].id;
+    const banishes = prog.banishCharges;
+    sys.queueBanish(0);
+    sys.processModalActions();
+    expect(prog.banishCharges).toBe(banishes - 1);
+    expect(prog.banishedIds.has(banished)).toBe(true);
+  });
+
+  it('keeps invalid modal actions as no-ops and safely drains an empty pool', () => {
+    const { sys, levelStub, prog } = build();
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+    sys.queueSelection(99);
+    sys.queueBanish(-1);
+    sys.processModalActions();
+    expect(sys.pendingSelections).toBe(1);
+    expect(prog.debugStat).toBe(0);
+
+    const empty = build({ registry: [] });
+    empty.sys.pendingSelections = 2;
+    expect(() => empty.sys.processModalActions()).not.toThrow();
+    expect(empty.sys.pendingSelections).toBe(0);
+    expect(empty.sys.currentOffer).toEqual([]);
+  });
+});
+
 describe('LevelUpSystem — Story 10.1 variable-size offers', () => {
   // A SHORT offer: pre-banish 7 of the 9 registry items (Story 11.1 added orbit-blade,
   // Story 11.2 added seeker-drones, Story 11.3 added mine-layer, Story 11.4 added
@@ -1070,6 +1131,44 @@ describe('LevelUpSystem — Story 12.1 fusion integration', () => {
     expect(slot0.epicType).toBe('tesla-circuit');
     expect(slot0.fusionRecipeId).toBe('tesla-circuit');
     expect(slot0.id).toBe('epic-tesla-circuit');
+  });
+
+  it('generic-partner fusion card preserves the concrete partner chosen for its UI copy', () => {
+    const level = (id, title) => ({
+      id,
+      name: title,
+      title,
+      track: 'offense',
+      rarity: 1,
+      maxLevel: 5,
+      levels: Array.from({ length: 5 }, (_, i) => ({
+        level: i + 1,
+        desc: `Level ${i + 1}`,
+        stats: {},
+      })),
+      fusion: null,
+      guaranteeFromLevel: null,
+    });
+    const registry = [
+      level('overcharge', 'Overcharge'),
+      level('alpha-offense', 'Alpha Offense'),
+      level('beta-offense', 'Beta Offense'),
+    ];
+    const { sys, levelStub, prog } = buildWithFusion({ registry });
+    prog.ownedCards.overcharge = 5;
+    prog.ownedCards['alpha-offense'] = 5;
+    prog.ownedCards['beta-offense'] = 5;
+
+    levelStub.levelsGainedThisTick = 1;
+    sys.fixedUpdate();
+
+    expect(sys.currentOffer[0]).toMatchObject({
+      isEpicCard: true,
+      fusionRecipeId: 'critical-resonance',
+    });
+    expect(['alpha-offense', 'beta-offense']).toContain(
+      sys.currentOffer[0].fusionPartnerItemId,
+    );
   });
 
   it('fusion card in slot 0: on pick → resolveRecipe replaces primary + remnant partner', () => {

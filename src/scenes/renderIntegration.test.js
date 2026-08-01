@@ -206,12 +206,8 @@ describe('render-integration — ricochet bullet tint wiring (ArenaScene, Story 
 describe('render-integration — render→sim decoupling (ArenaScene.update)', () => {
   const arenaSrc = readSrc('./ArenaScene.js');
 
-  it('advances the sim only through this.fixedTimestep.advance(delta * timeScale, ...)', () => {
-    // Story 8.3 dilates the level-up moment by scaling the render delta fed to the
-    // accumulator (delta * timeScale, timeScale 1 in normal play), so the sim still
-    // advances ONLY through the fixedTimestep.advance seam fed a render-delta-derived
-    // value — never a direct world.fixedUpdate(delta) from the render loop.
-    expect(arenaSrc).toMatch(/this\.fixedTimestep\.advance\(\s*delta\s*\*\s*timeScale\s*,/);
+  it('advances the sim only through this.fixedTimestep.advance(delta, ...)', () => {
+    expect(arenaSrc).toMatch(/this\.fixedTimestep\.advance\(\s*delta\s*,/);
   });
 
   it('steps the world exactly once, and only inside the gameOver-gated callback', () => {
@@ -222,7 +218,7 @@ describe('render-integration — render→sim decoupling (ArenaScene.update)', (
     const occurrences = arenaSrc.match(/this\.world\.fixedUpdate\(/g) ?? [];
     expect(occurrences).toHaveLength(1);
     expect(arenaSrc).toMatch(
-      /if\s*\(\s*!this\.playerState\.gameOver\s*\)\s*this\.world\.fixedUpdate\(\s*dt\s*\)/,
+      /if\s*\(\s*!this\.playerState\.gameOver\s*&&\s*!this\.levelUpSystem\.selectionActive\s*\)[\s\S]{0,120}?this\.world\.fixedUpdate\(\s*dt\s*\)/,
     );
   });
 });
@@ -235,11 +231,13 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
   // render-loop seams that would silently regress the moment if reverted.
   const arenaSrc = readSrc('./ArenaScene.js');
 
-  it('VG1: dilates the level-up via the selectionActive ? LEVELUP_TIME_SCALE : 1 gate', () => {
-    // Regressing timeScale to a constant 1 (dropping the dilation) would fail this.
+  it('VG1: hard-freezes an offer, processes only modal actions, and resumes next frame', () => {
     expect(arenaSrc).toMatch(
-      /const\s+timeScale\s*=\s*this\.levelUpSystem\.selectionActive\s*\?\s*LEVELUP_TIME_SCALE\s*:\s*1/,
+      /const\s+selectionWasActive\s*=\s*this\.levelUpSystem\.selectionActive/,
     );
+    expect(arenaSrc).toMatch(/if\s*\(\s*selectionWasActive\s*\)[\s\S]{0,700}?processModalActions\(\)/);
+    expect(arenaSrc).toMatch(/else if\s*\(\s*!selectionWasActive\s*\)[\s\S]{0,500}?fixedTimestep\.advance/);
+    expect(arenaSrc).not.toMatch(/LEVELUP_TIME_SCALE/);
   });
 
   it('VG2: suppresses gameplay input while the overlay is open (clear + drop bomb after sample)', () => {
@@ -247,7 +245,7 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     // so the ship idles and nav keys never steer it. Dropping this block would let the
     // ship fly / fire under the modal.
     expect(arenaSrc).toMatch(
-      /if\s*\(\s*this\.levelUpSystem\.selectionActive\s*\)\s*\{\s*this\.inputState\.clear\(\)\s*;\s*this\.inputState\.consumeBomb\(\)\s*;/,
+      /if\s*\(\s*selectionWasActive\s*\)\s*\{\s*this\.inputState\.clear\(\)\s*;\s*this\.inputState\.consumeBomb\(\)\s*;/,
     );
   });
 
@@ -265,8 +263,31 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     // still match VG2 yet let sample() re-populate the intent AFTER the clear, so the
     // ship would steer under the modal. Pin that sample() precedes the clear block.
     expect(arenaSrc).toMatch(
-      /this\.inputSampler\.sample\(\)[\s\S]{0,600}?if\s*\(\s*this\.levelUpSystem\.selectionActive\s*\)\s*\{\s*this\.inputState\.clear\(\)/,
+      /this\.inputSampler\.sample\(\)[\s\S]{0,600}?const\s+selectionWasActive[\s\S]{0,120}?if\s*\(\s*selectionWasActive\s*\)\s*\{\s*this\.inputState\.clear\(\)/,
     );
+  });
+
+  it('VG1b: suppresses catch-up steps after an offer opens and resets the accumulator', () => {
+    expect(arenaSrc).toMatch(
+      /!this\.playerState\.gameOver\s*&&\s*!this\.levelUpSystem\.selectionActive/,
+    );
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*this\.levelUpSystem\.selectionActive\s*\)\s*selectionOpenedDuringAdvance\s*=\s*true/,
+    );
+    expect(arenaSrc).toMatch(
+      /if\s*\(\s*selectionOpenedDuringAdvance\s*\)\s*this\.fixedTimestep\.reset\(\)/,
+    );
+  });
+
+  it('VG1c: creates persistent level/description text and renders the next authored rung', () => {
+    expect(arenaSrc).toMatch(/this\._cardLevelTexts\s*=\s*this\._cardRects\.map/);
+    expect(arenaSrc).toMatch(/this\._cardDescTexts\s*=\s*this\._cardRects\.map/);
+    expect(arenaSrc).toMatch(/const\s+nextRung\s*=\s*Array\.isArray\(offer\[i\]\.levels\)[\s\S]{0,100}?offer\[i\]\.levels\[ownedLevel\]/);
+    expect(arenaSrc).toMatch(/'NEW • Lv 1'/);
+    expect(arenaSrc).toMatch(/`Lv \$\{ownedLevel\} → \$\{ownedLevel \+ 1\}`/);
+    expect(arenaSrc).toMatch(/typeof\s+nextRung\?\.desc\s*===\s*'string'/);
+    expect(arenaSrc).toMatch(/fusion\.fusionPartnerItemId\s*\|\|\s*fuseRecipe\?\.partnerItemId/);
+    expect(arenaSrc).toMatch(/'Combine mastered items into an Epic power\.'/);
   });
 
   it('VG5: hides the whole level-up overlay on the paused early-return (no stacked modal)', () => {
@@ -281,6 +302,8 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     expect(arenaSrc).toMatch(
       /for\s*\([\s\S]{0,80}?this\.cardTitles\.length[\s\S]{0,80}?this\.cardTitles\[i\]\.setVisible\(false\)/,
     );
+    expect(arenaSrc).toMatch(/this\._cardLevelTexts\[i\]\.setVisible\(false\)/);
+    expect(arenaSrc).toMatch(/this\._cardDescTexts\[i\]\.setVisible\(false\)/);
   });
 
   it('VG6: arms + gates + decays a confirm-grace so an in-flight confirm cannot instant-pick on open', () => {

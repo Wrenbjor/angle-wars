@@ -223,6 +223,10 @@ export class LevelUpSystem extends System {
       title: recipe.name,
       epicType: recipe.epicType,
       fusionRecipeId: recipe.id,
+      // Generic partner rules resolve to a concrete item at offer time. Preserve that
+      // choice for player-facing recipe copy; the static recipe intentionally stores
+      // partnerItemId: null for these rules.
+      fusionPartnerItemId: ready.partnerItemId ?? null,
       isEpicCard: true,
     };
     this._fusionLockedItemId = this._fusionLockedItem.id;
@@ -287,6 +291,21 @@ export class LevelUpSystem extends System {
    * offer if needed and re-arm the invuln floor.
    */
   fixedUpdate() {
+    this._processSelectionState(true);
+  }
+
+  /**
+   * Consume render-rate modal commands while the gameplay world is frozen.
+   * Unlike fixedUpdate(), this deliberately does not read levelsGainedThisTick: the
+   * LevelSystem cannot clear that fixed-tick edge while the world is paused, so reading
+   * it here would enqueue the same crossing once per render frame.
+   */
+  processModalActions() {
+    this._processSelectionState(false);
+  }
+
+  /** @private */
+  _processSelectionState(ingestLevelCrossing) {
     // (1) Consume the latched choice (read-and-clear). Apply it ONLY when a
     // selection is actually pending, a non-empty offer is present (Story 10.1: the
     // offer is variable length, 1..CARD_OFFER_SIZE), and the index is a valid slot
@@ -414,7 +433,7 @@ export class LevelUpSystem extends System {
     // crosses INTO. prevLevel = level - levelsGainedThisTick; a threshold T is crossed
     // this tick iff prevLevel < T <= level — correct for a multi-level jump spanning
     // several thresholds, firing exactly once each (level is monotonic, no re-cross).
-    if (this.levelSystem.levelsGainedThisTick > 0) {
+    if (ingestLevelCrossing && this.levelSystem.levelsGainedThisTick > 0) {
       const prevLevel =
         this.levelSystem.level - this.levelSystem.levelsGainedThisTick;
       for (let i = 0; i < REROLL_LEVEL_GRANTS.length; i++) {

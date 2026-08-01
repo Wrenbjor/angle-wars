@@ -65,7 +65,6 @@ import {
   COLOR_PAUSE_TEXT,
   PAUSE_TITLE_FONT,
   PAUSE_PROMPT_FONT,
-  LEVELUP_TIME_SCALE,
   LEVELUP_CONFIRM_GRACE_MS,
   MOVE_DEADZONE,
   LEVELUP_OVERLAY_ALPHA,
@@ -895,10 +894,11 @@ export class ArenaScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setVisible(false);
-    // One title Text per panel, centered on each card.
+    // Persistent text objects for each panel. Titles sit above the level and authored
+    // next-rung description so an upgrade communicates both progression and effect.
     this.cardTitles = this._cardRects.map((r) =>
       this.add
-        .text(r.cx, r.cy, '', {
+        .text(r.cx, r.y + 42, '', {
           font: LEVELUP_CARD_TITLE_FONT,
           color: COLOR_LEVELUP_TEXT,
           align: 'center',
@@ -930,9 +930,29 @@ export class ArenaScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setVisible(false);
-    // Story 12.2: one description Text per card for the fusion recipe (primary + partner).
-    // Initially empty — only set for the fusion card slot.
-    this._cardDescTexts = [];
+    this._cardLevelTexts = this._cardRects.map((r) =>
+      this.add
+        .text(r.cx, r.y + 82, '', {
+          font: '16px monospace',
+          color: COLOR_LEVELUP_TEXT,
+          align: 'center',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setVisible(false),
+    );
+    this._cardDescTexts = this._cardRects.map((r) =>
+      this.add
+        .text(r.cx, r.y + 112, '', {
+          font: '14px monospace',
+          color: COLOR_LEVELUP_TEXT,
+          align: 'center',
+          wordWrap: { width: r.w - 36 },
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setVisible(false),
+    );
 
     // --- Reroll / Banish action controls (Story 8.5) ------------------------
     // Two labelled action buttons (index 0 = Reroll, index 1 = Banish) below the prompt,
@@ -1276,6 +1296,8 @@ export class ArenaScene extends Phaser.Scene {
       this.levelUpPrompt.setVisible(false);
       for (let i = 0; i < this.cardTitles.length; i++) {
         this.cardTitles[i].setVisible(false);
+        this._cardLevelTexts[i].setVisible(false);
+        this._cardDescTexts[i].setVisible(false);
       }
       // Story 8.5: hide the reroll/banish controls + per-card banish glyphs too (re-shown
       // on resume by the per-frame render while selectionActive is still true).
@@ -1313,13 +1335,17 @@ export class ArenaScene extends Phaser.Scene {
     // the modal. The nav/confirm handlers run on the scene input plugin, independent
     // of this cleared InputState. Done AFTER sample() and BEFORE the fixed-step advance
     // so this tick reads the cleared intent.
-    if (this.levelUpSystem.selectionActive) {
+    const selectionWasActive = this.levelUpSystem.selectionActive;
+    if (selectionWasActive) {
       this.inputState.clear();
       this.inputState.consumeBomb();
       // Story 10.5: drain the dash latch too — `clear()` deliberately clears only the
       // continuous move/aim levels, so without this an Afterburner dash queued under
       // the card overlay would fire the instant the overlay closed.
       this.inputState.consumeDash();
+      // The gameplay world is frozen, but modal latches must still resolve. This
+      // render-only phase never re-ingests the stale fixed-tick level crossing.
+      this.levelUpSystem.processModalActions();
     }
 
     // Story 4.4 hit-stop: while the render-owned _hitStopMs countdown is running,
@@ -1331,19 +1357,21 @@ export class ArenaScene extends Phaser.Scene {
     if (this._hitStopMs > 0) {
       this._hitStopMs -= delta;
       if (this._hitStopMs < 0) this._hitStopMs = 0;
-    } else {
-      // Story 8.3: while a level-up selection is pending, DILATE world time to a slow
-      // crawl by scaling the render delta fed to the accumulator (the swarm stays
-      // visible — a slow-mo, not a freeze). The per-step dt stays FIXED_STEP_MS, so
-      // every system integrates a bit-identical slice; only the STEP RATE slows.
-      // Hit-stop (a hard freeze) still wins above; game-over freezes inside the step.
-      const timeScale = this.levelUpSystem.selectionActive ? LEVELUP_TIME_SCALE : 1;
+    } else if (!selectionWasActive) {
       // Freeze the simulation on game over at sub-step granularity: each fixed
       // sub-step re-checks gameOver, so no system runs once death latches — even
       // mid-frame during multi-sub-step catch-up — keeping the final score stable.
-      this.fixedTimestep.advance(delta * timeScale, (dt) => {
-        if (!this.playerState.gameOver) this.world.fixedUpdate(dt);
+      let selectionOpenedDuringAdvance = false;
+      this.fixedTimestep.advance(delta, (dt) => {
+        if (!this.playerState.gameOver && !this.levelUpSystem.selectionActive) {
+          this.world.fixedUpdate(dt);
+          if (this.levelUpSystem.selectionActive) selectionOpenedDuringAdvance = true;
+        }
       });
+      // The crossing step is atomic. The callback gate suppresses later catch-up
+      // updates; reset only after advance returns so its accumulator arithmetic stays
+      // valid, then discard every pre-offer remainder before eventual resume.
+      if (selectionOpenedDuringAdvance) this.fixedTimestep.reset();
     }
 
     // Story 4.4: pull the screen-feedback system's latches into the render-owned
@@ -1861,11 +1889,13 @@ export class ArenaScene extends Phaser.Scene {
     for (let i = 0; i < this._cardRects.length; i++) {
       const r = this._cardRects[i];
       const title = this.cardTitles[i];
+      const levelText = this._cardLevelTexts[i];
       const banishLabel = this.cardBanishLabels[i];
       // Story 12.2: Fusion card description text.
       const desc = this._cardDescTexts[i];
       const shown = cardsOpen && i < offer.length;
       title.setVisible(shown);
+      levelText.setVisible(shown);
       banishLabel.setVisible(shown);
       if (desc) desc.setVisible(shown);
       if (!shown) continue;
@@ -1875,8 +1905,12 @@ export class ArenaScene extends Phaser.Scene {
       const isFusion = fusion && i === 0;
       let fuseRecipe = null;
       // Look up the recipe data from FusionSystem for the recipe text.
-      if (isFusion && fusion?.fusionRecipeId && this.fusionSystem?.FUSION_RECIPES) {
-        const recipes = this.fusionSystem.FUSION_RECIPES;
+      if (
+        isFusion &&
+        fusion?.fusionRecipeId &&
+        this.fusionSystem?.constructor?.FUSION_RECIPES
+      ) {
+        const recipes = this.fusionSystem.constructor.FUSION_RECIPES;
         fuseRecipe = recipes.find(r => r.id === fusion.fusionRecipeId) || null;
       }
 
@@ -1891,19 +1925,28 @@ export class ArenaScene extends Phaser.Scene {
         // Gold title text.
         title.setColor(COLOR_FUSION_GOLD_TEXT);
         title.setText(offer[i].title);
+        levelText.setColor(COLOR_FUSION_GOLD_TEXT);
+        levelText.setText('EPIC FUSION');
         // Fusion recipe text beneath the title.
-        if (desc && fuseRecipe) {
+        if (desc) {
           // Build recipe description: "PrimaryItem + PartnerItem"
           const reg = this.levelUpSystem.registry || [];
-          const primaryEntry = reg.find(e => e.id === fuseRecipe.primaryItemId);
-          const partnerEntry = fuseRecipe.partnerItemId
-            ? reg.find(e => e.id === fuseRecipe.partnerItemId)
+          const primaryEntry = fuseRecipe
+            ? reg.find(e => e.id === fuseRecipe.primaryItemId)
             : null;
-          const primaryName = primaryEntry?.title || fuseRecipe.primaryItemId;
-          const partnerName = partnerEntry?.title || fuseRecipe.partnerItemId || '?';
+          const partnerItemId = fusion.fusionPartnerItemId || fuseRecipe?.partnerItemId;
+          const partnerEntry = partnerItemId
+            ? reg.find(e => e.id === partnerItemId)
+            : null;
+          const primaryName = primaryEntry?.title || fuseRecipe?.primaryItemId;
+          const partnerName = partnerEntry?.title || partnerItemId;
           desc.setColor(COLOR_FUSION_GOLD_TEXT);
-          desc.setText(`${primaryName} Lv5 + ${partnerName} Lv3`);
-          desc.setPosition(r.cx, r.y + r.h + 12);
+          desc.setText(
+            primaryName && partnerName
+              ? `${primaryName} Lv5 + ${partnerName} Lv3`
+              : 'Combine mastered items into an Epic power.',
+          );
+          desc.setPosition(r.cx, r.y + 112);
           desc.setOrigin(0.5, 0);
           desc.setFont('14px monospace');
           desc.setVisible(true);
@@ -1923,7 +1966,30 @@ export class ArenaScene extends Phaser.Scene {
         cpg.strokeRect(r.x, r.y, r.w, r.h);
         title.setColor(COLOR_LEVELUP_TEXT);
         title.setText(offer[i].title);
-        if (desc) desc.setVisible(false);
+        const ownedLevel = Number.isInteger(this.progressionState.ownedCards[offer[i].id])
+          ? this.progressionState.ownedCards[offer[i].id]
+          : 0;
+        const nextRung = Array.isArray(offer[i].levels)
+          ? offer[i].levels[ownedLevel]
+          : null;
+        levelText.setColor(COLOR_LEVELUP_TEXT);
+        levelText.setText(
+          ownedLevel > 0
+            ? `Lv ${ownedLevel} → ${ownedLevel + 1}`
+            : 'NEW • Lv 1',
+        );
+        if (desc) {
+          desc.setColor(COLOR_LEVELUP_TEXT);
+          desc.setPosition(r.cx, r.y + 112);
+          desc.setOrigin(0.5, 0);
+          desc.setFont('14px monospace');
+          desc.setText(
+            typeof nextRung?.desc === 'string' && nextRung.desc.length > 0
+              ? nextRung.desc
+              : 'Upgrade details unavailable.',
+          );
+          desc.setVisible(true);
+        }
       }
       // Per-card banish glyph in the top-right corner: enabled amber when a banish
       // charge remains, dimmed grey when depleted (reads as clearly unavailable).
@@ -1944,7 +2010,7 @@ export class ArenaScene extends Phaser.Scene {
       );
     }
     // Story 12.2 — Fusion UX: golden particle aura on the fusion card.
-    if (fusion && cardsOpen) {
+    if (fusion && cardsOpen && freshOffer) {
       const fr = this._cardRects[0];
       if (fr) {
         const speedMult = FUSION_PARTICLE_SPEED_MULT || 0.7;
