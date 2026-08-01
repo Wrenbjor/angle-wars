@@ -139,20 +139,20 @@ development_status:
   # Epic 12 — The Fusion Tech Tree (Epics)
   # Re-sliced 2026-07-27 from 4 bundled stories into 16 single-session stories
   # (run 20260726-170549-ab23 timed out on every bundled story).
-  epic-12: backlog
+  epic-12: in-progress
   12-1-fusion-core: done
-  12-2-fusion-ux: backlog
+  12-2-fusion-ux: review
   12-3-tesla-circuit: done
   12-4-railgun: done
   12-5-phase-armor: done
   12-6-sunburst: done
   12-7-swarm-protocol: done
   12-8-singularity-field: done
-  12-9-kaleidoscope: backlog
+  12-9-kaleidoscope: review
   12-10-fragmentation-cascade: done
   12-11-critical-resonance: done
   12-12-slipstream: done
-  12-13-event-horizon: backlog
+  12-13-event-horizon: in-progress
   12-14-revenant: done
   12-15-chain-reaction: backlog
   12-16-stasis-lock: done
