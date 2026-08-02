@@ -495,6 +495,29 @@ describe('render-integration — level-up moment wiring (ArenaScene, Story 8.3)'
     expect(arenaSrc).toContain("levelText.setText('EPIC FUSION')");
     expect(arenaSrc).toContain("'Combine mastered items into an Epic power.'");
   });
+
+  it('VG20: fusion-card aura imports every burst constant used by its render path', () => {
+    // ArenaScene cannot execute headlessly, so pin the import boundary that prevents
+    // an on-device ReferenceError from terminating Phaser's render loop when a fresh
+    // fusion offer opens.
+    const constantsImport = arenaSrc.match(
+      /import\s*\{([\s\S]*?)\}\s*from\s*['"]\.\.\/config\/constants\.js['"]/,
+    )?.[1] ?? '';
+    for (const binding of [
+      'PARTICLE_BURST_SPEED_MIN',
+      'PARTICLE_BURST_SPEED_MAX',
+      'PARTICLE_BURST_LIFETIME_MS',
+    ]) {
+      expect(constantsImport).toMatch(new RegExp(`\\b${binding}\\b`));
+    }
+
+    // Ignore comments before checking references so commented-out code cannot keep
+    // this regression guard green after the live render path loses a binding.
+    const arenaCode = arenaSrc.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+    expect(arenaCode).toMatch(/const speedMin = PARTICLE_BURST_SPEED_MIN \* speedMult/);
+    expect(arenaCode).toMatch(/const speedMax = PARTICLE_BURST_SPEED_MAX \* speedMult/);
+    expect(arenaCode).toMatch(/const lifeMs = PARTICLE_BURST_LIFETIME_MS \*/);
+  });
 });
 
 describe('render-integration — touch twin-stick wiring (ArenaScene, Story 7.1)', () => {
