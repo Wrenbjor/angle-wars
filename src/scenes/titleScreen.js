@@ -13,10 +13,10 @@
 export const TITLE_TEXT = 'ANGLE WARS';
 
 /** The "press start" prompt inviting any start input. */
-export const START_PROMPT = 'Press Enter / Space, click, or a gamepad button to start';
+export const START_PROMPT = 'PLAY';
 
 /** The prompt inviting the player into the SettingsScene (Story 5.3), naming `S`. */
-export const SETTINGS_PROMPT = 'Press S for Settings';
+export const SETTINGS_PROMPT = 'SETTINGS';
 
 /**
  * The basic-controls lines, now including Pause (Esc/P — Story 5.2), Settings

@@ -2152,6 +2152,13 @@ export const SETTINGS_FULLSCREEN_DEFAULT = false;
 // ArenaScene suppresses the grid warp, full-screen flash, and camera shake at
 // render time; it is read once at ArenaScene.create() (never live re-read mid-run).
 export const SETTINGS_REDUCED_MOTION_DEFAULT = false;
+export const MENU_CONTROL_FILL = 0x10283a;
+export const MENU_CONTROL_FILL_PRESSED = 0x24506a;
+export const MENU_CONTROL_FILL_ON = 0x164f46;
+export const MENU_CONTROL_STROKE = 0x33ffee;
+export const MENU_CONTROL_TEXT = '#ffffff';
+export const MENU_CONTROL_FONT = '24px monospace';
+export const MENU_CONTROL_MIN_HEIGHT = 48;
 
 // --- Mobile performance profile (Story 7.4) ---------------------------------
 // The mobile-scaled counterparts of the desktop presentation-cost tunables. When

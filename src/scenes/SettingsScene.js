@@ -9,6 +9,12 @@ import {
   COLOR_SETTINGS_HINT,
   SETTINGS_HINT_FONT,
   AUDIO_VOLUME_STEP,
+  MENU_CONTROL_FILL,
+  MENU_CONTROL_FILL_PRESSED,
+  MENU_CONTROL_FILL_ON,
+  MENU_CONTROL_STROKE,
+  MENU_CONTROL_TEXT,
+  MENU_CONTROL_FONT,
 } from '../config/constants.js';
 import { createSettingsStorage } from '../persistence/settingsStorage.js';
 import { AudioEngine } from '../audio/audioEngine.js';
@@ -26,6 +32,12 @@ import {
   nextFlowState,
   sceneForState,
 } from './gameFlow.js';
+import {
+  MENU_ACTIONS,
+  acceptMenuActivation,
+  settingsControlLayout,
+  switchViewModel,
+} from './menuControls.js';
 
 // SettingsScene — the settings surface reached from the title with `S` (Story 5.3 /
 // FR14). It exposes volume, mute, and fullscreen, each applying IMMEDIATELY and
@@ -38,8 +50,8 @@ import {
 // This scene is a thin view/adapter layer: all text content + formatting live in the
 // Phaser-free settingsMenu.js seam, all volume/mute math in audioMix.js, all decision
 // routing in the gameFlow.js seam, and all persistence behind the settingsStorage
-// port (never localStorage directly). Navigation is keyboard-only this story (Story
-// 5.4 owns gamepad polish); Esc / Enter return to the title through the flow seam.
+// port (never localStorage directly). Touch controls mirror the keyboard paths;
+// Esc / Enter and the Back button return to the title through the flow seam.
 export class SettingsScene extends Phaser.Scene {
   constructor() {
     super('SettingsScene');
@@ -89,7 +101,7 @@ export class SettingsScene extends Phaser.Scene {
     // Additive blend (like TitleScene / ArenaScene neon layers) keeps the title
     // saturated without applying a camera-wide haze to the settings text.
     this.titleText = this.add
-      .text(cx, cy - 140, SETTINGS_TITLE, {
+      .text(cx, 70, SETTINGS_TITLE, {
         font: SETTINGS_TITLE_FONT,
         color: COLOR_SETTINGS_TITLE_STRING,
         align: 'center',
@@ -101,37 +113,37 @@ export class SettingsScene extends Phaser.Scene {
     // the hint (Story 6.1): volume cy-60, mute cy-20, fullscreen cy+20, reduced
     // motion cy+60, hint cy+130.
     this.volumeText = this.add
-      .text(cx, cy - 60, formatVolume(this._volume), {
+      .text(cx, 180, formatVolume(this._volume), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5).setDepth(2);
     this.muteText = this.add
-      .text(cx, cy - 20, formatToggle('MUTE', this._muted), {
+      .text(cx, 270, formatToggle('MUTE', this._muted), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5).setDepth(2);
     this.fullscreenText = this.add
-      .text(cx, cy + 20, formatToggle('FULLSCREEN', this._fullscreen), {
+      .text(cx, 360, formatToggle('FULLSCREEN', this._fullscreen), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5).setDepth(2);
     this.reducedMotionText = this.add
-      .text(cx, cy + 60, formatToggle('REDUCED MOTION', this._reducedMotion), {
+      .text(cx, 450, formatToggle('REDUCED MOTION', this._reducedMotion), {
         font: SETTINGS_ITEM_FONT,
         color: COLOR_SETTINGS_ITEM,
         align: 'center',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5).setDepth(2);
 
     // --- Key hint -----------------------------------------------------------
     this.hintText = this.add
-      .text(cx, cy + 130, SETTINGS_HINT, {
+      .text(cx, 660, SETTINGS_HINT, {
         font: SETTINGS_HINT_FONT,
         color: COLOR_SETTINGS_HINT,
         align: 'center',
@@ -139,6 +151,7 @@ export class SettingsScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     applyAdditiveBlend([this.titleText], Phaser.BlendModes.ADD);
+    let refreshMenu = () => {};
 
     // --- Apply + persist helper --------------------------------------------
     // Re-apply the effective master gain, play a short confirmation blip at the new
@@ -150,6 +163,35 @@ export class SettingsScene extends Phaser.Scene {
       this.volumeText.setText(formatVolume(this._volume));
       this.muteText.setText(formatToggle('MUTE', this._muted));
       this._persist();
+      refreshMenu();
+    };
+    const volumeDown = () => {
+      this._volume = adjustVolume(this._volume, -AUDIO_VOLUME_STEP);
+      applyAudio();
+    };
+    const volumeUp = () => {
+      this._volume = adjustVolume(this._volume, AUDIO_VOLUME_STEP);
+      applyAudio();
+    };
+    const toggleMute = () => {
+      this._muted = !this._muted;
+      applyAudio();
+    };
+    const requestFullscreen = () => this.scale.toggleFullscreen();
+    const toggleReducedMotion = () => {
+      this._reducedMotion = !this._reducedMotion;
+      this.reducedMotionText.setText(
+        formatToggle('REDUCED MOTION', this._reducedMotion),
+      );
+      this._persist();
+      refreshMenu();
+    };
+    let activationFrame = -1;
+    const activateOnce = (action) => {
+      const result = acceptMenuActivation(activationFrame, this.game?.loop?.frame);
+      if (!result.accepted) return;
+      activationFrame = result.nextFrame;
+      action();
     };
 
     // --- Settings keys ------------------------------------------------------
@@ -159,18 +201,15 @@ export class SettingsScene extends Phaser.Scene {
     // repeat tick. A single tap still steps exactly once (repeat === false).
     this.input.keyboard.on('keydown-MINUS', (event) => {
       if (event && event.repeat) return;
-      this._volume = adjustVolume(this._volume, -AUDIO_VOLUME_STEP);
-      applyAudio();
+      activateOnce(volumeDown);
     });
     this.input.keyboard.on('keydown-PLUS', (event) => {
       if (event && event.repeat) return;
-      this._volume = adjustVolume(this._volume, AUDIO_VOLUME_STEP);
-      applyAudio();
+      activateOnce(volumeUp);
     });
     this.input.keyboard.on('keydown-M', (event) => {
       if (event && event.repeat) return;
-      this._muted = !this._muted;
-      applyAudio();
+      activateOnce(toggleMute);
     });
     // Fullscreen: request the toggle only (visible immediacy). The browser requires
     // this user gesture to ENTER fullscreen; the preference is NOT auto-restored at
@@ -181,7 +220,7 @@ export class SettingsScene extends Phaser.Scene {
     // the request or the user leaves fullscreen natively (F11 / click-away / Esc).
     this.input.keyboard.on('keydown-F', (event) => {
       if (event && event.repeat) return;
-      this.scale.toggleFullscreen();
+      activateOnce(requestFullscreen);
     });
     // Reduced motion (Story 6.1): flip the flag, refresh the label, and persist the
     // WHOLE object. Same event.repeat guard as the other keys (no registered Key
@@ -191,11 +230,7 @@ export class SettingsScene extends Phaser.Scene {
     // the title).
     this.input.keyboard.on('keydown-R', (event) => {
       if (event && event.repeat) return;
-      this._reducedMotion = !this._reducedMotion;
-      this.reducedMotionText.setText(
-        formatToggle('REDUCED MOTION', this._reducedMotion),
-      );
-      this._persist();
+      activateOnce(toggleReducedMotion);
     });
     // Reconcile _fullscreen with the REAL display state from the scale manager, then
     // refresh the label and persist. Fires on both key-driven and native transitions.
@@ -203,6 +238,7 @@ export class SettingsScene extends Phaser.Scene {
       this._fullscreen = on;
       this.fullscreenText.setText(formatToggle('FULLSCREEN', this._fullscreen));
       this._persist();
+      refreshMenu();
     };
     const onEnterFullscreen = () => syncFullscreen(true);
     const onLeaveFullscreen = () => syncFullscreen(false);
@@ -232,6 +268,67 @@ export class SettingsScene extends Phaser.Scene {
     };
     this.input.keyboard.on('keydown-ESC', close);
     this.input.keyboard.on('keydown-ENTER', close);
+
+    // Touch controls reuse the exact keyboard mutation functions above. Only these
+    // finite rectangles are interactive; there is no scene-wide pointer action.
+    this.menuButtons = new Map();
+    const actions = {
+      [MENU_ACTIONS.VOLUME_DOWN]: volumeDown,
+      [MENU_ACTIONS.VOLUME_UP]: volumeUp,
+      [MENU_ACTIONS.MUTE]: toggleMute,
+      [MENU_ACTIONS.FULLSCREEN]: requestFullscreen,
+      [MENU_ACTIONS.REDUCED_MOTION]: toggleReducedMotion,
+      [MENU_ACTIONS.BACK]: close,
+    };
+    for (const control of settingsControlLayout()) {
+      const bg = this.add.rectangle(control.x, control.y, control.width, control.height, MENU_CONTROL_FILL)
+        .setStrokeStyle(3, MENU_CONTROL_STROKE).setDepth(1).setInteractive({ useHandCursor: true });
+      let label = null;
+      let track = null;
+      let thumb = null;
+      if (control.action === MENU_ACTIONS.VOLUME_DOWN || control.action === MENU_ACTIONS.VOLUME_UP || control.action === MENU_ACTIONS.BACK) {
+        label = this.add.text(control.x, control.y, control.label, { font: MENU_CONTROL_FONT, color: MENU_CONTROL_TEXT }).setOrigin(0.5).setDepth(2);
+      } else {
+        // Switch state is never color-only: the existing text says ON/OFF while
+        // this track/thumb pair also moves left/right.
+        track = this.add.rectangle(control.x + 220, control.y, 72, 32, 0x07131d)
+          .setStrokeStyle(2, MENU_CONTROL_STROKE).setDepth(2);
+        thumb = this.add.circle(control.x + 204, control.y, 12, MENU_CONTROL_STROKE).setDepth(3);
+      }
+      let pressedPointerId = null;
+      bg.on('pointerdown', (pointer) => {
+        if (pressedPointerId !== null) return;
+        pressedPointerId = pointer.id;
+        bg.setFillStyle(MENU_CONTROL_FILL_PRESSED);
+      });
+      bg.on('pointerup', (pointer) => {
+        if (pointer.id !== pressedPointerId) return;
+        pressedPointerId = null;
+        activateOnce(() => actions[control.action](pointer));
+        refreshMenu();
+      });
+      bg.on('pointerout', () => {
+        pressedPointerId = null;
+        refreshMenu();
+      });
+      this.menuButtons.set(control.action, { bg, label, track, thumb });
+    }
+    refreshMenu = () => {
+      for (const [action, on] of [[MENU_ACTIONS.MUTE, this._muted], [MENU_ACTIONS.FULLSCREEN, this._fullscreen], [MENU_ACTIONS.REDUCED_MOTION, this._reducedMotion]]) {
+        const button = this.menuButtons.get(action);
+        const label = action === MENU_ACTIONS.MUTE
+          ? 'MUTE'
+          : action === MENU_ACTIONS.FULLSCREEN ? 'FULLSCREEN' : 'REDUCED MOTION';
+        const view = switchViewModel(label, on);
+        button.bg.setFillStyle(view.on ? MENU_CONTROL_FILL_ON : MENU_CONTROL_FILL);
+        button.thumb.setX(button.track.x + (view.thumbSide === 'right' ? 16 : -16));
+        if (action === MENU_ACTIONS.MUTE) this.muteText.setText(view.label);
+        if (action === MENU_ACTIONS.FULLSCREEN) this.fullscreenText.setText(view.label);
+        if (action === MENU_ACTIONS.REDUCED_MOTION) this.reducedMotionText.setText(view.label);
+      }
+      for (const action of [MENU_ACTIONS.VOLUME_DOWN, MENU_ACTIONS.VOLUME_UP, MENU_ACTIONS.BACK]) this.menuButtons.get(action).bg.setFillStyle(MENU_CONTROL_FILL);
+    };
+    refreshMenu();
   }
 
   /**
