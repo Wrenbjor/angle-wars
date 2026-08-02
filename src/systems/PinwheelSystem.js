@@ -11,6 +11,13 @@ import {
   PINWHEEL_WANDER_INTERVAL_MS,
   PINWHEEL_WANDER_MAX_TURN_RAD,
   PINWHEEL_POOL_PREWARM,
+  PINK_SPLITTER_PARENT_RADIUS,
+  PINK_SPLITTER_CHILD_RADIUS,
+  PINK_SPLITTER_CHILD_COUNT,
+  PINK_SPLITTER_PIVOT_SPEED,
+  PINK_SPLITTER_ORBIT_RADIUS,
+  PINK_SPLITTER_ORBIT_ANGULAR_SPEED,
+  PINK_SPLITTER_CHILD_LIFETIME_MS,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
   SPAWN_PLACEMENT_MAX_ATTEMPTS,
@@ -69,6 +76,10 @@ export class PinwheelSystem extends System {
     /** Pool of pinwheels — the single source of active/free truth (public for
      *  the collision/death systems and the renderer). */
     this.enemyPool = new Pool(createPinwheel);
+    this.collisionSystem = null;
+    this._seenKills = new Set();
+    this._expiredChildren = [];
+    this._splitSnapshots = [];
     // Prewarm: build the free list up front so steady-state spawns never hit the
     // factory (no allocation once running). Acquire then release so the
     // instances land on the free stack.
@@ -89,6 +100,20 @@ export class PinwheelSystem extends System {
   fixedUpdate(dt) {
     const dtSec = dt / 1000;
     const slowFactor = this._slowPercent();
+    const killed = this.collisionSystem?.killedEnemies;
+    if (killed) {
+      const snapshots = this._splitSnapshots;
+      snapshots.length = 0;
+      for (let i = 0; i < killed.length; i++) {
+        const parent = killed[i];
+        if (parent.isPinkSplitter && !parent.isSplitterChild) {
+          snapshots.push(parent.x, parent.y, parent.vx, parent.vy);
+        }
+      }
+      for (let i = 0; i < snapshots.length; i += 4) {
+        this._split(snapshots[i], snapshots[i + 1], snapshots[i + 2], snapshots[i + 3]);
+      }
+    }
 
     // Arena bounce bounds (inset by the radius so the pinwheel stays fully inside).
     const minX = ARENA_BORDER_INSET + PINWHEEL_RADIUS;
@@ -96,6 +121,8 @@ export class PinwheelSystem extends System {
     const minY = ARENA_BORDER_INSET + PINWHEEL_RADIUS;
     const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - PINWHEEL_RADIUS;
 
+    const expired = this._expiredChildren;
+    expired.length = 0;
     this.enemyPool.forEachActive((pw) => {
       // Story 2.6 telegraph gate: a spawning-in pinwheel is frozen (no wander
       // re-roll, no drift, no bounce) and non-lethal until its countdown reaches
@@ -115,6 +142,28 @@ export class PinwheelSystem extends System {
           return; // stunned → frozen position/velocity
         }
         pw.stunMs = 0;
+      }
+      if (pw.isSplitterChild) {
+        pw.lifeMs -= dt;
+        if (pw.lifeMs <= 0) {
+          expired.push(pw);
+          return;
+        }
+        pw.pivotX += pw.pivotVx * dtSec * (1 - slowFactor);
+        pw.pivotY += pw.pivotVy * dtSec * (1 - slowFactor);
+        const orbitInset = PINK_SPLITTER_CHILD_RADIUS + PINK_SPLITTER_ORBIT_RADIUS;
+        const pivotMinX = ARENA_BORDER_INSET + orbitInset;
+        const pivotMaxX = ARENA_WIDTH - ARENA_BORDER_INSET - orbitInset;
+        const pivotMinY = ARENA_BORDER_INSET + orbitInset;
+        const pivotMaxY = ARENA_HEIGHT - ARENA_BORDER_INSET - orbitInset;
+        if (pw.pivotX < pivotMinX) { pw.pivotX = pivotMinX; pw.pivotVx = Math.abs(pw.pivotVx); }
+        else if (pw.pivotX > pivotMaxX) { pw.pivotX = pivotMaxX; pw.pivotVx = -Math.abs(pw.pivotVx); }
+        if (pw.pivotY < pivotMinY) { pw.pivotY = pivotMinY; pw.pivotVy = Math.abs(pw.pivotVy); }
+        else if (pw.pivotY > pivotMaxY) { pw.pivotY = pivotMaxY; pw.pivotVy = -Math.abs(pw.pivotVy); }
+        pw.orbitAngle += PINK_SPLITTER_ORBIT_ANGULAR_SPEED * dtSec;
+        pw.x = pw.pivotX + Math.cos(pw.orbitAngle) * PINK_SPLITTER_ORBIT_RADIUS;
+        pw.y = pw.pivotY + Math.sin(pw.orbitAngle) * PINK_SPLITTER_ORBIT_RADIUS;
+        return;
       }
       // 1. Wander: re-roll the heading each time the per-instance accumulator
       //    crosses the interval. Rotating the velocity vector preserves |v|, so
@@ -179,6 +228,7 @@ export class PinwheelSystem extends System {
         }
       }
     });
+    for (let i = 0; i < expired.length; i++) this.enemyPool.release(expired[i]);
   }
 
   /**
@@ -235,5 +285,36 @@ export class PinwheelSystem extends System {
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     pw.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
     pw.stunMs = 0;
+    pw.radius = PINK_SPLITTER_PARENT_RADIUS;
+    pw.isPinkSplitter = true;
+    pw.isSplitterChild = false;
+    pw.lifeMs = 0;
+  }
+
+  _split(x, y, vx, vy) {
+    let mag = Math.hypot(vx, vy);
+    if (!(mag > 0)) { vx = PINK_SPLITTER_PIVOT_SPEED; vy = 0; mag = PINK_SPLITTER_PIVOT_SPEED; }
+    const pvx = (vx / mag) * PINK_SPLITTER_PIVOT_SPEED;
+    const pvy = (vy / mag) * PINK_SPLITTER_PIVOT_SPEED;
+    for (let i = 0; i < PINK_SPLITTER_CHILD_COUNT; i++) {
+      const child = this.enemyPool.acquire();
+      child.isPinkSplitter = true;
+      child.isSplitterChild = true;
+      child.radius = PINK_SPLITTER_CHILD_RADIUS;
+      child.pivotX = x;
+      child.pivotY = y;
+      child.pivotVx = pvx;
+      child.pivotVy = pvy;
+      child.orbitAngle = (i / PINK_SPLITTER_CHILD_COUNT) * Math.PI * 2;
+      child.lifeMs = PINK_SPLITTER_CHILD_LIFETIME_MS;
+      child.telegraphMs = 0;
+      child.stunMs = 0;
+      child.x = x + Math.cos(child.orbitAngle) * PINK_SPLITTER_ORBIT_RADIUS;
+      child.y = y + Math.sin(child.orbitAngle) * PINK_SPLITTER_ORBIT_RADIUS;
+      child.vx = 0;
+      child.vy = 0;
+      child.score = 0;
+      child.xp = 0;
+    }
   }
 }

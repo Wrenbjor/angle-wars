@@ -9,6 +9,7 @@ import {
   SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE,
   SPAWN_DIRECTOR_MAX_PRESSURE,
   SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS,
+  SPAWN_DIRECTOR_MAX_SPAWNS_PER_TICK,
   SNAKE_SEGMENT_COUNT,
 } from '../config/constants.js';
 
@@ -118,6 +119,18 @@ describe('SpawnDirector — interval ramp (AC1)', () => {
       coarse.weightAt(0, 2, coarse.elapsedMs),
       9,
     );
+  });
+});
+
+describe('SpawnDirector — bounded catch-up', () => {
+  it('caps a coarse/resume delta and discards overdue backlog', () => {
+    const spawnables = fourMix();
+    const dir = new SpawnDirector(spawnables, seqRng([0.1]));
+    dir.fixedUpdate(120000);
+    expect(totalSpawns(spawnables)).toBe(SPAWN_DIRECTOR_MAX_SPAWNS_PER_TICK);
+    const before = totalSpawns(spawnables);
+    dir.fixedUpdate(1);
+    expect(totalSpawns(spawnables)).toBe(before);
   });
 });
 

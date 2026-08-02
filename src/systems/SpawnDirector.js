@@ -7,6 +7,7 @@ import {
   SPAWN_DIRECTOR_DPS_PRESSURE_REFERENCE,
   SPAWN_DIRECTOR_MAX_PRESSURE,
   SPAWN_DIRECTOR_PRESSURE_SLEW_PER_MS,
+  SPAWN_DIRECTOR_MAX_SPAWNS_PER_TICK,
 } from '../config/constants.js';
 
 // SpawnDirector — the single escalating spawn authority for its governed
@@ -195,8 +196,10 @@ export class SpawnDirector extends System {
     // Consume the getter so there is ONE source of truth (and one hang-proof
     // division site) shared with the tests and observability.
     const interval = this.effectiveInterval;
-    while (this._accumMs >= interval) {
+    let budget = SPAWN_DIRECTOR_MAX_SPAWNS_PER_TICK;
+    while (this._accumMs >= interval && budget > 0) {
       this._accumMs -= interval;
+      budget -= 1;
       // Global cap gate: at/above the cap, skip the spawn and discard this
       // interval's banked time (already subtracted above — not re-tried next
       // tick), mirroring the Black Hole's by-design at-cap behavior.
@@ -212,6 +215,8 @@ export class SpawnDirector extends System {
       if (this._totalActive() >= SPAWN_DIRECTOR_MAX_ACTIVE) continue;
       this._pickAndSpawn();
     }
+    // Never save a resume/coarse-delta backlog for a later single-frame dump.
+    if (this._accumMs >= interval) this._accumMs %= interval;
   }
 
   /**

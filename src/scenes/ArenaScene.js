@@ -16,6 +16,7 @@ import {
   COLOR_GREEN_SQUARE,
   COLOR_PINWHEEL,
   COLOR_SNAKE,
+  COLOR_SNAKE_HEAD,
   COLOR_MIRROR_REFLECTOR,
   COLOR_ARMORED,
   ARMORED_HP,
@@ -132,6 +133,7 @@ import {
   computeMobileLayout,
   resolveDisplaySize,
 } from './mobileLayout.js';
+import { GAME_OVER_ACTION, hitTestGameOverControls } from './gameOverControls.js';
 import { reflectorEndpoints } from '../systems/mirrorReflectorMath.js';
 import { blackHoleInstability } from '../entities/BlackHole.js';
 import {
@@ -359,6 +361,7 @@ export class ArenaScene extends Phaser.Scene {
     // screen (reachable only from the title) therefore takes effect on the next run,
     // which is every fresh run and every scene.restart().
     this._reducedMotion = settings.reducedMotion;
+    this.particleSystem.reducedMotion = this._reducedMotion;
     this.audioEngine.setMasterGain(effectiveVolume(this._volume, this._muted));
     // Reusable per-frame music-gain buffer so the render-loop mapping allocates
     // nothing (mirrors the zero-per-frame-allocation discipline).
@@ -704,7 +707,7 @@ export class ArenaScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setVisible(false);
     this.gameOverPrompt = this.add
-      .text(cx, cy + 60, 'Press Enter / Space / gamepad or click to restart    ·    T for Title', {
+      .text(cx, cy + 60, 'Enter / Space / gamepad: restart    ·    T: title', {
         font: GAMEOVER_PROMPT_FONT,
         color: COLOR_GAMEOVER_TEXT,
         align: 'center',
@@ -712,6 +715,27 @@ export class ArenaScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setVisible(false);
+    this.gameOverButtons = [
+      { action: GAME_OVER_ACTION.RESTART, label: 'RESTART' },
+      { action: GAME_OVER_ACTION.TITLE, label: 'TITLE' },
+    ].map(({ action, label }) => ({
+      action,
+      rect: this.add
+        .rectangle(0, 0, 1, 1, 0x101828, 0.96)
+        .setStrokeStyle(3, 0xffffff, 1)
+        .setScrollFactor(0)
+        .setVisible(false),
+      text: this.add
+        .text(0, 0, label, {
+          font: GAMEOVER_PROMPT_FONT,
+          color: COLOR_GAMEOVER_TEXT,
+          align: 'center',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setVisible(false),
+    }));
+    this._gameOverControlLayout = [];
 
     // --- Restart input ------------------------------------------------------
     // Enter / Space / pointer begin a fresh run via scene.restart(), which
@@ -731,9 +755,27 @@ export class ArenaScene extends Phaser.Scene {
         this.scene.restart();
       }
     };
+    const returnToTitle = () => {
+      if (leaving) return;
+      const target = sceneForState(
+        nextFlowState(FLOW_STATES.GAME_OVER, FLOW_EVENTS.RETURN_TO_TITLE),
+      );
+      if (target && this.playerState.gameOver) {
+        leaving = true;
+        this.scene.start(target);
+      }
+    };
     this.input.keyboard.on('keydown-ENTER', restart);
     this.input.keyboard.on('keydown-SPACE', restart);
-    this.input.on('pointerdown', restart);
+    this.input.on('pointerdown', (pointer) => {
+      if (!this.playerState.gameOver || leaving) return;
+      const action = hitTestGameOverControls(pointer.x, pointer.y, this._gameOverControlLayout);
+      if (action === GAME_OVER_ACTION.RESTART) restart();
+      else if (action === GAME_OVER_ACTION.TITLE) returnToTitle();
+      // Preserve the existing desktop click-to-restart affordance while ensuring an
+      // off-button phone touch is inert.
+      else if (pointer.pointerType === 'mouse' || pointer.pointerType === 'pen') restart();
+    });
     // A pad-only player must also be able to restart (DW-31): any gamepad button
     // routes through the SAME guarded `restart` closure (shared `leaving` latch +
     // gameOver guard), so it fires only at game over and only once. The gamepad
@@ -748,16 +790,7 @@ export class ArenaScene extends Phaser.Scene {
     // playerState.gameOver (so an in-run press never leaves the arena) AND the shared
     // `leaving` latch (so a same-frame Enter+T is deterministic). Distinct from Story
     // 5.2's Esc/P pause (which still does nothing at game over).
-    this.input.keyboard.on('keydown-T', () => {
-      if (leaving) return;
-      const target = sceneForState(
-        nextFlowState(FLOW_STATES.GAME_OVER, FLOW_EVENTS.RETURN_TO_TITLE),
-      );
-      if (target && this.playerState.gameOver) {
-        leaving = true;
-        this.scene.start(target);
-      }
-    });
+    this.input.keyboard.on('keydown-T', returnToTitle);
 
     // --- Pause overlay (Story 5.2) ------------------------------------------
     // A dimming full-arena rectangle plus a stacked "PAUSED" title and resume
@@ -1208,6 +1241,13 @@ export class ArenaScene extends Phaser.Scene {
     // by the bottom inset only — it sits far enough from the right edge that no right
     // inset can reach it).
     this.inputSampler.setDashButton(layout.dash.x, layout.dash.y, layout.dash.radius);
+    this._gameOverControlLayout = layout.gameOver;
+    for (let i = 0; i < this.gameOverButtons.length; i++) {
+      const visual = this.gameOverButtons[i];
+      const control = layout.gameOver[i];
+      visual.rect.setPosition(control.x, control.y).setSize(control.width, control.height);
+      visual.text.setPosition(control.x, control.y);
+    }
   }
 
   /**
@@ -1497,7 +1537,13 @@ export class ArenaScene extends Phaser.Scene {
     this.enemySystem.enemyPool.forEachActive((s) => {
       const p = spawnTelegraphProgress(s.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
       sg.fillStyle(COLOR_SEEKER, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
-      sg.fillCircle(s.x, s.y, s.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
+      const r = s.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE);
+      const pts = this._pinwheelPoints;
+      pts[0].x = s.x; pts[0].y = s.y - r;
+      pts[1].x = s.x + r; pts[1].y = s.y;
+      pts[2].x = s.x; pts[2].y = s.y + r;
+      pts[3].x = s.x - r; pts[3].y = s.y;
+      sg.fillPoints(pts, true);
     });
 
     // Redraw active green squares from their pool: clear once, then a filled
@@ -1550,7 +1596,7 @@ export class ArenaScene extends Phaser.Scene {
     // (every segment shares the head's value, so the whole chain telegraphs as one).
     this.snakeSystem.enemyPool.forEachActive((seg) => {
       const p = spawnTelegraphProgress(seg.telegraphMs, ENEMY_SPAWN_TELEGRAPH_MS);
-      skg.fillStyle(COLOR_SNAKE, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
+      skg.fillStyle(seg.isSnakeHead ? COLOR_SNAKE_HEAD : COLOR_SNAKE, telegraphAlpha(p, SPAWN_TELEGRAPH_MIN_ALPHA));
       skg.fillCircle(seg.x, seg.y, seg.radius * telegraphScale(p, SPAWN_TELEGRAPH_MIN_SCALE));
     });
 
@@ -1804,6 +1850,10 @@ export class ArenaScene extends Phaser.Scene {
     this.gameOverTitle.setVisible(over);
     this.gameOverScore.setVisible(over);
     this.gameOverPrompt.setVisible(over);
+    for (let i = 0; i < this.gameOverButtons.length; i++) {
+      this.gameOverButtons[i].rect.setVisible(over);
+      this.gameOverButtons[i].text.setVisible(over);
+    }
     if (over) {
       // The frozen (final) score — stable because the sim no longer advances.
       this.gameOverScore.setText(`FINAL SCORE ${this.scoreState.score}`);

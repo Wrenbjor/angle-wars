@@ -23,6 +23,11 @@ import {
   PARTICLE_DASH_TRAIL_SPREAD_RAD,
   PARTICLE_DASH_TRAIL_SIZE,
   PARTICLE_DASH_TRAIL_COLOR,
+  PARTICLE_BURST_INNER_COUNT,
+  PARTICLE_BLACKHOLE_INTERVAL_MS,
+  PARTICLE_BLACKHOLE_ORBIT_SPEED,
+  PARTICLE_BLACKHOLE_LIFETIME_MS,
+  PARTICLE_BLACKHOLE_SIZE,
 } from '../config/constants.js';
 
 const TAU = Math.PI * 2;
@@ -128,6 +133,10 @@ export class ParticleSystem extends System {
     // resets to 0 the instant the dash is not trailing so the burn ends cleanly.
     this.dashSystem = dashSystem;
     this._dashTrailAccumMs = 0;
+    this.blackHoleSystem = null;
+    this._blackHoleAccumMs = 0;
+    this._blackHolePhase = 0;
+    this.reducedMotion = false;
   }
 
   /**
@@ -190,8 +199,15 @@ export class ParticleSystem extends System {
             Math.sin(heading) * speed,
             PARTICLE_BURST_LIFETIME_MS,
             PARTICLE_BURST_SIZE,
-            PARTICLE_BURST_COLOR,
+            cs.bulletKillColor?.[k] ?? PARTICLE_BURST_COLOR,
           );
+        }
+        for (let c = 0; c < PARTICLE_BURST_INNER_COUNT; c++) {
+          if (this.pool.activeCount >= this.maxParticles) break;
+          const heading = this.rng() * TAU;
+          const speed = PARTICLE_BURST_SPEED_MIN * (0.25 + this.rng() * 0.25);
+          this._emit(x, y, Math.cos(heading) * speed, Math.sin(heading) * speed,
+            PARTICLE_BURST_LIFETIME_MS * 1.25, PARTICLE_BURST_SIZE * 1.6, 0xffffff);
         }
       }
     }
@@ -278,6 +294,30 @@ export class ParticleSystem extends System {
       } else {
         this._dashTrailAccumMs = 0; // dash ended → burn ends cleanly
       }
+    }
+
+    // Capped decorative galaxy sparks around active black holes. The timer drains
+    // even at saturation, preventing a deferred emission dump.
+    const holes = this.blackHoleSystem?.holePool;
+    if (holes && !this.reducedMotion) {
+      this._blackHoleAccumMs += dt;
+      const step = PARTICLE_BLACKHOLE_INTERVAL_MS;
+      if (Number.isFinite(step) && step > 0 && this._blackHoleAccumMs >= step) {
+        this._blackHoleAccumMs %= step;
+        holes.forEachActive((hole) => {
+          if (this.pool.activeCount >= this.maxParticles) return;
+          const angle = this._blackHolePhase;
+          this._blackHolePhase = (this._blackHolePhase + 2.399963229728653) % TAU;
+          const radius = Math.max(1, hole.radius || 1) * 1.1;
+          const tangent = angle + Math.PI / 2;
+          this._emit(hole.x + Math.cos(angle) * radius, hole.y + Math.sin(angle) * radius,
+            Math.cos(tangent) * PARTICLE_BLACKHOLE_ORBIT_SPEED,
+            Math.sin(tangent) * PARTICLE_BLACKHOLE_ORBIT_SPEED,
+            PARTICLE_BLACKHOLE_LIFETIME_MS, PARTICLE_BLACKHOLE_SIZE, 0xaa44ff);
+        });
+      }
+    } else if (this.reducedMotion) {
+      this._blackHoleAccumMs = 0;
     }
   }
 

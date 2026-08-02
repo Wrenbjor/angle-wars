@@ -325,7 +325,7 @@ export const BULLET_POOL_PREWARM = 640;
 // its path curves naturally as the player moves. All values are tunable.
 
 // Homing speed (px/s). Velocity each tick = unit(ship − seeker) × this.
-export const SEEKER_SPEED = 140;
+export const SEEKER_SPEED = 175;
 // Collision/half-extent radius (px), also the placeholder shape radius and the
 // spawn inset margin so a fresh seeker sits fully inside the drawn border.
 export const SEEKER_RADIUS = 14;
@@ -354,6 +354,10 @@ export const GREEN_SQUARE_FLEE_SPEED = 120;
 // this (directly toward the player). Faster than the flee so a provoked square
 // actually closes distance.
 export const GREEN_SQUARE_CHASE_SPEED = 200;
+// Predictive bullet-avoidance steering layered over continuous pursuit.
+export const GREEN_SQUARE_AVOID_RADIUS = 150;
+export const GREEN_SQUARE_AVOID_LOOKAHEAD_MS = 450;
+export const GREEN_SQUARE_AVOID_WEIGHT = 1.65;
 // Threat radius (px): an active bullet whose center lies within this distance of
 // a fleeing square provokes it (a deterministic proxy for "fired toward it").
 // Deliberately larger than BULLET_RADIUS + GREEN_SQUARE_RADIUS so a NEAR MISS
@@ -378,7 +382,7 @@ export const GREEN_SQUARE_SCORE = 150;
 
 // Collision/half-extent radius (px), also the placeholder diamond half-size and
 // the spawn/bounce inset margin so a pinwheel sits fully inside the drawn border.
-export const PINWHEEL_RADIUS = 14;
+export const PINWHEEL_RADIUS = 26;
 // Drift speed (px/s). Magnitude of the velocity vector, PRESERVED across wander
 // turns (rotation) and wall bounces (component negation) — the drifter never
 // speeds up or stalls.
@@ -393,11 +397,19 @@ export const PINWHEEL_WANDER_INTERVAL_MS = 700;
 export const PINWHEEL_WANDER_MAX_TURN_RAD = Math.PI / 6; // 30°
 // Idle instances prewarmed into the pool at construction so the steady state
 // never allocates (mirrors the Seeker/Green Square pools; grows lazily beyond it).
-export const PINWHEEL_POOL_PREWARM = 32;
+export const PINWHEEL_POOL_PREWARM = 180;
 // Base score awarded per Pinwheel kill, carried on each instance. The
 // ScoringSystem multiplies this base by the run multiplier at the shared per-kill
 // seam; keep this a flat per-type base — never fold the multiplier into it.
 export const PINWHEEL_SCORE = 125;
+// Pink Splitter replacement for the Wanderer roster slot.
+export const PINK_SPLITTER_PARENT_RADIUS = 26;
+export const PINK_SPLITTER_CHILD_RADIUS = 10;
+export const PINK_SPLITTER_CHILD_COUNT = 3;
+export const PINK_SPLITTER_PIVOT_SPEED = 75;
+export const PINK_SPLITTER_ORBIT_RADIUS = 42;
+export const PINK_SPLITTER_ORBIT_ANGULAR_SPEED = 2.4;
+export const PINK_SPLITTER_CHILD_LIFETIME_MS = 9000;
 
 // --- Snake enemy (feel) -----------------------------------------------------
 // The Snake (Epic 2's large threat) is a chain of pooled segments that follows a
@@ -584,6 +596,7 @@ export const SPAWN_DIRECTOR_RAMP_DURATION_MS = 120000; // 2 minutes
 // Black Hole's at-cap behavior). Bounds peak load so the ever-rising spawn rate
 // cannot break the frame budget; it never despawns already-active enemies.
 export const SPAWN_DIRECTOR_MAX_ACTIVE = 60;
+export const SPAWN_DIRECTOR_MAX_SPAWNS_PER_TICK = 2;
 
 // Per-archetype mix weights: the relative selection likelihood at the START of
 // the ramp (BASE, elapsed 0) and at its PEAK (elapsed >= RAMP_DURATION). A weight
@@ -826,7 +839,7 @@ export const SHIELD_KNOCKBACK_RADIUS = 260;
 // that archetype the i-frames, not the pulse, are what carry the player clear. Sizing
 // the push to beat the fastest chaser would put it past SPAWN_SAFE_RADIUS (200) and make
 // the Lv5 break the screen clear this constant exists to avoid.
-export const SHIELD_KNOCKBACK_PUSH = 180;
+export const SHIELD_KNOCKBACK_PUSH = 210;
 
 // --- Phase Armor (Story 12.5 / Epic 12 — defense-transform Epic) ------------
 // When Phase Armor is fused (Nanite Shield Lv5 + Afterburner Lv3), the final
@@ -1694,10 +1707,11 @@ export const COLOR_BACKGROUND = 0x0a0a12;
 export const COLOR_ARENA_BORDER = 0x33ff99;
 export const COLOR_SHIP = 0x66ccff;
 export const COLOR_BULLET = 0xffee66;
-export const COLOR_SEEKER = 0x3366ff;
+export const COLOR_SEEKER = 0x22ddcc;
 export const COLOR_GREEN_SQUARE = 0x66ff33;
 export const COLOR_PINWHEEL = 0xff66cc;
 export const COLOR_SNAKE = 0xffaa33;
+export const COLOR_SNAKE_HEAD = 0xaa44ff;
 // Ricochet Rounds (Story 11.5): the tint a BOUNCED bullet draws in — a hot warm
 // orange-red, distinctly warmer than the base bullet's yellow (COLOR_BULLET 0xffee66) so a
 // shot that has bounced reads AS bounced at a glance (the epic's visual-legibility
@@ -1816,6 +1830,11 @@ export const PARTICLE_BURST_SIZE = 2.5;
 // Burst particle color (0xRRGGBB): a warm neon that reads as an explosion spark
 // against the dark arena under additive blending.
 export const PARTICLE_BURST_COLOR = 0xffdd55;
+export const PARTICLE_BURST_INNER_COUNT = 6;
+export const PARTICLE_BLACKHOLE_INTERVAL_MS = 45;
+export const PARTICLE_BLACKHOLE_ORBIT_SPEED = 95;
+export const PARTICLE_BLACKHOLE_LIFETIME_MS = 520;
+export const PARTICLE_BLACKHOLE_SIZE = 2;
 // Velocity retained after one second of drift (0..1): particle velocity decays by
 // this factor per second (exponential drag, interpolated per fixed step), so a
 // burst flings out fast then slows as it fades. Smaller = quicker settle.
@@ -1836,19 +1855,19 @@ export const PARTICLE_THRUST_MIN_INTENT = 0.2;
 // Trail throttle (ms): while thrusting, ONE trail particle is emitted per this
 // much accumulated fixed-step time (frame-rate-independent cadence). Lower =
 // denser trail.
-export const PARTICLE_TRAIL_INTERVAL_MS = 24;
+export const PARTICLE_TRAIL_INTERVAL_MS = 18;
 // Trail particle lifetime (ms): shorter than the burst so the trail is a tight
 // fading ribbon rather than a lingering cloud.
-export const PARTICLE_TRAIL_LIFETIME_MS = 420;
+export const PARTICLE_TRAIL_LIFETIME_MS = 520;
 // Trail particle drift speed (px/s), directed opposite the ship's facing (± the
 // spread below) so the trail streams out behind the ship.
-export const PARTICLE_TRAIL_SPEED = 90;
+export const PARTICLE_TRAIL_SPEED = 110;
 // Trail heading spread (radians): each trail particle's heading is jittered by a
 // uniform random angle in [−this, +this] around "opposite the ship facing" so the
 // ribbon has a little natural width.
 export const PARTICLE_TRAIL_SPREAD_RAD = Math.PI / 12; // 15°
 // Trail particle draw radius (px) for the additive neon dot.
-export const PARTICLE_TRAIL_SIZE = 2;
+export const PARTICLE_TRAIL_SIZE = 2.5;
 // Trail particle color (0xRRGGBB): the ship's own neon hue so the trail reads as
 // its thruster wash.
 export const PARTICLE_TRAIL_COLOR = 0x66ccff;

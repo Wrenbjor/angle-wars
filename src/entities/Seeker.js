@@ -50,5 +50,6 @@ export function createSeeker() {
     score: SEEKER_SCORE,
     xp: SEEKER_XP,
     telegraphMs: 0,
+    particleColor: 0x22ddcc,
   };
 }

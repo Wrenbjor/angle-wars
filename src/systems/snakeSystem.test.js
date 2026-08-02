@@ -403,7 +403,7 @@ describe('SnakeSystem — split on kill (fragmentation)', () => {
     for (const sk of system.snakes) expect(sk.segments).not.toContain(s2);
   });
 
-  it('head kill: the front run is empty and the next survivor becomes a new head', () => {
+  it('head kill atomically removes the whole remaining chain', () => {
     const system = makeSystem();
     const snake = placeSnake(system, 400, 360, 0, 4, 0);
     const [s0, s1, s2, s3] = snake.segments;
@@ -412,12 +412,8 @@ describe('SnakeSystem — split on kill (fragmentation)', () => {
     system.collisionSystem = killReport([s0]);
     system.fixedUpdate(DT);
 
-    expect(system.snakes.length).toBe(1);
-    const only = system.snakes[0];
-    // The original head-owning struct is gone; the survivor run is a new snake.
-    expect(only).not.toBe(snake);
-    expect(only.segments[0]).toBe(s1); // s1 is the new head
-    expect(only.segments).toEqual([s1, s2, s3]);
+    expect(system.snakes.length).toBe(0);
+    expect(system.enemyPool.activeCount).toBe(0);
   });
 
   it('re-derives the new head heading from the body axis (direction second→head)', () => {
@@ -743,8 +739,8 @@ describe('createSnakeSegment factory', () => {
   });
 });
 
-describe('SnakeSystem — AC3: bullet kill + scoring through the real shared seams', () => {
-  it('a bullet over a segment releases it, consumes the bullet, and credits SNAKE_SEGMENT_SCORE', () => {
+describe('SnakeSystem — head-only bullet damage through the shared seams', () => {
+  it('an orange body absorbs the bullet without damage, score, or release', () => {
     const system = makeSystem();
     const segmentPool = system.enemyPool;
     const snake = placeSnake(system, 400, 400, 0, 5, 0);
@@ -764,19 +760,55 @@ describe('SnakeSystem — AC3: bullet kill + scoring through the real shared sea
     collision.fixedUpdate(DT);
     scoring.fixedUpdate(DT);
 
-    expect(collision.killedEnemies).toContain(target); // reported killed
+    expect(collision.killedEnemies).not.toContain(target);
     expect(bulletPool.activeCount).toBe(0); // bullet consumed
-    expect(segmentPool.activeCount).toBe(4); // the target was released
-    expect(scoreState.score).toBe(SNAKE_SEGMENT_SCORE); // scored its own base value
+    expect(segmentPool.activeCount).toBe(5);
+    expect(scoreState.score).toBe(0);
 
-    // Next SnakeSystem step drops the killed segment from its snake (split).
+    // The intact body remains owned by the original snake.
     system.collisionSystem = collision;
     system.fixedUpdate(DT);
-    for (const sk of system.snakes) expect(sk.segments).not.toContain(target);
+    expect(system.snakes[0].segments).toContain(target);
+  });
+
+  it('a purple head hit kills the head and the next reconciliation removes the full chain', () => {
+    const system = makeSystem();
+    system.spawn();
+    const snake = system.snakes[0];
+    const head = snake.segments[0];
+    for (const seg of snake.segments) seg.telegraphMs = 0;
+    expect(head.isSnakeHead).toBe(true);
+    const bulletPool = new Pool(createBullet);
+    const bullet = bulletPool.acquire();
+    bullet.x = head.x;
+    bullet.y = head.y;
+    const collision = new CollisionSystem(bulletPool, [system.enemyPool]);
+    collision.fixedUpdate(DT);
+    expect(collision.killedEnemies).toContain(head);
+    system.collisionSystem = collision;
+    system.fixedUpdate(DT);
+    expect(system.snakes).toHaveLength(0);
+    expect(system.enemyPool.activeCount).toBe(0);
   });
 });
 
 describe('SnakeSystem — AC2: ship contact through the real PlayerDeathSystem', () => {
+  it('same-tick cleanup removes every body before player contact can resolve', () => {
+    const system = makeSystem();
+    const snake = placeSnake(system, 300, 300, 0, 5, 0);
+    const head = snake.segments[0];
+    const ship = createPlayerShip();
+    ship.x = snake.segments[2].x;
+    ship.y = snake.segments[2].y;
+    system.enemyPool.release(head);
+    system.collisionSystem = { killedEnemies: [head] };
+    system.cleanupKilledHeads();
+    const playerState = createPlayerState();
+    new PlayerDeathSystem(ship, [system.enemyPool], playerState).fixedUpdate(DT);
+    expect(system.enemyPool.activeCount).toBe(0);
+    expect(playerState.lives).toBe(PLAYER_START_LIVES);
+  });
+
   it('a non-invulnerable ship over ANY segment triggers the standard death flow, segment survives', () => {
     const system = makeSystem();
     const segmentPool = system.enemyPool;

@@ -24,6 +24,12 @@ import {
   TOUCH_BOMB_BUTTON,
   TOUCH_DASH_BUTTON,
 } from '../config/constants.js';
+import { GAME_OVER_ACTION } from './gameOverControls.js';
+
+export const GAME_OVER_BUTTON_WIDTH = 220;
+export const GAME_OVER_BUTTON_HEIGHT = 64;
+export const GAME_OVER_BUTTON_GAP = 32;
+const GAME_OVER_BUTTON_BOTTOM_MARGIN = 56;
 
 /**
  * Parse a CSS pixel length (e.g. `'44px'`) to a number. Anything non-numeric —
@@ -85,6 +91,20 @@ export function logicalSafeInsets(insetsCss, parentW, parentH, logicalW, logical
 export function computeMobileLayout(logicalInsets) {
   const { top, right, bottom, left } = logicalInsets;
   const m = ARENA_BORDER_INSET + HUD_MARGIN;
+  const safeLeft = ARENA_BORDER_INSET + left;
+  const safeRight = ARENA_WIDTH - ARENA_BORDER_INSET - right;
+  const safeCenterX = (safeLeft + safeRight) / 2;
+  const safeWidth = Math.max(1, safeRight - safeLeft);
+  const buttonWidth = Math.min(
+    GAME_OVER_BUTTON_WIDTH,
+    Math.max(1, (safeWidth - GAME_OVER_BUTTON_GAP) / 2),
+  );
+  const rowWidth = buttonWidth * 2 + GAME_OVER_BUTTON_GAP;
+  const firstX = safeCenterX - rowWidth / 2 + buttonWidth / 2;
+  const gameOverY = Math.min(
+    ARENA_HEIGHT / 2 + 150,
+    ARENA_HEIGHT - ARENA_BORDER_INSET - bottom - GAME_OVER_BUTTON_BOTTOM_MARGIN - GAME_OVER_BUTTON_HEIGHT / 2,
+  );
   return {
     debug: { x: m + left, y: m + top },
     hud: { x: ARENA_WIDTH - m - right, y: m + top },
@@ -98,6 +118,22 @@ export function computeMobileLayout(logicalInsets) {
       y: TOUCH_DASH_BUTTON.y - bottom,
       radius: TOUCH_DASH_BUTTON.radius,
     },
+    gameOver: [
+      {
+        action: GAME_OVER_ACTION.RESTART,
+        x: firstX,
+        y: gameOverY,
+        width: buttonWidth,
+        height: GAME_OVER_BUTTON_HEIGHT,
+      },
+      {
+        action: GAME_OVER_ACTION.TITLE,
+        x: firstX + buttonWidth + GAME_OVER_BUTTON_GAP,
+        y: gameOverY,
+        width: buttonWidth,
+        height: GAME_OVER_BUTTON_HEIGHT,
+      },
+    ],
   };
 }
 

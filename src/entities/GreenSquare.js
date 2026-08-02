@@ -60,5 +60,6 @@ export function createGreenSquare() {
     xp: GREEN_SQUARE_XP,
     aggro: false,
     telegraphMs: 0,
+    particleColor: 0x66ff33,
   };
 }

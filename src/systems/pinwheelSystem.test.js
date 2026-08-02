@@ -524,6 +524,48 @@ describe('createPinwheel factory', () => {
   });
 });
 
+describe('Pink Splitter replacement behavior', () => {
+  it('a killed parent emits exactly three non-recursive children around one drifting pivot', () => {
+    const system = makeSystem();
+    system.spawn();
+    let parent;
+    system.enemyPool.forEachActive((e) => { parent = e; });
+    parent.telegraphMs = 0;
+    const x = parent.x;
+    const y = parent.y;
+    system.enemyPool.release(parent);
+    system.collisionSystem = { killedEnemies: [parent] };
+    system.fixedUpdate(FIXED_STEP_MS);
+    const children = [];
+    system.enemyPool.forEachActive((e) => children.push(e));
+    expect(children).toHaveLength(3);
+    expect(children.every((e) => e.isSplitterChild && e.isPinkSplitter)).toBe(true);
+    expect(new Set(children.map((e) => e.orbitAngle)).size).toBe(3);
+    const child = children[0];
+    system.enemyPool.release(child);
+    system.collisionSystem = { killedEnemies: [child] };
+    system.fixedUpdate(FIXED_STEP_MS);
+    expect(system.enemyPool.activeCount).toBe(2);
+  });
+
+  it('splits two same-tick parent deaths into six distinct zero-payout children', () => {
+    const system = makeSystem();
+    system.spawn();
+    system.spawn();
+    const parents = activePinwheels(system);
+    for (const parent of parents) {
+      parent.telegraphMs = 0;
+      system.enemyPool.release(parent);
+    }
+    system.collisionSystem = { killedEnemies: parents };
+    system.fixedUpdate(FIXED_STEP_MS);
+    const children = activePinwheels(system);
+    expect(children).toHaveLength(6);
+    expect(new Set(children).size).toBe(6);
+    expect(children.every((child) => child.isSplitterChild && child.score === 0 && child.xp === 0)).toBe(true);
+  });
+});
+
 describe('PinwheelSystem — AC3: bullet kill + scoring through the real shared seams', () => {
   it('a bullet over a pinwheel releases it, consumes the bullet, and credits PINWHEEL_SCORE', () => {
     const system = makeSystem();

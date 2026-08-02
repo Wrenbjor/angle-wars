@@ -154,7 +154,7 @@ export class BombSystem extends System {
         pool.forEachActive((e) => {
           const dx = e.x - dfX;
           const dy = e.y - dfY;
-          if (dx * dx + dy * dy <= radiusSq) {
+          if (!e.isSnakeBody && dx * dx + dy * dy <= radiusSq) {
             enemies.push(e);
             owners.push(pool);
           }
@@ -192,8 +192,10 @@ export class BombSystem extends System {
 
     const killed = this.collisionSystem.killedEnemies;
     for (let i = 0; i < enemies.length; i++) {
-      owners[i].release(enemies[i]);
-      killed.push(enemies[i]);
+      if (!enemies[i].isSnakeBody) {
+        owners[i].release(enemies[i]);
+        killed.push(enemies[i]);
+      }
     }
 
     this.shockwaveMs = BOMB_SHOCKWAVE_MS;

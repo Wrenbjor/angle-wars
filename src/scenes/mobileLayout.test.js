@@ -15,6 +15,12 @@ import {
   TOUCH_BOMB_BUTTON,
   TOUCH_DASH_BUTTON,
 } from '../config/constants.js';
+import {
+  GAME_OVER_BUTTON_GAP,
+  GAME_OVER_BUTTON_HEIGHT,
+  GAME_OVER_BUTTON_WIDTH,
+} from './mobileLayout.js';
+import { GAME_OVER_ACTION } from './gameOverControls.js';
 
 // mobileLayout is the Phaser-free responsive-layout seam (Story 7.2): CSS→logical
 // safe-area conversion through the FIT letterbox, the HUD/debug/bomb placement, and
@@ -155,6 +161,33 @@ describe('mobileLayout — computeMobileLayout (placement)', () => {
     expect(layout.dash.y - layout.bomb.y).toBe(
       TOUCH_DASH_BUTTON.y - TOUCH_BOMB_BUTTON.y,
     );
+  });
+
+  it('places named game-over buttons inside the safe horizontal and bottom edges', () => {
+    const insets = { top: 0, right: 70, bottom: 42, left: 30 };
+    const [restart, title] = computeMobileLayout(insets).gameOver;
+    expect(restart.action).toBe(GAME_OVER_ACTION.RESTART);
+    expect(title.action).toBe(GAME_OVER_ACTION.TITLE);
+    expect(restart.width).toBe(GAME_OVER_BUTTON_WIDTH);
+    expect(restart.height).toBe(GAME_OVER_BUTTON_HEIGHT);
+    expect(title.x - restart.x).toBe(GAME_OVER_BUTTON_WIDTH + GAME_OVER_BUTTON_GAP);
+    expect(restart.x - GAME_OVER_BUTTON_WIDTH / 2).toBeGreaterThanOrEqual(ARENA_BORDER_INSET + insets.left);
+    expect(title.x + GAME_OVER_BUTTON_WIDTH / 2).toBeLessThanOrEqual(ARENA_WIDTH - ARENA_BORDER_INSET - insets.right);
+    expect(title.y + GAME_OVER_BUTTON_HEIGHT / 2).toBeLessThanOrEqual(ARENA_HEIGHT - ARENA_BORDER_INSET - insets.bottom);
+  });
+
+  it('recenters the game-over row within asymmetric safe-area insets', () => {
+    const base = computeMobileLayout(NO_INSETS).gameOver;
+    const shifted = computeMobileLayout({ ...NO_INSETS, left: 60 }).gameOver;
+    expect(shifted[0].x - base[0].x).toBe(30);
+    expect(shifted[1].x - base[1].x).toBe(30);
+  });
+
+  it('shrinks both game-over buttons when the safe horizontal span is narrow', () => {
+    const insets = { top: 0, right: 560, bottom: 0, left: 560 };
+    const [restart, title] = computeMobileLayout(insets).gameOver;
+    expect(restart.x - restart.width / 2).toBeGreaterThanOrEqual(ARENA_BORDER_INSET + insets.left);
+    expect(title.x + title.width / 2).toBeLessThanOrEqual(ARENA_WIDTH - ARENA_BORDER_INSET - insets.right);
   });
 });
 

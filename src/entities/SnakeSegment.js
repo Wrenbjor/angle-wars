@@ -69,5 +69,8 @@ export function createSnakeSegment() {
     score: SNAKE_SEGMENT_SCORE,
     xp: SNAKE_SEGMENT_XP,
     telegraphMs: 0,
+    isSnakeHead: false,
+    isSnakeBody: true,
+    particleColor: 0xaa44ff,
   };
 }

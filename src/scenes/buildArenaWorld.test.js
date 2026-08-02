@@ -79,6 +79,7 @@ const CANONICAL_ORDER = [
   'DpsTelemetrySystem',
   'BlackHoleSystem',
   'BombSystem',
+  'SnakeCleanupSystem',
   'XpOrbSystem',
   'LevelSystem',
   'LevelUpSystem',
@@ -135,6 +136,7 @@ const RETURN_HANDLES = [
   'dpsTelemetrySystem',
   'blackHoleSystem',
   'bombSystem',
+  'snakeCleanupSystem',
   'xpOrbSystem',
   'levelSystem',
   'levelUpSystem',
@@ -157,7 +159,7 @@ describe('buildArenaWorld — ordered-system factory wiring', () => {
     }
   });
 
-  it('registers the 32 systems in the canonical order (no-arg build, node env)', () => {
+  it('registers systems in the canonical order (no-arg build, node env)', () => {
 
     const ctx = buildArenaWorld();
     expect(ctx.world.systems.map((s) => s.constructor.name)).toEqual(

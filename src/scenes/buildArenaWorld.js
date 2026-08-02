@@ -21,7 +21,7 @@ import { FiringSystem } from '../systems/FiringSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
 import { GreenSquareSystem } from '../systems/GreenSquareSystem.js';
 import { PinwheelSystem } from '../systems/PinwheelSystem.js';
-import { SnakeSystem } from '../systems/SnakeSystem.js';
+import { SnakeSystem, SnakeCleanupSystem } from '../systems/SnakeSystem.js';
 import { MirrorReflectorSystem } from '../systems/MirrorReflectorSystem.js';
 import { ArmoredSystem } from '../systems/ArmoredSystem.js';
 import { SpawnDirector } from '../systems/SpawnDirector.js';
@@ -319,6 +319,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // segment pool had to be constructed first so the collision system could
   // reference it). Until this is set the snake's split reap is a guarded no-op.
   snakeSystem.collisionSystem = collisionSystem;
+  pinwheelSystem.collisionSystem = collisionSystem;
 
   // --- Stasis Lock (Story 12.16 / Epic 12) ----------------------------------
   // Constructed before xpOrbSystem exists; wired after it (see XP orbs section below).
@@ -560,6 +561,12 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
   // screen clear. Until this is set a detonation still costs a life + releases the
   // hole; only its screen clear is a guarded no-op. Mirrors the collisionSystem late-bind.
   blackHoleSystem.bombSystem = bombSystem;
+
+  // Damage producers run after SnakeSystem's movement slot. Reconcile their
+  // head-kill reports before PlayerDeathSystem can test contact against a body
+  // whose head was removed in this same fixed tick.
+  const snakeCleanupSystem = new SnakeCleanupSystem(snakeSystem);
+  world.addSystem(snakeCleanupSystem);
 
   // --- XP orbs (Story 8.1 / Epic 8 progression) ---------------------------
   // The level-up loop's first brick: a SEPARATE economy from `score`. Constructed
@@ -829,6 +836,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     // published window through trailActive().
     dashSystem,
   );
+  particleSystem.blackHoleSystem = blackHoleSystem;
   world.addSystem(particleSystem);
 
   // --- Screen juice & feedback system (Story 4.4) -------------------------
@@ -895,6 +903,7 @@ export function buildArenaWorld({ rng, highScoreStorage, particleMax } = {}) {
     dpsTelemetrySystem,
     blackHoleSystem,
     bombSystem,
+    snakeCleanupSystem,
     xpOrbSystem,
     levelSystem,
     levelUpSystem,

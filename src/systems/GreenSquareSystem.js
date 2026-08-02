@@ -7,9 +7,10 @@ import {
   ARENA_HEIGHT,
   ARENA_BORDER_INSET,
   GREEN_SQUARE_RADIUS,
-  GREEN_SQUARE_FLEE_SPEED,
   GREEN_SQUARE_CHASE_SPEED,
-  GREEN_SQUARE_THREAT_RADIUS,
+  GREEN_SQUARE_AVOID_RADIUS,
+  GREEN_SQUARE_AVOID_LOOKAHEAD_MS,
+  GREEN_SQUARE_AVOID_WEIGHT,
   GREEN_SQUARE_POOL_PREWARM,
   ENEMY_SPAWN_TELEGRAPH_MS,
   SPAWN_SAFE_RADIUS,
@@ -108,8 +109,6 @@ export class GreenSquareSystem extends System {
     const minY = ARENA_BORDER_INSET + GREEN_SQUARE_RADIUS;
     const maxY = ARENA_HEIGHT - ARENA_BORDER_INSET - GREEN_SQUARE_RADIUS;
 
-    const threatSq = GREEN_SQUARE_THREAT_RADIUS * GREEN_SQUARE_THREAT_RADIUS;
-
     this.enemyPool.forEachActive((s) => {
       // Story 2.6 telegraph gate: a spawning-in square is frozen (no threat/aggro
       // latch, no move) and non-lethal until its countdown reaches 0. Decrement
@@ -130,30 +129,54 @@ export class GreenSquareSystem extends System {
         }
         s.stunMs = 0;
       }
-      // 1. Threat detection (only while still fleeing — the latch is one-way).
-      if (!s.aggro) {
-        for (let i = 0; i < bullets.length; i++) {
-          const b = bullets[i];
-          const bx = b.x - s.x;
-          const by = b.y - s.y;
-          if (bx * bx + by * by <= threatSq) {
-            s.aggro = true; // latched aggressive for the rest of its life
-            break;
-          }
-        }
-      }
-
-      // 2. Velocity: toward the ship (aggro) or directly away (fleeing). The
-      //    coincident mag>0 guard avoids a NaN direction (mirrors the Seeker).
+      // Pursue continuously, temporarily steering away from the nearest predicted
+      // bullet trajectory. Prediction is bounded and deterministic; no allocations.
       const dx = ship.x - s.x;
       const dy = ship.y - s.y;
       const mag = Math.hypot(dx, dy);
-      if (mag > 0) {
-        const speed = s.aggro ? GREEN_SQUARE_CHASE_SPEED : GREEN_SQUARE_FLEE_SPEED;
-        const sign = s.aggro ? 1 : -1; // toward ship vs. away from ship
-        const scale = (sign * speed) / mag;
-        s.vx = dx * scale;
-        s.vy = dy * scale;
+      let steerX = mag > 0 ? dx / mag : 0;
+      let steerY = mag > 0 ? dy / mag : 0;
+      let nearestSq = GREEN_SQUARE_AVOID_RADIUS * GREEN_SQUARE_AVOID_RADIUS;
+      let avoidX = 0;
+      let avoidY = 0;
+      const lookahead = GREEN_SQUARE_AVOID_LOOKAHEAD_MS / 1000;
+      for (let i = 0; i < bullets.length; i++) {
+        const b = bullets[i];
+        const bvx = Number.isFinite(b.vx) ? b.vx : 0;
+        const bvy = Number.isFinite(b.vy) ? b.vy : 0;
+        const relX = s.x - b.x;
+        const relY = s.y - b.y;
+        const speedSq = bvx * bvx + bvy * bvy;
+        const closestT = speedSq > 0
+          ? Math.max(0, Math.min(lookahead, (relX * bvx + relY * bvy) / speedSq))
+          : 0;
+        const px = b.x + bvx * closestT;
+        const py = b.y + bvy * closestT;
+        const ax = s.x - px;
+        const ay = s.y - py;
+        const d2 = ax * ax + ay * ay;
+        if (d2 < nearestSq) {
+          nearestSq = d2;
+          avoidX = ax;
+          avoidY = ay;
+          if (d2 === 0) {
+            avoidX = bvy !== 0 || bvx !== 0 ? -bvy : 1;
+            avoidY = bvy !== 0 || bvx !== 0 ? bvx : 0;
+          }
+        }
+      }
+      if (nearestSq < GREEN_SQUARE_AVOID_RADIUS * GREEN_SQUARE_AVOID_RADIUS) {
+        const avoidMag = Math.hypot(avoidX, avoidY);
+        if (avoidMag > 0) {
+          const strength = (1 - Math.sqrt(nearestSq) / GREEN_SQUARE_AVOID_RADIUS) * GREEN_SQUARE_AVOID_WEIGHT;
+          steerX += (avoidX / avoidMag) * strength;
+          steerY += (avoidY / avoidMag) * strength;
+        }
+      }
+      const steerMag = Math.hypot(steerX, steerY);
+      if (steerMag > 0) {
+        s.vx = (steerX / steerMag) * GREEN_SQUARE_CHASE_SPEED;
+        s.vy = (steerY / steerMag) * GREEN_SQUARE_CHASE_SPEED;
       } else {
         // Coincident with the ship: no direction — zero velocity, no NaN.
         s.vx = 0;
@@ -168,20 +191,16 @@ export class GreenSquareSystem extends System {
       //    naturally but speed stays constant.
       s.x += s.vx * dtSec * (1 - slowFactor);
       s.y += s.vy * dtSec * (1 - slowFactor);
-      const spd = s.aggro ? GREEN_SQUARE_CHASE_SPEED : GREEN_SQUARE_FLEE_SPEED;
+      const spd = GREEN_SQUARE_CHASE_SPEED;
       if (s.x < minX) {
         s.x = minX;
-        s.vx = -s.vx;
       } else if (s.x > maxX) {
         s.x = maxX;
-        s.vx = -s.vx;
       }
       if (s.y < minY) {
         s.y = minY;
-        s.vy = -s.vy;
       } else if (s.y > maxY) {
         s.y = maxY;
-        s.vy = -s.vy;
       }
       // Re-normalize speed after wall reflection (the reflected vector's
       // magnitude may differ from the original flee/chase speed).
@@ -235,7 +254,7 @@ export class GreenSquareSystem extends System {
     // Start at rest and unprovoked; the next behavior pass sets velocity.
     s.vx = 0;
     s.vy = 0;
-    s.aggro = false;
+    s.aggro = true;
     // Telegraph: frozen + non-lethal until the countdown reaches 0.
     s.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
     s.stunMs = 0;

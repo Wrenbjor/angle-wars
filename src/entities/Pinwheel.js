@@ -1,5 +1,5 @@
 import {
-  PINWHEEL_RADIUS,
+  PINK_SPLITTER_PARENT_RADIUS,
   PINWHEEL_SCORE,
   PINWHEEL_XP,
 } from '../config/constants.js';
@@ -59,10 +59,18 @@ export function createPinwheel() {
     y: 0,
     vx: 0,
     vy: 0,
-    radius: PINWHEEL_RADIUS,
+    radius: PINK_SPLITTER_PARENT_RADIUS,
     score: PINWHEEL_SCORE,
     xp: PINWHEEL_XP,
     wanderMs: 0,
     telegraphMs: 0,
+    isSplitterChild: false,
+    pivotX: 0,
+    pivotY: 0,
+    pivotVx: 0,
+    pivotVy: 0,
+    orbitAngle: 0,
+    lifeMs: 0,
+    particleColor: 0xff66cc,
   };
 }

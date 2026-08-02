@@ -158,6 +158,7 @@ export class CollisionSystem extends System {
     // to drop one orb per bullet kill carrying that kill's value. Purely
     // observational; never affects kills, scoring, lives, or any pool.
     this.bulletKillXp = [];
+    this.bulletKillColor = [];
   }
 
   /**
@@ -203,9 +204,11 @@ export class CollisionSystem extends System {
     const bulletKillX = this.bulletKillX;
     const bulletKillY = this.bulletKillY;
     const bulletKillXp = this.bulletKillXp;
+    const bulletKillColor = this.bulletKillColor;
     bulletKillX.length = 0;
     bulletKillY.length = 0;
     bulletKillXp.length = 0;
+    bulletKillColor.length = 0;
 
     // Pass 1: mark hits. A bullet stops after its first hit (consumed); an enemy
     // already hit this tick is skipped (destroyed once).
@@ -221,6 +224,12 @@ export class CollisionSystem extends System {
         const r = b.radius + s.radius;
         // Squared compare avoids a sqrt; ≤ so a boundary touch counts as a hit.
         if (dx * dx + dy * dy <= r * r) {
+          // Snake bodies are lethal shields: they absorb the projectile but take
+          // no damage and never enter the kill/score/XP report.
+          if (s.isSnakeBody) {
+            hitBullets.add(b);
+            break;
+          }
           // Record the HITTING bullet's damage against this enemy (Story 10.2), at the
           // bullet's CURRENT (pre-growth) stamped value — resolved BEFORE any ricochet
           // reflection below grows it, so a bounced bullet's enemy hit deals the damage it
@@ -381,6 +390,7 @@ export class CollisionSystem extends System {
    * @returns {boolean} true if the enemy was KILLED, false if it survived (armor).
    */
   applyPlayerDamage(enemy, ownerPool, damage) {
+    if (enemy.isSnakeBody) return false;
     // every hit = 1 integer damage-unit (armor survivor OR kill)
     this.bulletDamageCount += 1;
     // Story 12.16 — Stasis Lock: double damage while frozen.
@@ -401,6 +411,7 @@ export class CollisionSystem extends System {
     // scoring's finite-score guard) so a malformed instance can never credit a
     // non-finite XP amount downstream.
     this.bulletKillXp.push(Number.isFinite(enemy.xp) ? enemy.xp : 0);
+    this.bulletKillColor.push(Number.isFinite(enemy.particleColor) ? enemy.particleColor : 0xffdd55);
     ownerPool.release(enemy);
     this.bulletKillCount += 1;
     // Story 12.16 — Stasis Lock: spawn extra XP orb for frozen kill.

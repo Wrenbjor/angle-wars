@@ -565,6 +565,8 @@ describe('BombSystem — snake chain routed through killedEnemies', () => {
       seg.vx = 0;
       seg.vy = 0;
       seg.telegraphMs = 0;
+      seg.isSnakeHead = i === 0;
+      seg.isSnakeBody = i !== 0;
       segments.push(seg);
     }
     snakeSystem.snakes.push({ segments, headingRad: 0, slitherPhaseRad: 0 });
@@ -573,11 +575,9 @@ describe('BombSystem — snake chain routed through killedEnemies', () => {
     collision.fixedUpdate(DT); // resets killedEnemies to []
     system.fixedUpdate(DT); // clears every segment → release + push to killedEnemies
 
-    // Every segment released and reported.
-    expect(segPool.activeCount).toBe(0);
-    for (const seg of segments) {
-      expect(collision.killedEnemies).toContain(seg);
-    }
+    // Only the damageable head is released/reported; bodies are owner-cleaned.
+    expect(segPool.activeCount).toBe(4);
+    expect(collision.killedEnemies).toEqual([segments[0]]);
 
     // SnakeSystem reconciles on its next tick: the whole chain is reaped to removal.
     snakeSystem.fixedUpdate(DT);

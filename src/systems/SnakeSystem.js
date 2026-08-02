@@ -121,6 +121,15 @@ export class SnakeSystem extends System {
   }
 
   /**
+   * Reconcile head kills after every same-tick damage producer and before player
+   * contact resolution. This makes the orange body disappear atomically with its
+   * purple head even though Collision and Bomb run after the snake movement slot.
+   */
+  cleanupKilledHeads() {
+    this._reap();
+  }
+
+  /**
    * Split each snake at the segments destroyed the prior tick. Reads
    * collisionSystem.killedEnemies (the established post-collision reaction seam);
    * a guarded no-op until the collision system is late-bound and when there were
@@ -149,6 +158,13 @@ export class SnakeSystem extends System {
     for (let si = 0; si < snakes.length; si++) {
       const snake = snakes[si];
       const segs = snake.segments;
+
+      // Head-only damage contract: a dead head atomically removes the remaining
+      // orange body. Bodies never promote into new snakes.
+      if (segs.length > 0 && killedSet.has(segs[0])) {
+        for (let i = 1; i < segs.length; i++) this.enemyPool.release(segs[i]);
+        continue;
+      }
 
       // Does this snake own any killed segment? If not, carry it through untouched.
       let anyKilled = false;
@@ -393,6 +409,8 @@ export class SnakeSystem extends System {
       // just the head) so a pooled instance recycled from a prior snake's HEAD is
       // reset to the body value here rather than carrying the stale head value.
       seg.xp = i === 0 ? SNAKE_HEAD_XP : SNAKE_SEGMENT_XP;
+      seg.isSnakeHead = i === 0;
+      seg.isSnakeBody = i !== 0;
       // Telegraph every segment identically: the chain freezes + activates as one.
       seg.telegraphMs = ENEMY_SPAWN_TELEGRAPH_MS;
       seg.stunMs = 0;
@@ -400,5 +418,16 @@ export class SnakeSystem extends System {
     }
 
     this.snakes.push({ segments, headingRad, slitherPhaseRad: 0 });
+  }
+}
+
+export class SnakeCleanupSystem extends System {
+  constructor(snakeSystem) {
+    super();
+    this.snakeSystem = snakeSystem;
+  }
+
+  fixedUpdate() {
+    this.snakeSystem.cleanupKilledHeads();
   }
 }

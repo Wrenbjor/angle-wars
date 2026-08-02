@@ -4,6 +4,7 @@ import {
   FIXED_STEP_MS,
   PARTICLE_MAX,
   PARTICLE_BURST_COUNT,
+  PARTICLE_BURST_INNER_COUNT,
   PARTICLE_BURST_SPEED_MIN,
   PARTICLE_BURST_SPEED_MAX,
   PARTICLE_BURST_LIFETIME_MS,
@@ -67,23 +68,26 @@ describe('ParticleSystem — bullet-kill bursts', () => {
     system.fixedUpdate(DT);
 
     const active = activeParticles(system);
-    expect(active.length).toBe(2 * PARTICLE_BURST_COUNT);
+    expect(active.length).toBe(2 * (PARTICLE_BURST_COUNT + PARTICLE_BURST_INNER_COUNT));
     // Half at each origin (rng is constant → no position change on the emit tick).
     expect(active.filter((p) => p.x === 10 && p.y === 20).length).toBe(
-      PARTICLE_BURST_COUNT,
+      PARTICLE_BURST_COUNT + PARTICLE_BURST_INNER_COUNT,
     );
     expect(active.filter((p) => p.x === 30 && p.y === 40).length).toBe(
-      PARTICLE_BURST_COUNT,
+      PARTICLE_BURST_COUNT + PARTICLE_BURST_INNER_COUNT,
     );
     // Fresh this tick: age 0 (emitted after the advance pass), burst lifetime/color.
     for (const p of active) {
       expect(p.ageMs).toBe(0);
-      expect(p.lifeMs).toBe(PARTICLE_BURST_LIFETIME_MS);
-      expect(p.color).toBe(PARTICLE_BURST_COLOR);
-      // Speed within [MIN, MAX].
-      const speed = Math.hypot(p.vx, p.vy);
-      expect(speed).toBeGreaterThanOrEqual(PARTICLE_BURST_SPEED_MIN - 1e-9);
-      expect(speed).toBeLessThanOrEqual(PARTICLE_BURST_SPEED_MAX + 1e-9);
+      if (p.color === 0xffffff) {
+        expect(p.lifeMs).toBe(PARTICLE_BURST_LIFETIME_MS * 1.25);
+      } else {
+        expect(p.lifeMs).toBe(PARTICLE_BURST_LIFETIME_MS);
+        expect(p.color).toBe(PARTICLE_BURST_COLOR);
+        const speed = Math.hypot(p.vx, p.vy);
+        expect(speed).toBeGreaterThanOrEqual(PARTICLE_BURST_SPEED_MIN - 1e-9);
+        expect(speed).toBeLessThanOrEqual(PARTICLE_BURST_SPEED_MAX + 1e-9);
+      }
     }
   });
 
@@ -112,7 +116,7 @@ describe('ParticleSystem — bullet-kill bursts', () => {
     system.fixedUpdate(DT);
 
     const active = activeParticles(system);
-    expect(active.length).toBe(2 * PARTICLE_BURST_COUNT);
+    expect(active.length).toBe(2 * (PARTICLE_BURST_COUNT + PARTICLE_BURST_INNER_COUNT));
     // Only origins (1,1) and (2,2) appear; (3,3)/(4,4)/(5,5) emit nothing.
     expect(active.every((p) => p.x <= 2)).toBe(true);
     expect(active.some((p) => p.x === 3)).toBe(false);
@@ -665,5 +669,38 @@ describe('ParticleSystem — Story 12.2 emitBurst (fusion card aura)', () => {
     const particles = [];
     sys.pool.forEachActive((p) => particles.push(p));
     expect(particles).toHaveLength(5);
+  });
+});
+
+describe('ParticleSystem — bounded black-hole galaxy particles', () => {
+  it('emits orbital decoration through the same mobile cap', () => {
+    const system = new ParticleSystem(fakeCollision(), fakeShip(), fakeInput(), constRng(0.5), 2);
+    system.blackHoleSystem = {
+      holePool: { forEachActive(cb) { cb({ x: 100, y: 100, radius: 30 }); } },
+    };
+    system.fixedUpdate(1000);
+    expect(system.pool.activeCount).toBe(1);
+    system.fixedUpdate(1000);
+    expect(system.pool.activeCount).toBeLessThanOrEqual(2);
+  });
+
+  it('bounds coarse-delta galaxy work to one traversal and discards backlog', () => {
+    const system = new ParticleSystem(fakeCollision(), fakeShip(), fakeInput(), constRng(0.5), 20);
+    let traversals = 0;
+    system.blackHoleSystem = {
+      holePool: { forEachActive(cb) { traversals++; cb({ x: 100, y: 100, radius: 30 }); } },
+    };
+    system.fixedUpdate(120000);
+    expect(traversals).toBe(1);
+  });
+
+  it('suppresses galaxy decoration under reduced motion', () => {
+    const system = new ParticleSystem(fakeCollision(), fakeShip(), fakeInput(), constRng(0.5), 20);
+    system.reducedMotion = true;
+    system.blackHoleSystem = {
+      holePool: { forEachActive(cb) { cb({ x: 100, y: 100, radius: 30 }); } },
+    };
+    system.fixedUpdate(1000);
+    expect(system.pool.activeCount).toBe(0);
   });
 });
