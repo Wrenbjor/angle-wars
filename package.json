@@ -4,7 +4,7 @@
   "description": "Angle Wars — a twin-stick arena shooter (Phaser 3 + Vite).",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "vite",

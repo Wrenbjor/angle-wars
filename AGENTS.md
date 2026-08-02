@@ -2,6 +2,8 @@
 
 These instructions are authoritative for coding agents working in this repository.
 
+Use Node.js 22 or newer; Capacitor 8 tooling does not support older Node releases.
+
 ## Branch and change workflow
 
 - Keep `main` releasable. Fetch first, update the intended base with a fast-forward-only operation, and create focused branches from that verified base.
