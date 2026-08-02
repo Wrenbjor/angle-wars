@@ -12,6 +12,7 @@ import {
   TITLE_CONTROLS_FONT,
 } from '../config/constants.js';
 import { createHighScoreStorage } from '../persistence/highScoreStorage.js';
+import { APP_VERSION_LABEL } from '../config/appVersion.js';
 import { applyAdditiveBlend } from './neonStyle.js';
 import {
   TITLE_TEXT,
@@ -103,6 +104,15 @@ export class TitleScene extends Phaser.Scene {
         align: 'center',
       })
       .setOrigin(0.5);
+
+    // Package-derived build identity, centered inside the arena's bottom safe margin.
+    this.versionText = this.add
+      .text(cx, ARENA_HEIGHT - 24, APP_VERSION_LABEL, {
+        font: '14px monospace',
+        color: COLOR_TITLE_CONTROLS,
+        align: 'center',
+      })
+      .setOrigin(0.5, 1);
 
     // --- Neon aesthetic -----------------------------------------------------
     // Mirror ArenaScene's neon wiring: the hero title uses additive blend so

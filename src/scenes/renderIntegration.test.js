@@ -778,3 +778,12 @@ describe('render-integration — native lifecycle controller wiring (main.js, St
     expect(mainSrc).not.toContain('exitApp');
   });
 });
+
+describe('render-integration — title build version', () => {
+  it('renders the package-derived label centered inside the arena bottom margin', () => {
+    const titleSrc = readSrc('./TitleScene.js');
+    expect(titleSrc).toMatch(/APP_VERSION_LABEL/);
+    expect(titleSrc).toMatch(/\.text\(cx,\s*ARENA_HEIGHT\s*-\s*24,\s*APP_VERSION_LABEL/);
+    expect(titleSrc).toMatch(/\.setOrigin\(0\.5,\s*1\)/);
+  });
+});

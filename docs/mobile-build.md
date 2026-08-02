@@ -88,6 +88,33 @@ simulator/device and press **Run**.
 
 ## Store release
 
+### Version policy and push guard
+
+`package.json` is the sole SemVer source. The title screen displays that exact
+build-time value as `vMAJOR.MINOR.PATCH`; `package-lock.json` and Android's
+`versionName` must match it, while Android `versionCode` increases once per
+explicit bump. Create a synchronized, reviewable version diff with:
+
+```bash
+npm run version:bump -- patch   # or minor / major
+npm run version:check
+```
+
+The standalone check verifies synchronization only. Release freshness is
+evaluated by the pre-push hook because that check requires Git's pushed-ref
+input.
+
+The npm `prepare` lifecycle configures `core.hooksPath=.githooks` in a Git
+checkout. The committed pre-push hook validates metadata on every branch and
+never rewrites files. Feature branches may retain the current release version;
+a push to `main` must use a package version newer than the latest reachable
+`vX.Y.Z` tag. When blocked, run the bump command printed by the guard, review and
+commit all synchronized metadata changes, then push again.
+
+If hooks were deliberately bypassed with Git's `--no-verify`, recover by running
+`npm run version:check` before the next push. Run `npm run prepare` to restore a
+missing local hook configuration; archives without `.git` warn and continue.
+
 This section covers turning the native shells into store-uploadable artifacts
 for the App Store / Google Play (NFR10). Everything below is config, committed
 branded assets, and signing scaffold — no gameplay/`src/` change.

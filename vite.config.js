@@ -1,10 +1,19 @@
 import { defineConfig } from 'vite';
+import { readFileSync } from 'node:fs';
+
+const packageJson = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(packageJson.version)) {
+  throw new Error(`Invalid package version for build: ${String(packageJson.version)}`);
+}
 
 // Vite build + Vitest unit-test config.
 // The pure-logic modules (Pool, FixedTimestep, World, System, constants) are
 // Phaser-free, so tests run headlessly in the default node environment — no
 // jsdom needed.
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(packageJson.version),
+  },
   // Relative base so the built bundle works when served from any subpath.
   base: './',
   build: {

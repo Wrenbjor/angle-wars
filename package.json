@@ -11,6 +11,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "version:bump": "node scripts/bump-version.mjs",
+    "version:check": "node scripts/check-semver.mjs",
     "cap:sync": "cap sync",
     "cap:copy": "cap copy",
     "assets:mobile": "bash scripts/gen-mobile-assets.sh"
