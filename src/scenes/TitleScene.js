@@ -6,10 +6,13 @@ import {
   TITLE_FONT,
   COLOR_TITLE_HISCORE,
   TITLE_HISCORE_FONT,
-  COLOR_TITLE_PROMPT,
-  TITLE_PROMPT_FONT,
   COLOR_TITLE_CONTROLS,
   TITLE_CONTROLS_FONT,
+  MENU_CONTROL_FILL,
+  MENU_CONTROL_FILL_PRESSED,
+  MENU_CONTROL_STROKE,
+  MENU_CONTROL_TEXT,
+  MENU_CONTROL_FONT,
 } from '../config/constants.js';
 import { createHighScoreStorage } from '../persistence/highScoreStorage.js';
 import { APP_VERSION_LABEL } from '../config/appVersion.js';
@@ -27,12 +30,13 @@ import {
   nextFlowState,
   sceneForState,
 } from './gameFlow.js';
+import { MENU_ACTIONS, titleControlLayout } from './menuControls.js';
 
 // TitleScene — the game's front door (Story 5.1 / FR14).
 //
 // Sits between Preload and Arena in the scene chain: it shows the neon "ANGLE
 // WARS" title, the persisted high score, a start prompt, and the basic controls,
-// then starts a fresh ArenaScene run on ANY start input (Enter / Space / click /
+// then starts a fresh ArenaScene run on a Play input (Enter / Space / Play button /
 // gamepad button). Because starting is one user gesture, the audio unlock that
 // ArenaScene relies on keeps working unchanged.
 //
@@ -75,30 +79,12 @@ export class TitleScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // --- Start prompt -------------------------------------------------------
-    this.promptText = this.add
-      .text(cx, cy + 30, START_PROMPT, {
-        font: TITLE_PROMPT_FONT,
-        color: COLOR_TITLE_PROMPT,
-        align: 'center',
-      })
-      .setOrigin(0.5);
-
-    // --- Settings prompt ----------------------------------------------------
-    // Invites the player into the SettingsScene (Story 5.3). Same prompt styling
-    // as the start prompt so it reads as a peer call-to-action.
-    this.settingsPromptText = this.add
-      .text(cx, cy + 66, SETTINGS_PROMPT, {
-        font: TITLE_PROMPT_FONT,
-        color: COLOR_TITLE_PROMPT,
-        align: 'center',
-      })
-      .setOrigin(0.5);
+    this.menuButtons = new Map();
 
     // --- Controls -----------------------------------------------------------
     // One stacked block describing only the controls that exist today.
     this.controlsText = this.add
-      .text(cx, cy + 130, CONTROLS_LINES.join('\n'), {
+      .text(cx, 610, CONTROLS_LINES.join('\n'), {
         font: TITLE_CONTROLS_FONT,
         color: COLOR_TITLE_CONTROLS,
         align: 'center',
@@ -121,10 +107,10 @@ export class TitleScene extends Phaser.Scene {
     // Phaser.BlendModes.ADD is injected so neonStyle.js stays Phaser-free.
     applyAdditiveBlend([this.titleText], Phaser.BlendModes.ADD);
 
-    // --- Start input --------------------------------------------------------
+    // --- Explicit title actions --------------------------------------------
     // Any start gesture launches a fresh ArenaScene run — scene.start('ArenaScene')
     // runs ArenaScene.create(), which rebuilds all run state from zero. Enter /
-    // Space / pointer / gamepad button all route here. The gamepad plugin is only
+    // Space / Play button / gamepad button all route here. The gamepad plugin is only
     // present when enabled in the game config, so its listener is guarded. A
     // one-shot latch prevents two gestures in one frame (or OS key auto-repeat)
     // from calling scene.start more than once.
@@ -147,9 +133,39 @@ export class TitleScene extends Phaser.Scene {
       started = true;
       this.scene.start(target);
     };
+    const openSettings = (event) => {
+      if (event && event.repeat) return;
+      if (started) return;
+      const target = sceneForState(nextFlowState(FLOW_STATES.TITLE, FLOW_EVENTS.OPEN_SETTINGS));
+      if (!target) return;
+      started = true;
+      this.scene.start(target);
+    };
+    const activate = (action, event) => action === MENU_ACTIONS.PLAY ? start(event) : openSettings(event);
+    for (const control of titleControlLayout()) {
+      const bg = this.add.rectangle(control.x, control.y, control.width, control.height, MENU_CONTROL_FILL)
+        .setStrokeStyle(3, MENU_CONTROL_STROKE).setInteractive({ useHandCursor: true });
+      const label = this.add.text(control.x, control.y, control.action === MENU_ACTIONS.PLAY ? START_PROMPT : SETTINGS_PROMPT, { font: MENU_CONTROL_FONT, color: MENU_CONTROL_TEXT }).setOrigin(0.5);
+      let pressedPointerId = null;
+      bg.on('pointerdown', (pointer) => {
+        if (pressedPointerId !== null) return;
+        pressedPointerId = pointer.id;
+        bg.setFillStyle(MENU_CONTROL_FILL_PRESSED);
+      });
+      bg.on('pointerup', (pointer) => {
+        if (pointer.id !== pressedPointerId) return;
+        pressedPointerId = null;
+        bg.setFillStyle(MENU_CONTROL_FILL);
+        activate(control.action, pointer);
+      });
+      bg.on('pointerout', () => {
+        pressedPointerId = null;
+        bg.setFillStyle(MENU_CONTROL_FILL);
+      });
+      this.menuButtons.set(control.action, { bg, label });
+    }
     this.input.keyboard.on('keydown-ENTER', start);
     this.input.keyboard.on('keydown-SPACE', start);
-    this.input.on('pointerdown', start);
     this.input.gamepad?.on('down', start);
 
     // --- Settings input -----------------------------------------------------
@@ -159,15 +175,6 @@ export class TitleScene extends Phaser.Scene {
     // same-frame start+S fires only ONE scene.start (the first wins) and never lands
     // the player in the wrong scene. The latch is set only AFTER the seam returns a
     // non-null target, so a no-op S never blocks a subsequent start.
-    this.input.keyboard.on('keydown-S', (event) => {
-      if (event && event.repeat) return;
-      if (started) return;
-      const target = sceneForState(
-        nextFlowState(FLOW_STATES.TITLE, FLOW_EVENTS.OPEN_SETTINGS),
-      );
-      if (!target) return; // illegal transition → guarded no-op
-      started = true;
-      this.scene.start(target);
-    });
+    this.input.keyboard.on('keydown-S', openSettings);
   }
 }

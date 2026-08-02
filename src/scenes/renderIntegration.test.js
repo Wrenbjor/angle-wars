@@ -45,6 +45,37 @@ describe('render-integration — Boot→Preload→Title handoffs', () => {
   });
 });
 
+describe('render-integration — mobile title/settings controls', () => {
+  const titleSrc = readSrc('./TitleScene.js');
+  const settingsSrc = readSrc('./SettingsScene.js');
+
+  it('creates explicit title hit targets and has no title-wide pointer start', () => {
+    expect(titleSrc).toMatch(/titleControlLayout\(\)/);
+    expect(titleSrc).toMatch(/\.setInteractive\(\{\s*useHandCursor:\s*true\s*\}\)/);
+    expect(titleSrc).not.toMatch(/this\.input\.on\(\s*['"]pointerdown['"]\s*,\s*start/);
+    expect(titleSrc).toMatch(/bg\.on\(\s*['"]pointerup['"]/);
+    expect(titleSrc).toMatch(/pressedPointerId/);
+  });
+
+  it('routes title buttons independently through the existing flow seam', () => {
+    expect(titleSrc).toMatch(/MENU_ACTIONS\.PLAY/);
+    expect(titleSrc).toMatch(/FLOW_EVENTS\.OPEN_SETTINGS/);
+    expect(titleSrc).toMatch(/FLOW_EVENTS\.START/);
+  });
+
+  it('creates all settings controls and keeps fullscreen event-reconciled', () => {
+    expect(settingsSrc).toMatch(/settingsControlLayout\(\)/);
+    for (const action of ['VOLUME_DOWN', 'VOLUME_UP', 'MUTE', 'FULLSCREEN', 'REDUCED_MOTION', 'BACK']) {
+      expect(settingsSrc).toContain(`MENU_ACTIONS.${action}`);
+    }
+    expect(settingsSrc).toMatch(/this\.scale\.on\(\s*['"]enterfullscreen['"]/);
+    expect(settingsSrc).toMatch(/this\.scale\.off\(\s*['"]leavefullscreen['"]/);
+    expect(settingsSrc).toMatch(/button\.thumb\.setX\(button\.track\.x\s*\+\s*\(view\.thumbSide\s*===\s*['"]right['"]\s*\?\s*16\s*:\s*-16\)\)/);
+    expect(settingsSrc).toMatch(/acceptMenuActivation\(/);
+    expect(settingsSrc).toMatch(/switchViewModel\(/);
+  });
+});
+
 describe('render-integration — vibrant primary scenes without camera haze', () => {
   const primaryScenes = [
     ['ArenaScene', readSrc('./ArenaScene.js')],
